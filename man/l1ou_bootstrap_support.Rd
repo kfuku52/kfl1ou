@@ -12,52 +12,68 @@ l1ou_bootstrap_support(model, nItrs = 100, multicore = FALSE, nCores = 2,
 
 \item{nItrs}{number of independent iterations (bootstrap replicates).}
 
-\item{multicore}{logical. If TRUE, nCores processes are used in parallel.}
+\item{multicore}{logical. If TRUE, bootstrap replicates are distributed over
+parallel workers.}
 
-\item{nCores}{desired number of parallel processes.}
+\item{nCores}{maximum total CPU budget for the bootstrap run. If
+\code{multicore=TRUE}, at most \code{nCores} bootstrap replicates are
+processed in parallel; each worker evaluates \code{kfl1ou} sequentially with
+BLAS/OpenMP threads limited to 1 when supported, so nested \code{kfl1ou} calls
+do not oversubscribe the machine.}
 
 \item{quietly}{logical. If FALSE, a summary of each iteration will be printed out.}
 }
 \value{
-vector of size the number of edges in the tree. Each entry is the proportion of bootstrap replicates for which a shift is detected on the corresponding edge.
+A list with \code{detection.rate}, a vector of edge-wise detection
+proportions, and \code{all.shifts}, the shift configurations retained from
+successful bootstrap replicates.
 }
 \description{
 Takes a given shift configuration previously detected from data along with shift magnitudes
 and OU parameters, to calculate bootstrap support for shift positions. 
 The non-parametric bootstrap procedure calculates phylogenetically-uncorrelated standardized residuals,
 one at each node. These residuals are sampled with replacement, then mapped back onto the tree
-to create bootstrap replicates. Each replicate is analyzed with the l1ou method and user-specified options.
+to create bootstrap replicates. Each replicate is analyzed with
+\code{kfl1ou} and user-specified options.
 }
 \details{
-The results of sequential and parallel runs are not necessarily equal, because different seeds might be used for different bootstrap replicates.
-        For multiple cores to be used, the \code{parallel} library needs to be installed.
-        To change options for the analysis of each bootstrap replicate,
-        like the information criterion or the maximum allowed number of shifts, modify model$opt.
+The results of sequential and parallel runs are not necessarily equal,
+because different seeds might be used for different bootstrap replicates.
+Fork-based parallel execution is used only on supported platforms. To change options for the analysis of each bootstrap replicate,
+like the information criterion or the maximum allowed number of shifts,
+modify \code{model$l1ou.options}.
+This component keeps its upstream name for backward compatibility.
+Replicates that fail during model fitting are skipped; the function throws an
+error only if all bootstrap replicates fail.
 }
 \examples{
 
 data(lizard.traits, lizard.tree)
-Y <- lizard.traits[,1] 
-eModel <- estimate_shift_configuration(lizard.tree, Y)
-result <- l1ou_bootstrap_support(eModel, nItrs=2)
-# using only 2 replicates in vastly insufficient in general,
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- lizard.traits[keep, 1]
+eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=1)
+result <- l1ou_bootstrap_support(eModel, nItrs=1)
+# using only 1 replicate is vastly insufficient in general,
 # but used here to make the illustrative example run faster.
-nEdges <- Nedge(lizard.tree)
+nEdges <- Nedge(tree)
 e.w <- rep(1,nEdges) 
-e.w[eModel$shift.configuration] <- 3
+if (length(eModel$shift.configuration) > 0) {
+  e.w[eModel$shift.configuration] <- 3
+}
 e.l <- round(result$detection.rate*100, digits=1)
 # to avoid annotating edges with support at or below 10\%
 e.l <- ifelse(e.l>10, paste0(e.l,"\%"), NA)
 plot(eModel, edge.label=e.l, edge.ann.cex=0.7, edge.label.ann=TRUE, cex=0.5, label.offset=0.02, edge.width=e.w)
 
 
-Y <- lizard.traits[,1:2] 
-eModel <- estimate_shift_configuration(lizard.tree, Y)
-result <- l1ou_bootstrap_support(eModel, nItrs=2, multicore=TRUE, nCores=4)
+Y <- lizard.traits[keep, 1:2]
+eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=1)
+result <- l1ou_bootstrap_support(eModel, nItrs=1, multicore=TRUE, nCores=2)
 result$detection.rate
 
 }
 \seealso{
 \code{\link{estimate_shift_configuration}}
 }
-

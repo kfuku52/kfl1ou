@@ -5,7 +5,6 @@
 
 //TODO re-write this function in C++ using RCpp; using calloc/free/pointers is not a good programming style.
 //
-// [[Rcpp::export]]
 void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *transa, double *transb, int *des, int *anc, int *edge, double *output){
     int N = *Npo;     // number of edges, excluding root edge
     int n = *npo;     // number of tips
@@ -98,7 +97,6 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
     free(vec11);
     free(zero);
 }
-
 
 
 

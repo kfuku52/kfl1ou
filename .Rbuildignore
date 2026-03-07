@@ -1,0 +1,7 @@
+^\\.git$
+^\\.DS_Store$
+^\\.\\.Rcheck$
+^l1ou\\.Rcheck$
+^l1ou_.*\\.tar\\.gz$
+^src/.*\\.(o|so)$
+^src/symbols\\.rds$

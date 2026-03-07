@@ -4,13 +4,13 @@
 \alias{plot.l1ou}
 \title{Visualizes a shift configuration: tree and trait(s)}
 \usage{
-\method{plot}{l1ou}(model, palette = NA, edge.shift.ann = TRUE,
+\method{plot}{l1ou}(x, palette = NA, edge.shift.ann = TRUE,
   edge.shift.adj = c(0.5, -0.025), edge.label = c(), asterisk = TRUE,
   edge.label.ann = FALSE, edge.label.adj = c(0.5, 1), edge.label.pos = NA,
   edge.ann.cex = 1, plot.bar = TRUE, bar.axis = TRUE, ...)
 }
 \arguments{
-\item{model}{object of class l1ou returned by \code{\link{estimate_shift_configuration}}.}
+\item{x}{object of class l1ou returned by \pkg{kfl1ou}.}
 
 \item{palette}{vector of colors, of size the number of shifts plus one. The last element is the color for the background regime (regime at the root).}
 
@@ -51,12 +51,16 @@ The place where the bars start corresponds to the mean of the original trait val
 \examples{
 
 data(lizard.traits, lizard.tree)
-Y <- lizard.traits[,1]
-eModel <- estimate_shift_configuration(lizard.tree, Y)
-nEdges <- Nedge(lizard.tree)
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- lizard.traits[keep, 1]
+eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
+nEdges <- Nedge(tree)
 ew <- rep(1,nEdges) 
-ew[eModel$shift.configuration] <- 3
+if (length(eModel$shift.configuration) > 0) {
+  ew[eModel$shift.configuration] <- 3
+}
 plot(eModel, cex=0.5, label.offset=0.02, edge.width=ew)
 
 }
-

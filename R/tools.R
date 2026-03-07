@@ -92,20 +92,223 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE){
 
 lnorm <- function(v,l=1)   { return( (sum(abs(v)^l, na.rm=TRUE))^(1/l) ) }
 
+tree_children_edges <- function(tree){
+    nNodes <- length(tree$tip.label) + tree$Nnode
+    children <- vector("list", nNodes)
+    for(edge.idx in seq_len(nrow(tree$edge))){
+        parent <- tree$edge[edge.idx, 1]
+        children[[parent]] <- c(children[[parent]], edge.idx)
+    }
+    return(children)
+}
+
+tree_node_depths <- function(tree, children=NULL){
+    if( is.null(children) ){
+        children <- tree_children_edges(tree)
+    }
+
+    nTips <- length(tree$tip.label)
+    nNodes <- nTips + tree$Nnode
+    root <- nTips + 1L
+    depths <- rep(NA_real_, nNodes)
+    depths[root] <- 0
+
+    stack <- root
+    while(length(stack) > 0){
+        node <- stack[[length(stack)]]
+        stack <- stack[-length(stack)]
+        child.edges <- children[[node]]
+        if( length(child.edges) == 0 ){
+            next
+        }
+        for(edge.idx in child.edges){
+            child <- tree$edge[edge.idx, 2]
+            depths[[child]] <- depths[[node]] + tree$edge.length[[edge.idx]]
+            stack <- c(stack, child)
+        }
+    }
+
+    return(depths)
+}
+
+tree_edge_ages <- function(tree, children=NULL){
+    if( is.null(children) ){
+        children <- tree_children_edges(tree)
+    }
+
+    depths <- tree_node_depths(tree, children=children)
+    nTips <- length(tree$tip.label)
+    tip.height <- max(depths[seq_len(nTips)])
+    tip.height - depths[tree$edge[, 1]]
+}
+
+tree_root_to_tip_edge_paths <- function(tree, children=NULL){
+    if( is.null(children) ){
+        children <- tree_children_edges(tree)
+    }
+
+    nTips <- length(tree$tip.label)
+    root <- nTips + 1L
+    paths <- vector("list", nTips)
+    node.stack <- list(root)
+    path.stack <- list(integer())
+
+    while(length(node.stack) > 0){
+        idx <- length(node.stack)
+        node <- node.stack[[idx]]
+        path <- path.stack[[idx]]
+        node.stack[[idx]] <- NULL
+        path.stack[[idx]] <- NULL
+
+        child.edges <- children[[node]]
+        if( length(child.edges) == 0 ){
+            if( node <= nTips ){
+                paths[[node]] <- path
+            }
+            next
+        }
+
+        for(edge.idx in rev(child.edges)){
+            child <- tree$edge[edge.idx, 2]
+            node.stack[[length(node.stack) + 1L]] <- child
+            path.stack[[length(path.stack) + 1L]] <- c(path, edge.idx)
+        }
+    }
+
+    return(paths)
+}
+
+subtree_edges_for_edge <- function(tree, edge.idx, children=NULL){
+    if( is.null(children) ){
+        children <- tree_children_edges(tree)
+    }
+
+    result <- integer()
+    stack <- edge.idx
+    while(length(stack) > 0){
+        current <- stack[[length(stack)]]
+        stack <- stack[-length(stack)]
+        result <- c(result, current)
+        child.edges <- children[[tree$edge[current, 2]]]
+        if( length(child.edges) > 0 ){
+            stack <- c(stack, child.edges)
+        }
+    }
+
+    return(result)
+}
+
+normalize_edgelist_matrix <- function(elist){
+    if( length(elist) == 0 ){
+        return(matrix(character(), ncol=2))
+    }
+    if( is.null(dim(elist)) ){
+        elist <- matrix(elist, ncol=2, byrow=TRUE)
+    } else {
+        elist <- as.matrix(elist)
+    }
+    storage.mode(elist) <- "character"
+    return(elist)
+}
+
+connected_components_from_edgelist <- function(elist){
+    elist <- normalize_edgelist_matrix(elist)
+    if( nrow(elist) == 0 ){
+        return(list())
+    }
+
+    vertices <- unique(c(elist[, 1], elist[, 2]))
+    adjacency <- stats::setNames(vector("list", length(vertices)), vertices)
+    for(idx in seq_len(nrow(elist))){
+        u <- elist[idx, 1]
+        v <- elist[idx, 2]
+        adjacency[[u]] <- unique(c(adjacency[[u]], v))
+        adjacency[[v]] <- unique(c(adjacency[[v]], u))
+    }
+
+    visited <- stats::setNames(rep(FALSE, length(vertices)), vertices)
+    components <- list()
+    for(vertex in vertices){
+        if( visited[[vertex]] ){
+            next
+        }
+        stack <- vertex
+        component <- character()
+        while(length(stack) > 0){
+            current <- stack[[length(stack)]]
+            stack <- stack[-length(stack)]
+            if( visited[[current]] ){
+                next
+            }
+            visited[[current]] <- TRUE
+            component <- c(component, current)
+            neighbors <- adjacency[[current]]
+            if( length(neighbors) > 0 ){
+                stack <- c(stack, rev(neighbors[!visited[neighbors]]))
+            }
+        }
+        components[[length(components) + 1L]] <- component
+    }
+
+    return(components)
+}
+
+block_diag_matrix <- function(blocks){
+    blocks <- Filter(function(x) !is.null(x) && length(x) > 0 && all(dim(x) > 0), blocks)
+    if( length(blocks) == 0 ){
+        return(matrix(0, 0, 0))
+    }
+
+    nrows <- vapply(blocks, nrow, integer(1))
+    ncols <- vapply(blocks, ncol, integer(1))
+    result <- matrix(0, sum(nrows), sum(ncols))
+
+    row.offset <- 0L
+    col.offset <- 0L
+    for(idx in seq_along(blocks)){
+        block <- as.matrix(blocks[[idx]])
+        row.idx <- seq_len(nrows[[idx]]) + row.offset
+        col.idx <- seq_len(ncols[[idx]]) + col.offset
+        result[row.idx, col.idx] <- block
+        row.offset <- row.offset + nrows[[idx]]
+        col.offset <- col.offset + ncols[[idx]]
+    }
+
+    return(result)
+}
+
+l1ou_supports_multicore <- function(){
+    return(.Platform$OS.type != "windows" && requireNamespace("parallel", quietly=TRUE))
+}
+
+l1ou_mclapply <- function(X, FUN, ..., mc.cores=1L){
+    if( mc.cores <= 1L || !l1ou_supports_multicore() ){
+        return(lapply(X, FUN, ...))
+    }
+    parallel_mclapply <- getFromNamespace("mclapply", "parallel")
+    return(parallel_mclapply(X=X, FUN=FUN, ..., mc.cores=mc.cores))
+}
+
+l1ou_require_genlasso <- function(){
+    if( !requireNamespace("genlasso", quietly=TRUE) ){
+        stop("estimate_convergent_regimes(method=\"rr\") requires the optional package 'genlasso'.")
+    }
+}
+
 ## This function is useful for handling missing values in multivariate regression. 
 ## It generates a list of design matrices and trees considering according to the missing values.
 gen_tree_array <- function(tree, Y){ 
     ## here I assume that the tree tip labels match the Y matrix rows 
     ## in the same order.
     tree.list <- list()
+    X.1 <- generate_design_matrix(tree, type="simpX")
+    rownames(X.1) <- tree$tip.label
     for(trait.idx in 1:ncol(Y)){
         availables <- rownames(Y)[!is.na(Y[,trait.idx])]
 
         tr <- drop.tip(tree, setdiff(tree$tip.label, availables))
         tr <- reorder(tr, "postorder")
 
-        X.1 <- generate_design_matrix(tree, type="simpX")
-        rownames(X.1) <- tree$tip.label
         X.2 <- generate_design_matrix(tr, type="simpX")
         rownames(X.2) <- tr$tip.label
 
@@ -132,6 +335,7 @@ gen_tree_array <- function(tree, Y){
         }
         tr$old.order <- old.order
         tr$Z <- X.2
+        tr$edge.age <- tree_edge_ages(tr)
         tree.list[[trait.idx]]  <-  tr
     }
     return(tree.list)
@@ -177,16 +381,20 @@ print_out <- function(eModel, quietly){
 }
 
 
-rescale_matrix <- function(Y){
-    #for(i in 1:ncol(Y)){
-    #    Y[,i] = Y[,i] - mean(Y[,i])
-    #}
-    #Y   = Y%*%(0.1*nrow(Y)*diag(apply(Y,2,lnorm,l=2)^-1))
-  
+rescale_matrix_and_error <- function(Y, input_error=NULL){
     scale.values  <- apply(Y, 2, lnorm, l=2)
     scale.values[scale.values == 0] <- 1
-    Y  <- 0.1*nrow(Y)*scale(Y, center = TRUE, scale = scale.values)
-    return(Y)
+    mult <- 0.1*nrow(Y)
+
+    Y  <- mult*scale(Y, center = TRUE, scale = scale.values)
+    if( !is.null(input_error) ){
+        input_error <- sweep(input_error, 2, (mult/scale.values)^2, FUN="*")
+    }
+    return(list(Y=Y, input_error=input_error))
+}
+
+rescale_matrix <- function(Y){
+    return(rescale_matrix_and_error(Y)$Y)
 }
 
 
@@ -235,29 +443,24 @@ correct_unidentifiability <- function(tree, shift.configuration, opt){
 
     if( length(shift.configuration) < 2)  { return(shift.configuration) }
     shift.configuration = sort(shift.configuration)
-    nTips    = length(tree$tip.label)
-    nN       = nrow(opt$Z)
+    nTips <- nrow(opt$Z)
 
-    all.covered.tips = numeric()
-    identifiable = TRUE
-    for(sp in shift.configuration){
-        covered.tips = which( opt$Z[,sp] > 0 )
-        nUniqueTips = length( setdiff(covered.tips, all.covered.tips) )
-        if ( nUniqueTips == 0 ){
-            shift.configuration = setdiff(shift.configuration, sp)
-            identifiable = FALSE
+    all.covered.tips <- rep(FALSE, nTips)
+    keep <- rep(TRUE, length(shift.configuration))
+    for(idx in seq_along(shift.configuration)){
+        covered.tips <- opt$Z[, shift.configuration[[idx]]] > 0
+        if( !any(covered.tips & !all.covered.tips) ){
+            keep[[idx]] <- FALSE
         }
-        all.covered.tips = union(covered.tips, all.covered.tips)
+        all.covered.tips <- all.covered.tips | covered.tips
     }
 
-    if( identifiable ){ return(shift.configuration) }
+    if( all(keep) ){ return(shift.configuration) }
 
+    shift.configuration <- shift.configuration[keep]
     while ( length(shift.configuration) > 1 ) {
-        coverage = c()
-        for(sp in shift.configuration)
-            coverage = union( coverage, which(opt$Z[,sp] > 0) )
-
-        if( length( setdiff(1:nN, coverage) ) == 0 ){
+        coverage <- rowSums(opt$Z[, shift.configuration, drop=FALSE] > 0) > 0
+        if( all(coverage) ){
             shift.configuration = shift.configuration[-which.max(shift.configuration)]
         } else { break }
     }
@@ -340,9 +543,8 @@ convert_shifts2regions <-function(tree, shift.configuration, shift.values){
 
     stopifnot( length(shift.configuration) == length(shift.values) )
 
-    nTips   = length(tree$tip.label)
     nEdges  = Nedge(tree)
-    g       = graph.edgelist(tree$edge, directed = TRUE)
+    children = tree_children_edges(tree)
     o.vec = rep(0, nEdges)
 
     prev.val <-options()$warn 
@@ -350,15 +552,8 @@ convert_shifts2regions <-function(tree, shift.configuration, shift.values){
     if( length(shift.configuration) > 0)
         for(itr in 1:length(shift.configuration) ){
             eIdx     = shift.configuration[[itr]]
-            vIdx     = tree$edge[eIdx, 2]
-
             o.vec.tmp = rep(0, nEdges)
-
-            path2tips = get.shortest.paths(g, vIdx, to=1:nTips, mode ="out", output="epath")$epath
-            o.vec.tmp[eIdx] = shift.values[[itr]]
-            for(i in 1:nTips){
-                o.vec.tmp[path2tips[[i]]] =  shift.values[[itr]]
-            }
+            o.vec.tmp[subtree_edges_for_edge(tree, eIdx, children=children)] = shift.values[[itr]]
             o.vec = o.vec + o.vec.tmp 
         }
     options(warn = prev.val)
@@ -382,14 +577,11 @@ normalize_tree <- function(tree, check.ultrametric=TRUE){
     }
 
     nTips  = length(tree$tip.label)
-    rNode  = nTips + 1 
-    nEdges = Nedge(tree)
-
-    g        = graph.edgelist(tree$edge, directed = TRUE)
-    root2tip = get.shortest.paths(g, rNode, to=1:nTips, mode="out", output="epath")$epath
+    children <- tree_children_edges(tree)
+    depths <- tree_node_depths(tree, children=children)
 
     root.edge <- ifelse(is.null(tree$root.edge), 0, tree$root.edge)
-    Tval     = root.edge + sum(tree$edge.length[root2tip[[1]] ])
+    Tval     = root.edge + max(depths[seq_len(nTips)])
     #Tval = mean ( sapply( 1:nTips, FUN=function(x) sum(tree$edge.length[root2tip[[x]]])   )  )
 
     tree$edge.length = tree$edge.length / Tval
@@ -411,7 +603,7 @@ normalize_tree <- function(tree, check.ultrametric=TRUE){
 #' mininum and maximum of the standardized trait: (min-m)/sd and (max-m)/sd.
 #' The place where the bars start corresponds to the mean of the original trait values.
 #'
-#'@param model object of class l1ou returned by \code{\link{estimate_shift_configuration}}.
+#'@param x object of class l1ou returned by \pkg{kfl1ou}.
 #'@param palette vector of colors, of size the number of shifts plus one. The last element is the color for the background regime (regime at the root).
 #'@param edge.shift.ann logical. If TRUE, annotates edges by shift values. 
 #'@param edge.shift.adj adjustment argument to give to edgelabel() for labeling edges by shift values.
@@ -429,16 +621,21 @@ normalize_tree <- function(tree, check.ultrametric=TRUE){
 #'@examples
 #' 
 #' data(lizard.traits, lizard.tree)
-#' Y <- lizard.traits[,1]
-#' eModel <- estimate_shift_configuration(lizard.tree, Y)
-#' nEdges <- Nedge(lizard.tree)
+#' keep <- lizard.tree$tip.label[1:15]
+#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- reorder(tree, "postorder")
+#' Y <- lizard.traits[keep, 1]
+#' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
+#' nEdges <- Nedge(tree)
 #' ew <- rep(1,nEdges) 
-#' ew[eModel$shift.configuration] <- 3
+#' if (length(eModel$shift.configuration) > 0) {
+#'   ew[eModel$shift.configuration] <- 3
+#' }
 #' plot(eModel, cex=0.5, label.offset=0.02, edge.width=ew)
 #'
 #'@export
 #'
-plot.l1ou <- function (model, palette = NA, 
+plot.l1ou <- function (x, palette = NA, 
                        edge.shift.ann=TRUE,  edge.shift.adj=c(0.5,-.025),
                        edge.label=c(), asterisk = TRUE,
                        edge.label.ann=FALSE, edge.label.adj=c(0.5,    1), 
@@ -446,6 +643,7 @@ plot.l1ou <- function (model, palette = NA,
                        edge.ann.cex = 1, 
                        plot.bar = TRUE, bar.axis = TRUE, ...) 
 {
+    model = x
     tree = model$tree
     s.c = model$shift.configuration
     stopifnot(identical(tree$edge, reorder(tree, "postorder")$edge))
@@ -501,7 +699,8 @@ plot.l1ou <- function (model, palette = NA,
 
     ##A dummy plot just to get the plotting order
     plot.phylo(tree, plot=FALSE)
-    lastPP = get("last_plot.phylo", envir = .PlotPhyloEnv)
+    ape_plot_env = getFromNamespace(".PlotPhyloEnv", "ape")
+    lastPP = get("last_plot.phylo", envir = ape_plot_env)
     o = order(lastPP$yy[1:length(tree$tip.label)])
     par.new.default <- par()$new ##just to be careful with the global variable
     par(new=TRUE)
@@ -536,7 +735,7 @@ plot.l1ou <- function (model, palette = NA,
 
     if (length(s.c) > 0) {
         if (asterisk) {
-            Z = l1ou:::generate_design_matrix(tree, type = "apprX")
+            Z = generate_design_matrix(tree, type = "apprX")
             for (idx in 1:length(s.c)) {
                 sP = s.c[[idx]]
                 pos = max(Z[, sP])
@@ -563,7 +762,7 @@ plot.l1ou <- function (model, palette = NA,
             }
             tree$edge.label = edge.label
         }
-        Z = l1ou:::generate_design_matrix(tree, type = "apprX")
+        Z = generate_design_matrix(tree, type = "apprX")
         if (!is.na(edge.label.pos)) 
             if (edge.label.pos < 0 || edge.label.pos > 1) 
                 stop("edge.label.pos should be between 0 and 1")
@@ -588,50 +787,65 @@ plot.l1ou <- function (model, palette = NA,
 #'
 #' prints the list of the shift configurations sorted by number of shifts and corresponding ic scores.
 #'
-#'@param model object of class l1ou returned by \code{\link{estimate_shift_configuration}}.
+#'@param fitted object of class l1ou returned by \pkg{kfl1ou}.
 #'@param ... further arguments. 
 #'
 #'@return 
 #'\item{shift.configurations}{list of shift configurations sorted by number of shifts.}
-#'\item{scores}{list of scores corresponding to shift.configurations.}
-#'\item{nShifts}{number of shifts corresponding to the shift configurations.}
+#'\item{scores}{numeric vector of scores corresponding to shift.configurations.}
+#'\item{nShifts}{integer vector giving the number of shifts in each configuration.}
 #'
 #'@examples
 #' 
 #' data(lizard.traits, lizard.tree)
-#' Y <- lizard.traits[,1]
-#' eModel <- estimate_shift_configuration(lizard.tree, Y)
+#' keep <- lizard.tree$tip.label[1:15]
+#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- reorder(tree, "postorder")
+#' Y <- lizard.traits[keep, 1]
+#' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 #' model.profile  <- profile(eModel)
 #' plot(model.profile$nShifts, model.profile$scores)
 #'
 #'@export
 #'
-profile.l1ou <- function(model, ...)
+profile.l1ou <- function(fitted, ...)
 {
+    model <- fitted
 
     profile.data = model$profile
-    p.d = list()
-    profile.data$scores = profile.data$scores[order(profile.data$scores)]
-    profile.data$configurations = profile.data$configurations[order(profile.data$scores)]
-    lens = unlist(lapply(profile.data$configurations, length))
-    profile.data$scores = profile.data$scores[order(lens)]
-    profile.data$configurations = profile.data$configurations[order(lens)]
-    min.score = min(profile.data$scores)
-    clength = -1
-    counter = 1
-    for (i in 1:length(profile.data$scores)) {
-        if (clength == length(profile.data$configurations[[i]])) {
+    if( is.null(profile.data) || is.null(profile.data$scores) ||
+        is.null(profile.data$configurations) || length(profile.data$scores) == 0L ){
+        if( is.null(model$score) || is.null(model$shift.configuration) ){
+            stop("profile information is unavailable for this model.")
+        }
+        profile.data <- list(scores = model$score,
+                             configurations = list(model$shift.configuration))
+    }
+
+    if( length(profile.data$scores) != length(profile.data$configurations) ){
+        stop("model$profile is malformed: scores and configurations must have the same length.")
+    }
+
+    p.d = list(shift.configurations = list(), scores = numeric(), nShifts = integer())
+    lens = vapply(profile.data$configurations, length, integer(1))
+    ord = order(lens, profile.data$scores)
+    profile.data$scores = profile.data$scores[ord]
+    profile.data$configurations = profile.data$configurations[ord]
+
+    clength = NA_integer_
+    counter = 0L
+    for (i in seq_along(profile.data$scores)) {
+        if (!is.na(clength) && clength == length(profile.data$configurations[[i]])) {
             next
         }
         clength = length(profile.data$configurations[[i]])
+        counter = counter + 1L
         p.d$shift.configurations[[counter]] = profile.data$configurations[[i]]
 
-        p.d$nShifts[[counter]] = length(profile.data$configurations[[i]])
-        p.d$scores [[counter]] = profile.data$score[[i]]
+        p.d$nShifts[counter] = length(profile.data$configurations[[i]])
+        p.d$scores[counter] = profile.data$scores[[i]]
         #p.d$gamma  [[counter]] = profile.data$moreInfo[[i]][[1]] ##the stationary variance
         #p.d$logLik [[counter]] = profile.data$moreInfo[[i]][[2]] ##the log likelihood
-
-        counter = counter + 1
     }
     return(p.d)
 }
@@ -639,7 +853,7 @@ profile.l1ou <- function(model, ...)
 #'
 #' Returns the best shift configuration with a given number of shifts among the shift configurations that have been evaluated.
 #'
-#'@param model object of class l1ou returned by \code{\link{estimate_shift_configuration}}.
+#'@param model object of class l1ou returned by \pkg{kfl1ou}.
 #'@param nShifts number of shifts.
 #'
 #'@return indices of the edges with shifts
@@ -650,7 +864,7 @@ get_shift_configuration <- function(model, nShifts){
     if( nShifts > length(p.d$shift.configurations)+1) # starts at 0 shifts
         stop("There is no configuration with the given number of shifts")
 
-    for( i in 1:length(p.d$shift.configurations)){
+    for( i in seq_along(p.d$shift.configurations)){
         if( length(p.d$shift.configurations[[i]]) == nShifts)
             return(p.d$shift.configurations[[i]])
     }
@@ -662,7 +876,7 @@ get_shift_configuration <- function(model, nShifts){
 #'
 #' prints out a summary of the model 
 #'
-#'@param model object of class l1ou returned by \code{\link{estimate_shift_configuration}}.
+#'@param model object of class l1ou returned by \pkg{kfl1ou}.
 #'@param nTop.scores number of top scores and shift configuration to print out.
 #'@param ... further arguments. 
 #'
@@ -670,13 +884,17 @@ get_shift_configuration <- function(model, nShifts){
 #'@examples
 #' 
 #' data(lizard.traits, lizard.tree)
-#' Y <- lizard.traits[,1]
-#' eModel <- estimate_shift_configuration(lizard.tree, Y)
+#' keep <- lizard.tree$tip.label[1:15]
+#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- reorder(tree, "postorder")
+#' Y <- lizard.traits[keep, 1]
+#' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 #' summary(eModel)
 #'
 #'@export
 #'
-summary.l1ou <- function(model, nTop.scores=5, ...){
+summary.l1ou <- function(object, nTop.scores=5, ...){
+    model <- object
     cat("number of shifts: ")
     cat(model$nShifts)
     cat("\n")
@@ -691,13 +909,16 @@ summary.l1ou <- function(model, nTop.scores=5, ...){
     print(tmp.mat)
 
     cat("shift edges and corresponding jump in the trait means at the tips:")
-    tmp.mat = t(as.matrix(model$shift.means))
-    if(length(model$shift.configuration)>0)
+    if(length(model$shift.configuration) > 0){
+      tmp.mat = t(as.matrix(model$shift.means))
       colnames(tmp.mat) = model$shift.configuration
-    if(!all(is.null(colnames(model$Y)))){
-      rownames(tmp.mat) = colnames(model$Y)
+      if(!all(is.null(colnames(model$Y)))){
+        rownames(tmp.mat) = colnames(model$Y)
+      }
+      print(tmp.mat)
+    } else {
+      cat("\n")
     }
-    print(tmp.mat)
 
     cat("\n")
     cat(paste0(model$l1ou.options$criterion, " score: "))
@@ -706,14 +927,17 @@ summary.l1ou <- function(model, nTop.scores=5, ...){
 
     tmp.mat = rbind(model$alpha, 
                     model$sigma2, 
-                    model$sigma2/(2 * model$alpha),
-                    model$logLik
-                    )
+                    model$sigma2/(2 * model$alpha))
     rownames(tmp.mat) = c("adaptation rate (alpha)", 
                           "variance (sigma2)", 
-                          "stationary variance (gamma)",
-                          "logLik"
-                          )
+                          "stationary variance (gamma)")
+    if( !is.null(model$sigma2_error) &&
+        any(is.finite(model$sigma2_error) & model$sigma2_error > 0) ){
+        tmp.mat = rbind(tmp.mat, model$sigma2_error)
+        rownames(tmp.mat)[nrow(tmp.mat)] = "measurement error variance (sigma2_error)"
+    }
+    tmp.mat = rbind(tmp.mat, model$logLik)
+    rownames(tmp.mat)[nrow(tmp.mat)] = "logLik"
     if(!all(is.null(colnames(model$Y)))){
         colnames(tmp.mat) = colnames(model$Y)
     }
@@ -740,7 +964,8 @@ summary.l1ou <- function(model, nTop.scores=5, ...){
 }
 
 #'@export
-print.l1ou <- function(model, ...){
+print.l1ou <- function(x, ...){
+    model <- x
     cat("number of shifts: ")
     cat(model$nShifts)
     cat("\n")
@@ -779,18 +1004,20 @@ print.l1ou <- function(model, ...){
 
     tmp.mat <- rbind(model$alpha, 
                     model$sigma2, 
-                    model$sigma2/(2 * model$alpha),
-                    model$logLik
-                    )
+                    model$sigma2/(2 * model$alpha))
     rownames(tmp.mat) <- c("adaptation rate (alpha)", 
                           "variance (sigma2)", 
-                          "stationary variance (gamma)",
-                          "logLik"
-                          )
+                          "stationary variance (gamma)")
+    if( !is.null(model$sigma2_error) &&
+        any(is.finite(model$sigma2_error) & model$sigma2_error > 0) ){
+        tmp.mat <- rbind(tmp.mat, model$sigma2_error)
+        rownames(tmp.mat)[nrow(tmp.mat)] <- "measurement error variance (sigma2_error)"
+    }
+    tmp.mat <- rbind(tmp.mat, model$logLik)
+    rownames(tmp.mat)[nrow(tmp.mat)] <- "logLik"
     if(!all(is.null(colnames(model$Y)))){
         colnames(tmp.mat) <- colnames(model$Y)
     }
     print(tmp.mat)
     cat("\n")
 }
-

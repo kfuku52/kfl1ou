@@ -5,9 +5,14 @@
 
 using namespace Rcpp;
 
+#ifdef RCPP_USE_GLOBAL_ROSTREAM
+Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
+Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
+#endif
+
 // add_configuration_score_to_db
 void add_configuration_score_to_db(std::string str_key, double value, std::string mInfo);
-RcppExport SEXP l1ou_add_configuration_score_to_db(SEXP str_keySEXP, SEXP valueSEXP, SEXP mInfoSEXP) {
+RcppExport SEXP _kfl1ou_add_configuration_score_to_db(SEXP str_keySEXP, SEXP valueSEXP, SEXP mInfoSEXP) {
 BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< std::string >::type str_key(str_keySEXP);
@@ -19,7 +24,7 @@ END_RCPP
 }
 // get_stored_config_score
 Rcpp::List get_stored_config_score();
-RcppExport SEXP l1ou_get_stored_config_score() {
+RcppExport SEXP _kfl1ou_get_stored_config_score() {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -29,7 +34,7 @@ END_RCPP
 }
 // erase_configuration_score_db
 void erase_configuration_score_db();
-RcppExport SEXP l1ou_erase_configuration_score_db() {
+RcppExport SEXP _kfl1ou_erase_configuration_score_db() {
 BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     erase_configuration_score_db();
@@ -38,7 +43,7 @@ END_RCPP
 }
 // get_score_of_configuration
 Rcpp::List get_score_of_configuration(std::string str_key);
-RcppExport SEXP l1ou_get_score_of_configuration(SEXP str_keySEXP) {
+RcppExport SEXP _kfl1ou_get_score_of_configuration(SEXP str_keySEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -47,9 +52,31 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// get_runtime_thread_settings
+Rcpp::List get_runtime_thread_settings();
+RcppExport SEXP _kfl1ou_get_runtime_thread_settings() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(get_runtime_thread_settings());
+    return rcpp_result_gen;
+END_RCPP
+}
+// set_runtime_thread_settings
+Rcpp::List set_runtime_thread_settings(int blas_threads, int openmp_threads);
+RcppExport SEXP _kfl1ou_set_runtime_thread_settings(SEXP blas_threadsSEXP, SEXP openmp_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type blas_threads(blas_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type openmp_threads(openmp_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(set_runtime_thread_settings(blas_threads, openmp_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // cmp_sqrt_OU_covariance
 Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, double rootEdge);
-RcppExport SEXP l1ou_cmp_sqrt_OU_covariance(SEXP edgeListSEXP, SEXP nTipsSEXP, SEXP rootEdgeSEXP) {
+RcppExport SEXP _kfl1ou_cmp_sqrt_OU_covariance(SEXP edgeListSEXP, SEXP nTipsSEXP, SEXP rootEdgeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -59,4 +86,29 @@ BEGIN_RCPP
     rcpp_result_gen = Rcpp::wrap(cmp_sqrt_OU_covariance(edgeList, nTips, rootEdge));
     return rcpp_result_gen;
 END_RCPP
+}
+
+RcppExport void effectiveSampleSize(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+RcppExport void threepoint_l1ou(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+
+static const R_CMethodDef CEntries[] = {
+    {"effectiveSampleSize", (DL_FUNC) &effectiveSampleSize, 10},
+    {"threepoint_l1ou",     (DL_FUNC) &threepoint_l1ou,     13},
+    {NULL, NULL, 0}
+};
+
+static const R_CallMethodDef CallEntries[] = {
+    {"_kfl1ou_add_configuration_score_to_db", (DL_FUNC) &_kfl1ou_add_configuration_score_to_db, 3},
+    {"_kfl1ou_get_stored_config_score", (DL_FUNC) &_kfl1ou_get_stored_config_score, 0},
+    {"_kfl1ou_erase_configuration_score_db", (DL_FUNC) &_kfl1ou_erase_configuration_score_db, 0},
+    {"_kfl1ou_get_score_of_configuration", (DL_FUNC) &_kfl1ou_get_score_of_configuration, 1},
+    {"_kfl1ou_get_runtime_thread_settings", (DL_FUNC) &_kfl1ou_get_runtime_thread_settings, 0},
+    {"_kfl1ou_set_runtime_thread_settings", (DL_FUNC) &_kfl1ou_set_runtime_thread_settings, 2},
+    {"_kfl1ou_cmp_sqrt_OU_covariance", (DL_FUNC) &_kfl1ou_cmp_sqrt_OU_covariance, 3},
+    {NULL, NULL, 0}
+};
+
+RcppExport void R_init_kfl1ou(DllInfo *dll) {
+    R_registerRoutines(dll, CEntries, CallEntries, NULL, NULL);
+    R_useDynamicSymbols(dll, FALSE);
 }

@@ -4,17 +4,17 @@
 \alias{profile.l1ou}
 \title{Prints out a summary of the shift configurations investigated by \code{\link{estimate_shift_configuration}}}
 \usage{
-\method{profile}{l1ou}(model, ...)
+\method{profile}{l1ou}(fitted, ...)
 }
 \arguments{
-\item{model}{object of class l1ou returned by \code{\link{estimate_shift_configuration}}.}
+\item{fitted}{object of class l1ou returned by \pkg{kfl1ou}.}
 
 \item{...}{further arguments.}
 }
 \value{
 \item{shift.configurations}{list of shift configurations sorted by number of shifts.}
-\item{scores}{list of scores corresponding to shift.configurations.}
-\item{nShifts}{number of shifts corresponding to the shift configurations.}
+\item{scores}{numeric vector of scores corresponding to shift.configurations.}
+\item{nShifts}{integer vector giving the number of shifts in each configuration.}
 }
 \description{
 prints the list of the shift configurations sorted by number of shifts and corresponding ic scores.
@@ -22,10 +22,12 @@ prints the list of the shift configurations sorted by number of shifts and corre
 \examples{
 
 data(lizard.traits, lizard.tree)
-Y <- lizard.traits[,1]
-eModel <- estimate_shift_configuration(lizard.tree, Y)
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- lizard.traits[keep, 1]
+eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 model.profile  <- profile(eModel)
 plot(model.profile$nShifts, model.profile$scores)
 
 }
-

@@ -11,7 +11,8 @@ estimate_shift_configuration(tree, Y,
   alpha.starting.value = NA, alpha.upper = alpha_upper_bound(tree),
   alpha.lower = NA, lars.alg = c("lasso", "stepwise"), nCores = 1,
   rescale = TRUE, edge.length.threshold = .Machine$double.eps,
-  grp.delta = 1/16, grp.seq.ub = 5, l1ou.options = NA)
+  grp.delta = 1/16, grp.seq.ub = 5, measurement_error = FALSE,
+  input_error = NULL, l1ou.options = NA)
 }
 \arguments{
 \item{tree}{ultrametric tree of class phylo with branch lengths, and edges in postorder.}
@@ -36,7 +37,11 @@ estimate_shift_configuration(tree, Y,
 
 \item{lars.alg}{model selection algorithm for LARS in univariate case.}
 
-\item{nCores}{number of processes to be created for parallel computing. If nCores=1 then it will run sequentially. Otherwise, it creates nCores processes by using mclapply function. For parallel computing it, requires parallel package.}
+\item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
+then it runs sequentially. Otherwise, when fork-based parallelism is
+available, \code{kfl1ou} may use up to \code{nCores} forked workers via
+\code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
+overall computation respects this budget when possible.}
 
 \item{rescale}{logical. If TRUE, the columns of the trait matrix are first rescaled so that all have the same l2-norm. If TRUE, the scores will be based on the rescale one.}
 
@@ -45,6 +50,10 @@ estimate_shift_configuration(tree, Y,
 \item{grp.delta}{internal (used when the data contain multiple traits). The input lambda sequence for the group lasso, in `grplasso', will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).}
 
 \item{grp.seq.ub}{(used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).}
+
+\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{phylolm}.}
+
+\item{input_error}{optional vector or matrix of known observation error variances. This requires a \code{phylolm} version that supports \code{input_error}.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }
@@ -59,6 +68,7 @@ estimate_shift_configuration(tree, Y,
 \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
 \item{alpha}{maximum likelihood estimate(s) of the adaptation rate \eqn{\alpha}{alpha}, one per trait.}
 \item{sigma2}{maximum likelihood estimate(s) of the variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
+\item{sigma2_error}{maximum likelihood estimate(s) of the observation-level measurement error variance, one per trait.}
 \item{mu}{fitted values, i.e. estimated trait means.}
 \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 \item{score}{information criterion value of the estimated shift configuration.}
@@ -73,37 +83,50 @@ Instantaneous shifts in the optimal trait value affect the traits over time.
 }
 \details{
 For information criteria: see \code{\link{configuration_ic}}.
+
+\code{nCores} is treated as the total CPU budget for \code{kfl1ou}, not only
+as the number of forked worker processes. When \code{nCores > 1} and
+fork-based parallelism is available, \code{kfl1ou} may use up to
+\code{nCores} workers via \code{mclapply}. In that case BLAS/OpenMP threads
+are reduced to 1 per process when supported, nested \code{kfl1ou} calls are run
+sequentially, and the previous thread settings are restored on exit. On
+platforms without fork-based parallelism, \code{kfl1ou} falls back to
+sequential execution. For backward compatibility, fitted objects still use
+class \code{"l1ou"} and store their options in the \code{l1ou.options}
+component.
 }
 \examples{
 
 data(lizard.tree, lizard.traits)
-# here lizard.traits already has row names:
-rownames(lizard.traits)
-# also, it is a matrix (not data frame) so columns retain row names:
-names(lizard.traits[,1])
-# If your trait data "dat" does not have row names but instead has
-# species names in a column called "species", then you can
-# create row names containing the species names like this:
-# rownames(dat) <- dat$species
-lizard <- adjust_data(lizard.tree, lizard.traits[,1])
-eModel <- estimate_shift_configuration(lizard$tree, lizard$Y)
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- lizard.traits[keep, 1]
+lizard <- adjust_data(tree, Y)
+eModel <- estimate_shift_configuration(
+  lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2
+)
 eModel
  
-## use parallel computing to accelerate the computation
-eModel.par <- estimate_shift_configuration(lizard$tree, lizard$Y, nCores=8)
+## use up to two cores when available
+eModel.par <- estimate_shift_configuration(
+  lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, nCores=2
+)
+eModel.par$nShifts
 
-stopifnot( identical( sort(eModel.par$shift.configuration), sort(eModel$shift.configuration) ) ) ## TRUE
-
-nEdges <- Nedge(lizard.tree) # total number of edges
-ew <- rep(1,nEdges)  # to set default edge width of 1
-ew[eModel$shift.configuration] <- 3   # to widen edges with a shift 
+nEdges <- Nedge(lizard$tree) # total number of edges
+ew <- rep(1, nEdges)  # to set default edge width of 1
+if (length(eModel$shift.configuration) > 0) {
+  ew[eModel$shift.configuration] <- 3   # widen edges with a shift
+}
 plot(eModel, cex=0.5, label.offset=0.02, edge.width=ew)
 
 # example to constrain the set of candidate branches with a shift
-eModel <- estimate_shift_configuration(lizard$tree, lizard$Y, criterion="AICc")
-ce <- eModel$shift.configuration # set of candidate edges
-eModel <- estimate_shift_configuration(lizard$tree, lizard$Y, candid.edges = ce)
-plot(eModel, edge.ann.cex=0.7, cex=0.5, label.offset=0.02)
+ce <- seq_len(min(5, Nedge(lizard$tree)))
+eModel.ce <- estimate_shift_configuration(
+  lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, candid.edges=ce
+)
+plot(eModel.ce, edge.ann.cex=0.7, cex=0.5, label.offset=0.02)
 
 }
 \references{
@@ -111,4 +134,3 @@ Mohammad Khabbazian, Ricardo Kriebel, Karl Rohe, and Cécile Ané (2016).
 "Fast and accurate detection of evolutionary shifts in Ornstein-Uhlenbeck models".
 Methods in Ecology and Evolution. doi:10.1111/2041-210X.12534
 }
-

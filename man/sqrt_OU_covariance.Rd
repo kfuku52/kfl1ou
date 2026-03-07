@@ -5,7 +5,8 @@
 \title{(inverse) square root of the phylogenetic covariance}
 \usage{
 sqrt_OU_covariance(tree, alpha = 0, root.model = c("OUfixedRoot",
-  "OUrandomRoot"), check.order = TRUE, check.ultrametric = TRUE)
+  "OUrandomRoot"), sigma2 = 1, sigma2_error = 0, input_error = NULL,
+  check.order = TRUE, check.ultrametric = TRUE)
 }
 \arguments{
 \item{tree}{tree of class phylo with branch lengths. If alpha>0, i.e. under the OU model, the tree has to be ultrametric.}
@@ -13,6 +14,12 @@ sqrt_OU_covariance(tree, alpha = 0, root.model = c("OUfixedRoot",
 \item{alpha}{adaptation rate for the OU model. The default is 0, which corresponds to the BM mode with a fixed ancestral state at the root.}
 
 \item{root.model}{ancestral state model at the root.}
+
+\item{sigma2}{phylogenetic variance rate used to standardize observation-level error terms.}
+
+\item{sigma2_error}{scalar observation-level error variance to add to each tip.}
+
+\item{input_error}{optional vector of tip-specific observation error variances.}
 
 \item{check.order}{logical. If TRUE, the order will be checked to be in postorder traversal.}
 
@@ -50,9 +57,12 @@ print(D)
 
 ##Here is the examples on how to get the contrasts using sqrt_OU_covariance
 data(lizard.tree, lizard.traits)
-lizard <- adjust_data(lizard.tree, lizard.traits[,1])
-eModel <- estimate_shift_configuration(lizard$tree, lizard$Y)
-theta <- eModel$intercept + l1ou:::convert_shifts2regions(eModel$tree,
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+lizard <- adjust_data(tree, lizard.traits[keep, 1])
+eModel <- fit_OU(lizard$tree, lizard$Y, shift.configuration=1L, criterion="AICc")
+theta <- eModel$intercept + convert_shifts2regions(eModel$tree,
                              eModel$shift.configuration, eModel$shift.values)
 REf <- sqrt_OU_covariance(eModel$tree, alpha=eModel$alpha,
                                          root.model = "OUfixedRoot",
@@ -61,9 +71,9 @@ REf <- sqrt_OU_covariance(eModel$tree, alpha=eModel$alpha,
  covSqrtf   <- REf$sqrtSigma
 # `covInverseSqrtf` represents the transpose of square root of  the inverse matrix of covariance for FixedRoot model.
 # `covSqrtf` represents the square root of the covariance matrix for FixedRoot model.
- Y  <- rTraitCont(eModel$tree, "OU", theta=theta, 
-                                     alpha=eModel$alpha, 
-                                     sigma=eModel$sigma, root.value=eModel$intercept)
+ Y  <- rTraitCont(eModel$tree, "OU", theta=theta,
+                                     alpha=eModel$alpha,
+                                     sigma=sqrt(eModel$sigma2), root.value=eModel$intercept)
  contrast    <-  covInverseSqrtf\%*\%(Y - eModel$mu)
  
 
@@ -75,4 +85,3 @@ Methods in Ecology and Evolution. doi:10.1111/2041-210X.12534
 
 Eric A. Stone. 2011. "Why the phylogenetic regression appears robust to tree misspecification". Systematic Biology, 60(3):245-260.
 }
-

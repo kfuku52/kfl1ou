@@ -1,0 +1,24 @@
+kfl1ou is an independently maintained fork of l1ou.
+
+Original l1ou authors credited in the package metadata:
+- Mohammad Khabbazian
+- Cecile Ane
+- Qing Yu ("Sabrina")
+
+Current kfl1ou maintainer:
+- Kenji Fukushima
+
+License
+-------
+This repository is distributed under the GNU General Public License, version 3,
+or (at your option) any later version, as indicated by `License: GPL (>= 3)` in
+`DESCRIPTION`.
+
+The full GPL v3 license text is included in `LICENSE`. Because kfl1ou includes
+modifications of code originally distributed as l1ou, redistribution of this
+package must comply with the GPL terms.
+
+Copyright
+---------
+Copyright in the original l1ou code remains with its original authors.
+Copyright in subsequent modifications remains with their respective authors.

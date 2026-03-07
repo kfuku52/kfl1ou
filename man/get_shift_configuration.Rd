@@ -7,7 +7,7 @@
 get_shift_configuration(model, nShifts)
 }
 \arguments{
-\item{model}{object of class l1ou returned by \code{\link{estimate_shift_configuration}}.}
+\item{model}{object of class l1ou returned by \pkg{kfl1ou}.}
 
 \item{nShifts}{number of shifts.}
 }
@@ -17,4 +17,3 @@ indices of the edges with shifts
 \description{
 Returns the best shift configuration with a given number of shifts among the shift configurations that have been evaluated.
 }
-

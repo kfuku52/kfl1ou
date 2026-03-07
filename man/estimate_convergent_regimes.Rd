@@ -8,40 +8,52 @@ estimate_convergent_regimes(model, criterion = c("AICc", "pBIC", "BIC"),
   method = c("backward", "rr"), fixed.alpha = FALSE, nCores = 1)
 }
 \arguments{
-\item{model}{fitted object of class l1ou returned by \code{\link{estimate_shift_configuration}}.}
+\item{model}{fitted object of class l1ou returned by \pkg{kfl1ou}.}
 
 \item{criterion}{information criterion for model selection (see Details in \code{\link{configuration_ic}}).}
 
-\item{method}{search method for finding convergent regimes. ``rr'' is based on genlasso,
-a regularized linear regression estimation. Currenly, this method can only accept a single trait.
+\item{method}{search method for finding convergent regimes. ``rr'' is based on
+the optional \code{genlasso} package for regularized linear regression.
+Currenly, this method can only accept a single trait.
 The default ``backward'' method is a heuristic similar to \code{surface_backward}
 in the \code{surface} package,
 using backward steps to repeatedly merge similar regimes into convergent regimes.}
 
 \item{fixed.alpha}{indicates if the alpha parameters should be optimized while phylolm optimize the likelihood function.}
 
-\item{nCores}{number of processes to be created for parallel computing. If nCores=1 then it will run sequentially. Otherwise, it creates nCores processes by using mclapply function. For parallel computing it, requires parallel package.}
+\item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
+then it runs sequentially. Otherwise, when fork-based parallelism is
+available, \code{kfl1ou} may use up to \code{nCores} forked workers via
+\code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
+overall computation respects this budget when possible.}
 }
 \description{
 Takes a model previously estimated by \code{\link{estimate_shift_configuration}},
 including one or more traits and a configuration of evolutionary shifts, and detect which of these regime shifts
 are convergent.
 }
+\details{
+\code{nCores} follows the same total-budget semantics as in
+\code{\link{estimate_shift_configuration}}. When process parallelism is used,
+worker processes run with BLAS/OpenMP threads limited to 1 when supported,
+and the previous thread settings are restored on exit.
+Models created by \pkg{kfl1ou} retain class \code{"l1ou"} for backward
+compatibility with upstream code.
+}
 \examples{
 
-library(l1ou)
 data("lizard.traits", "lizard.tree")
-Y <- lizard.traits[, 1:1]
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- as.matrix(lizard.traits[keep, 1, drop = FALSE])
 ## first fit a model to find individual shifts (no convergence assumed):
-fit_ind <- estimate_shift_configuration(lizard.tree, Y, criterion="AICc")
-fit_ind
+fit_ind <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 ## then detect which of these shifts are convergent:
 fit_conv <- estimate_convergent_regimes(fit_ind, criterion="AICc")
-fit_conv
 plot(fit_conv)
 
 }
 \seealso{
 \code{\link{estimate_shift_configuration}}
 }
-

@@ -2,22 +2,30 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 add_configuration_score_to_db <- function(str_key, value, mInfo) {
-    invisible(.Call('l1ou_add_configuration_score_to_db', PACKAGE = 'l1ou', str_key, value, mInfo))
+    invisible(.Call('_kfl1ou_add_configuration_score_to_db', PACKAGE = 'kfl1ou', str_key, value, mInfo))
 }
 
 get_stored_config_score <- function() {
-    .Call('l1ou_get_stored_config_score', PACKAGE = 'l1ou')
+    .Call('_kfl1ou_get_stored_config_score', PACKAGE = 'kfl1ou')
 }
 
 erase_configuration_score_db <- function() {
-    invisible(.Call('l1ou_erase_configuration_score_db', PACKAGE = 'l1ou'))
+    invisible(.Call('_kfl1ou_erase_configuration_score_db', PACKAGE = 'kfl1ou'))
 }
 
 get_score_of_configuration <- function(str_key) {
-    .Call('l1ou_get_score_of_configuration', PACKAGE = 'l1ou', str_key)
+    .Call('_kfl1ou_get_score_of_configuration', PACKAGE = 'kfl1ou', str_key)
+}
+
+get_runtime_thread_settings <- function() {
+    .Call('_kfl1ou_get_runtime_thread_settings', PACKAGE = 'kfl1ou')
+}
+
+set_runtime_thread_settings <- function(blas_threads = -1L, openmp_threads = -1L) {
+    .Call('_kfl1ou_set_runtime_thread_settings', PACKAGE = 'kfl1ou', blas_threads, openmp_threads)
 }
 
 cmp_sqrt_OU_covariance <- function(edgeList, nTips, rootEdge) {
-    .Call('l1ou_cmp_sqrt_OU_covariance', PACKAGE = 'l1ou', edgeList, nTips, rootEdge)
+    .Call('_kfl1ou_cmp_sqrt_OU_covariance', PACKAGE = 'kfl1ou', edgeList, nTips, rootEdge)
 }
 

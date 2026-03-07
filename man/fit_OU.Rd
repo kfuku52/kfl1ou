@@ -8,7 +8,7 @@ fit_OU(tree, Y, shift.configuration, criterion = c("pBIC", "pBICess", "mBIC",
   "BIC", "AICc"), root.model = c("OUfixedRoot", "OUrandomRoot"),
   cr.regimes = NULL, alpha.starting.value = NA,
   alpha.upper = alpha_upper_bound(tree), alpha.lower = NA,
-  l1ou.options = NA)
+  measurement_error = FALSE, input_error = NULL, l1ou.options = NA)
 }
 \arguments{
 \item{tree}{ultrametric tree of class phylo, with branch lengths, and edges in postorder.}
@@ -21,11 +21,19 @@ fit_OU(tree, Y, shift.configuration, criterion = c("pBIC", "pBICess", "mBIC",
 
 \item{root.model}{model for the ancestral state at the root.}
 
+\item{cr.regimes}{optional list of convergent regimes. Each element contains
+the background regime (\code{0}) or a set of shift edges that should share the
+same optimum.}
+
 \item{alpha.starting.value}{optional starting value for the optimization of the phylogenetic adaptation rate.}
 
 \item{alpha.upper}{optional upper bound for the phylogenetic adaptation rate. The default value is log(2) over the minimum length of external branches, corresponding to a half life greater or equal to the minimum external branch length.}
 
 \item{alpha.lower}{optional lower bound for the phylogenetic adaptation rate.}
+
+\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{phylolm}.}
+
+\item{input_error}{optional vector or matrix of known observation error variances. This requires a \code{phylolm} version that supports \code{input_error}.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }
@@ -45,33 +53,26 @@ pBICess is a version of pBIC where the determinant term is replaced by a sum of 
 \examples{
 
 data(lizard.tree, lizard.traits)
-lizard <- adjust_data(lizard.tree, lizard.traits[,1])
-eModel <- estimate_shift_configuration(lizard$tree, lizard$Y)
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+lizard <- adjust_data(tree, lizard.traits[keep, 1])
+eModel <- estimate_shift_configuration(
+  lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2
+)
 
 ### building l1ou object out of the second best score 
-eModel2 = fit_OU(eModel$tree, eModel$Y, eModel$profile$configurations[[2]], 
-                          l1ou.options=eModel$l1ou.options)
+candidate <- eModel$profile$configurations[[min(2, length(eModel$profile$configurations))]]
+eModel2 <- fit_OU(
+  eModel$tree, eModel$Y, candidate, l1ou.options=eModel$l1ou.options
+)
 plot(eModel2)
 
 ### hypothesis testing
 
-data("lizard.traits", "lizard.tree")
-Y <- lizard.traits[,1:1]
-tr  <- lizard.tree
-
-tr <- multi2di(tr)
-tr <- reorder(tr, "postorder")
-
-### visualizing the tree with the edge indeces 
-plot(tr)
-edgelabels()
-
-## place the shift position based on the hypothesis
-shift.config <- c(116, 77)
-
-hModel <- fit_OU(tr, Y, shift.config, criterion="AICc")
-plot(hModel)
-print(hModel)
+shift.config <- 1L
+hModel <- fit_OU(lizard$tree, lizard$Y, shift.config, criterion="AICc")
+summary(hModel)
 
 }
 \references{
@@ -86,4 +87,3 @@ Methods in Ecology and Evolution. doi:10.1111/2041-210X.12534
 \seealso{
 \code{\link{estimate_shift_configuration}} \code{\link{adjust_data}}
 }
-

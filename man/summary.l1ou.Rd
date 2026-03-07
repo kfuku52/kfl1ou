@@ -4,10 +4,10 @@
 \alias{summary.l1ou}
 \title{Prints out a summary of the model}
 \usage{
-\method{summary}{l1ou}(model, nTop.scores = 5, ...)
+\method{summary}{l1ou}(object, nTop.scores = 5, ...)
 }
 \arguments{
-\item{model}{object of class l1ou returned by \code{\link{estimate_shift_configuration}}.}
+\item{object}{object of class l1ou returned by \pkg{kfl1ou}.}
 
 \item{nTop.scores}{number of top scores and shift configuration to print out.}
 
@@ -22,9 +22,11 @@ prints out a summary of the model
 \examples{
 
 data(lizard.traits, lizard.tree)
-Y <- lizard.traits[,1]
-eModel <- estimate_shift_configuration(lizard.tree, Y)
+keep <- lizard.tree$tip.label[1:15]
+tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- reorder(tree, "postorder")
+Y <- lizard.traits[keep, 1]
+eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 summary(eModel)
 
 }
-
