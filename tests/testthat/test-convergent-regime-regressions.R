@@ -231,3 +231,37 @@ test_that("multivariate second search only uses two grplasso passes", {
   expect_s3_class(fit, "l1ou")
   expect_equal(calls, 2L)
 })
+
+test_that("multivariate fit can parallelize over traits", {
+  dat <- small_lizard_data(n_tips = 12, traits = 1:2)
+  calls <- 0L
+
+  local_mocked_bindings(
+    l1ou_supports_multicore = function() TRUE,
+    l1ou_mclapply = function(X, FUN, ..., mc.cores = 1L) {
+      calls <<- calls + 1L
+      lapply(X, FUN, ...)
+    },
+    .package = "kfl1ou"
+  )
+
+  opt <- list(
+    criterion = "AICc",
+    root.model = "OUfixedRoot",
+    quietly = TRUE,
+    alpha.starting.value = NA_real_,
+    alpha.upper.bound = kfl1ou:::alpha_upper_bound(dat$tree),
+    alpha.lower.bound = NA_real_,
+    nCores = 2L,
+    parallel.computing = FALSE,
+    use.saved.scores = FALSE,
+    multivariate.missing = FALSE,
+    measurement_error = FALSE,
+    input_error = NULL
+  )
+
+  fit <- fit_OU(dat$tree, dat$Y, shift.configuration = integer(), l1ou.options = opt)
+
+  expect_s3_class(fit, "l1ou")
+  expect_gte(calls, 1L)
+})

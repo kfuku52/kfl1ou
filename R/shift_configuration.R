@@ -430,7 +430,9 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     if(est.alpha){
         apprX <- cached_weighted_design_matrix(opt$Z, opt$edge.age, type="apprX")
     }
-    for( i in 1:ncol(Ymv)){
+    whitening.blocks <- l1ou_trait_apply(
+        seq_len(ncol(Ymv)),
+        function(i){
         trait.input.error <- get_trait_input_error(opt, i, tree=tree, input_error=input.error.mv)
 
         if ( est.alpha == TRUE ){
@@ -459,9 +461,9 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
         }
         Cinvh   = t(RE$sqrtInvSigma) #\Sigma^{-1/2}
 
-        y.ava        = !is.na(Ymv[,i])
-        YY[y.ava, i] = as.matrix(Cinvh[y.ava, y.ava] %*% Ymv[y.ava, i])
-
+        y.ava <- !is.na(Ymv[,i])
+        yy <- Ymv[, i]
+        yy[y.ava] <- as.matrix(Cinvh[y.ava, y.ava] %*% Ymv[y.ava, i])
 
         ##X     = cbin(Cinvh%*%X,1)
         ##grpX  = adiag(grpX, X)  
@@ -469,7 +471,14 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
 	#NOTE: refer to whitening note above.
 	XX      = XX[-nrow(XX), ]
 
-	grpX.blocks[[i]] = XX
+	list(YY=yy, XX=XX)
+    },
+        opt=opt,
+        allow.parallel = ncol(Ymv) > 1L
+    )
+    for(i in seq_len(ncol(Ymv))){
+        YY[, i] <- whitening.blocks[[i]]$YY
+	grpX.blocks[[i]] <- whitening.blocks[[i]]$XX
     }
     grpX = block_diag_matrix(grpX.blocks)
     #NOTE: refer to the whitening note above.
@@ -478,7 +487,7 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     np     = ncol(grpX)
     grpY   = c(YY)
     grpX   = as.matrix(grpX[,-to.be.removed])
-    grpIdx = rep(1:ncol(X), ncol(Ymv))[-to.be.removed]
+    grpIdx = rep(seq_len(ncol(opt$Z)), ncol(Ymv))[-to.be.removed]
     ##grpIdx = rep(c(1:(ncol(X)-1),NA), ncol(Ymv))[-to.be.removed]
 
 
@@ -1005,38 +1014,22 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
     intercept = alpha = sigma2 = sigma2_error = rep(NA, ncol(Y))
     logLik = rep(NA, ncol(Y))
 
-    for(i in 1:ncol(Y)){
-        s.c <- c()
-        if(!is.null(opt$tree.list)){
-            tr <- opt$tree.list[[i]]
-            prepared.tree <- opt$prepared.tree.list[[i]]
-            edge.age <- tr$edge.age
-            y  <- as.matrix(Y[!is.na(Y[,i]), i])
-            input.error <- get_trait_input_error(opt, i, tree=tr, available=!is.na(Y[,i]))
-            if(length(shift.configuration) > 0){
-                augmented.s.c <- tr$old.order[shift.configuration] # index of shift edges in pruned tree, see gen_tree_array
-                s.c <- as.integer(augmented.s.c[!is.na(augmented.s.c)])
-            } else{
-                augmented.s.c <- c()
-            }
-        } else{
-            tr  <- tree
-            prepared.tree <- opt$prepared.tree
-            edge.age <- opt$edge.age
-            y   <- as.matrix(Y[,i])
-            s.c <- shift.configuration
-            input.error <- get_trait_input_error(opt, i, tree=tr)
-            augmented.s.c <- shift.configuration
-        }
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = ncol(Y) > 1L
+    )
 
-        nShifts = length(s.c)
-
-        fit <- my_phylolm_interface(tr, y, s.c, opt, input_error=input.error,
-                                    prepared.tree = prepared.tree)
-        if ( all(is.na(fit)) ){
+    for(i in seq_len(ncol(Y))){
+        fit <- trait.results[[i]]$fit
+        if(all(is.na(fit))){
             stop("model score is NA in fit_OU_model function! 
 		 This should not happen. Please set quietly to false to see the reason.")
         }
+
+        s.c <- trait.results[[i]]$s.c
+        edge.age <- if(!is.null(opt$tree.list)) trait.results[[i]]$tr$edge.age else opt$edge.age
+        augmented.s.c <- trait.results[[i]]$augmented.s.c
+        nShifts = length(s.c)
 
         alpha[i]  <- fit$optpar
         sigma2[i] <- fit$sigma2
@@ -1076,9 +1069,20 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
 
     rownames(optima) <- tree$tip.label
 
-    ##NOTE: it reads the score from the database 
-    ## and do not recompute the score. So it doesn't have any overhead.
-    score = cmp_model_score (tree, Y, shift.configuration, opt) 
+    score.info <- summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                              criterion=opt$criterion)
+    if(all(is.na(score.info))){
+        score <- Inf
+    } else{
+        score <- score.info$score
+    }
+    if(opt$use.saved.scores && !all(is.na(score.info))){
+        add_configuration_score_to_list(
+            shift.configuration,
+            score,
+            paste0(c(score.info$sigma2/(2 * score.info$alpha), score.info$logLik), collapse=" ")
+        )
+    }
     model.opt <- opt
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
@@ -1942,6 +1946,45 @@ resolve_l1ou_thread_limit <- function(nCores=1, parallel.computing=FALSE){
     return(nCores)
 }
 
+resolve_l1ou_worker_count <- function(nCores=1L, nTasks=1L){
+
+    nCores <- as.integer(nCores[[1]])
+    nTasks <- as.integer(nTasks[[1]])
+
+    if(is.na(nCores) || nCores < 1L){
+        nCores <- 1L
+    }
+    if(is.na(nTasks) || nTasks < 1L){
+        nTasks <- 1L
+    }
+    if(!l1ou_supports_multicore()){
+        return(1L)
+    }
+    return(min(nCores, nTasks))
+}
+
+l1ou_trait_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
+
+    if(length(X) == 0L){
+        return(vector("list", 0L))
+    }
+
+    nCores <- ifelse(is.null(opt$nCores), 1L, opt$nCores)
+    mc.cores <- if(allow.parallel){
+        resolve_l1ou_worker_count(nCores, length(X))
+    } else{
+        1L
+    }
+
+    if(mc.cores <= 1L){
+        return(lapply(X, FUN, ...))
+    }
+
+    return(with_l1ou_thread_limit(1L,
+        l1ou_mclapply(X=X, FUN=FUN, ..., mc.cores=mc.cores)
+    ))
+}
+
 make_nested_l1ou_options <- function(opt){
 
     nested.opt <- opt
@@ -2200,6 +2243,7 @@ get_data <- function(tree, Y, shift.configuration, opt, idx){
         y     <- as.matrix(Y[y.ava, idx])
         mapped <- tr$old.order[shift.configuration]
         s.c <- as.integer(mapped[!is.na(mapped)])
+        augmented.s.c <- mapped
         stopifnot(length(tr$tip.label)==nrow(y))
         input.error <- get_trait_input_error(opt, idx, tree=tr, available=y.ava)
         prepared.tree <- opt$prepared.tree.list[[idx]]
@@ -2207,6 +2251,7 @@ get_data <- function(tree, Y, shift.configuration, opt, idx){
         tr  <- tree
         y   <- as.matrix(Y[, idx])
         s.c <- shift.configuration
+        augmented.s.c <- shift.configuration
         input.error <- get_trait_input_error(opt, idx, tree=tr)
         prepared.tree <- opt$prepared.tree
     }
@@ -2214,120 +2259,192 @@ get_data <- function(tree, Y, shift.configuration, opt, idx){
     result$tr  <- tr
     result$y   <- y
     result$s.c <- s.c
+    result$augmented.s.c <- augmented.s.c
     result$input_error <- input.error
     result$prepared.tree <- prepared.tree
     return(result)
 }
 
-cmp_BIC <- function(tree, Y, shift.configuration, opt){
+collect_trait_fit_results <- function(tree, Y, shift.configuration, opt, allow.parallel=FALSE){
 
-    nEdges     <- Nedge(tree)
-    nTips      <- length(tree$tip.label)
-    nShifts    <- length(shift.configuration)
-    nVariables <- ncol(Y)
+    Y <- as.matrix(Y)
+    trait.indices <- seq_len(ncol(Y))
 
-    df.1  <- log(nTips)*(nShifts)
-    score <- df.1
+    fit_trait <- function(idx){
+        res <- get_data(tree, Y, shift.configuration, opt, idx)
+        res$fit <- my_phylolm_interface(
+            res$tr,
+            res$y,
+            res$s.c,
+            opt,
+            input_error = res$input_error,
+            prepared.tree = res$prepared.tree
+        )
+        res
+    }
+
+    l1ou_trait_apply(trait.indices, fit_trait, opt=opt, allow.parallel=allow.parallel)
+}
+
+summarize_trait_fit_results <- function(tree, shift.configuration, opt, trait.results,
+                                        criterion=opt$criterion){
+
+    nVariables <- length(trait.results)
+    if(nVariables == 0L){
+        return(list(score=Inf, alpha=numeric(), sigma2=numeric(), logLik=numeric()))
+    }
+
     alpha <- sigma2 <- logLik <- rep(0, nVariables)
+    failed <- vapply(trait.results, function(res) all(is.na(res$fit)), logical(1))
+    if(any(failed)){
+        return(NA)
+    }
 
-    for( i in 1:nVariables ){
+    criterion <- match.arg(criterion, c("BIC", "AICc", "mBIC", "pBICess", "pBIC"))
 
-        r   <- get_data(tree, Y, shift.configuration, opt, i)
-        tr  <- r$tr
-        y   <- r$y
-        s.c <- r$s.c
+    if(criterion == "BIC"){
+        score <- log(length(tree$tip.label)) * length(shift.configuration)
 
-        fit  <- my_phylolm_interface(tr, y, s.c, opt, input_error=r$input_error,
-                                     prepared.tree = r$prepared.tree)
-        if ( all(is.na(fit)) ){ return(NA) } 
+        for(i in seq_len(nVariables)){
+            fit <- trait.results[[i]]$fit
+            y <- trait.results[[i]]$y
 
-        df.2 <- log(nrow(y))*fit$p
-        score <- score  -2*fit$logLik + df.2
+            score <- score - 2 * fit$logLik + log(nrow(y)) * fit$p
+            alpha[[i]] <- fit$optpar
+            sigma2[[i]] <- fit$sigma2
+            logLik[[i]] <- fit$logLik
+        }
 
-        alpha [[i]] <- fit$optpar
+        return(list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik))
+    }
+
+    if(criterion == "AICc"){
+        score <- 0
+        total.p <- 0
+        total.n <- 0
+
+        for(i in seq_len(nVariables)){
+            fit <- trait.results[[i]]$fit
+
+            score <- score - 2 * fit$logLik
+            total.p <- total.p + fit$p
+            total.n <- total.n + fit$n
+
+            alpha[[i]] <- fit$optpar
+            sigma2[[i]] <- fit$sigma2
+            logLik[[i]] <- fit$logLik
+        }
+
+        p <- length(shift.configuration) + total.p
+        if(p > total.n - 2){
+            return(NA)
+        }
+
+        score <- score + 2 * p + (2 * p * (p + 1)) / (total.n - p - 1)
+        return(list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik))
+    }
+
+    if(criterion == "mBIC"){
+        res <- cmp_mBIC_df(tree, shift.configuration, opt)
+        score <- res$df.1
+        df.2 <- res$df.2
+
+        for(i in seq_len(nVariables)){
+            fit <- trait.results[[i]]$fit
+
+            if(nVariables > 1){
+                res <- cmp_mBIC_df(trait.results[[i]]$tr, trait.results[[i]]$s.c, opt)
+                df.2 <- res$df.2
+            }
+
+            score <- score - 2 * fit$logLik + df.2
+            alpha[[i]] <- fit$optpar
+            sigma2[[i]] <- fit$sigma2
+            logLik[[i]] <- fit$logLik
+        }
+
+        return(list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik))
+    }
+
+    if(criterion == "pBICess"){
+        score <- 2 * length(shift.configuration) * log(Nedge(tree) - 1)
+
+        for(i in seq_len(nVariables)){
+            fit <- trait.results[[i]]$fit
+            tr <- trait.results[[i]]$tr
+            y <- trait.results[[i]]$y
+            s.c <- trait.results[[i]]$s.c
+
+            ess <- effective.sample.size(
+                tr,
+                edges=s.c,
+                model="OUfixedRoot",
+                parameters=list(alpha=fit$optpar),
+                FALSE,
+                FALSE
+            )
+            df.2 <- (3 + extra_error_df(opt)) * log(nrow(y) + 1) + sum(log(ess + 1))
+            score <- score - 2 * fit$logLik + df.2
+
+            alpha[[i]] <- fit$optpar
+            sigma2[[i]] <- fit$sigma2
+            logLik[[i]] <- fit$logLik
+        }
+
+        return(list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik))
+    }
+
+    score <- 2 * length(shift.configuration) * log(Nedge(tree) - 1)
+
+    for(i in seq_len(nVariables)){
+        fit <- trait.results[[i]]$fit
+        y <- trait.results[[i]]$y
+
+        varY <- c(var(y))
+        ld <- as.numeric(determinant(
+            fit$vcov * (fit$n - fit$d) / (varY * fit$n),
+            logarithm = TRUE
+        )$modulus)
+        df.2 <- (2 + extra_error_df(opt)) * log(nrow(y)) - ld
+        score <- score - 2 * fit$logLik + df.2
+
+        alpha[[i]] <- fit$optpar
         sigma2[[i]] <- fit$sigma2
         logLik[[i]] <- fit$logLik
     }
-    return( list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik) )
+
+    return(list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik))
+}
+
+cmp_BIC <- function(tree, Y, shift.configuration, opt){
+
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = FALSE
+    )
+    summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                criterion="BIC")
 }
 
 
 cmp_AICc <- function(tree, Y, shift.configuration, opt){
 
-    nShifts    <- length(shift.configuration)
-    nVariables <- ncol(Y)
-
-    score <- 0
-    total.p <- 0
-    total.n <- 0
-    alpha <- sigma2 <- logLik <- rep(0, nVariables)
-
-    for( i in 1:nVariables ){
-
-        r   <- get_data(tree, Y, shift.configuration, opt, i)
-        tr  <- r$tr
-        y   <- r$y
-        s.c <- r$s.c
-
-        fit <- my_phylolm_interface(tr, y, s.c, opt, input_error=r$input_error,
-                                    prepared.tree = r$prepared.tree)
-        if ( all(is.na(fit)) ){ return(NA) } 
-        score <- score  -2*fit$logLik
-        total.p <- total.p + fit$p
-        total.n <- total.n + fit$n
-
-        alpha [[i]] <- fit$optpar
-        sigma2[[i]] <- fit$sigma2
-        logLik[[i]] <- fit$logLik
-    }
-
-    p <- nShifts + total.p
-    if( p > total.n - 2 )
-        return(NA)
-
-    d.f <- 2*p + (2*p*(p+1))/(total.n-p-1)
-    score <- score + d.f
-
-    return( list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik) )
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = FALSE
+    )
+    summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                criterion="AICc")
 }
 
 cmp_mBIC <- function(tree, Y, shift.configuration, opt){
 
-    nEdges     <- Nedge(tree)
-    nTips      <- length(tree$tip.label)
-    nShifts    <- length(shift.configuration)
-    nVariables <- ncol(Y)
-
-    res =  cmp_mBIC_df(tree, shift.configuration, opt)  
-    df.1 = res$df.1
-    df.2 = res$df.2
-
-    score <- df.1
-
-    alpha <- sigma2 <- logLik <- rep(0, nVariables)
-    for( i in 1:nVariables ){
-
-        r   <- get_data(tree, Y, shift.configuration, opt, i)
-        tr  <- r$tr
-        y   <- r$y
-        s.c <- r$s.c
-
-        if( nVariables > 1){
-            res  = cmp_mBIC_df(tr, s.c, opt)  
-            df.2 = res$df.2
-        }
-
-        fit <- my_phylolm_interface(tr, y, s.c, opt, input_error=r$input_error,
-                                    prepared.tree = r$prepared.tree)
-        if ( all(is.na(fit)) ){ return(NA) } 
-
-        score <- score  -2*fit$logLik + df.2
-
-        alpha [[i]] <- fit$optpar
-        sigma2[[i]] <- fit$sigma2
-        logLik[[i]] <- fit$logLik
-    }
-    return( list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik) )
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = FALSE
+    )
+    summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                criterion="mBIC")
 }
 
 cmp_mBIC_df <- function(tree, shift.configuration, opt){
@@ -2367,74 +2484,23 @@ cmp_mBIC_df <- function(tree, shift.configuration, opt){
 
 cmp_pBICess <- function(tree, Y, shift.configuration, opt){
 
-    nShifts = length(shift.configuration)
-    nEdges  = Nedge(tree)
-    nTips   = length(tree$tip.label)
-
-    df.1  = 2*(nShifts)*log(nEdges-1)
-    score = df.1
-
-    alpha = sigma2  = logLik = numeric()
-
-    for(i in 1:ncol(Y)){
-
-        r   <- get_data(tree, Y, shift.configuration, opt, i)
-        tr  <- r$tr
-        y   <- r$y
-        s.c <- r$s.c
-
-        fit  = my_phylolm_interface(tr, y, s.c, opt, input_error=r$input_error,
-                                    prepared.tree = r$prepared.tree)
-        if( all(is.na(fit)) ){
-           return(NA)
-        }
-        ess  = effective.sample.size(tr, edges=s.c, model="OUfixedRoot", 
-                 parameters=list(alpha=fit$optpar), FALSE, FALSE)
-
-        df.2  = (3 + extra_error_df(opt))*log(nrow(y)+1) + sum(log(ess+1))
-        score = score  -2*fit$logLik + df.2 
-
-        alpha  = c(alpha, fit$optpar)
-        sigma2 = c(sigma2, fit$sigma2)
-        logLik = c(logLik, fit$logLik)
-    }
-    return( list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik) )
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = FALSE
+    )
+    summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                criterion="pBICess")
 }
 
 
 cmp_pBIC <- function(tree, Y, shift.configuration, opt){
 
-    nShifts = length(shift.configuration)
-    nEdges  = Nedge(tree)
-    nTips   = length(tree$tip.label)
-
-    df.1    = 2*(nShifts)*log(nEdges-1)
-    score   = df.1
-    alpha   = sigma2  = logLik = rep(0, ncol(Y))
-
-    for(i in 1:ncol(Y)){
-
-        r   <- get_data(tree, Y, shift.configuration, opt, i)
-        tr  <- r$tr
-        y   <- r$y
-        s.c <- r$s.c
-
-        fit   = my_phylolm_interface(tr, y, s.c, opt, input_error=r$input_error,
-                                     prepared.tree = r$prepared.tree)
-        if( all(is.na(fit)) ){
-           return(NA)
-        } 
-        varY  = c(var(y))
-        ld    = as.numeric(determinant(fit$vcov * (fit$n - fit$d)/(varY*fit$n),
-                                      logarithm = TRUE)$modulus)
-        df.2  = (2 + extra_error_df(opt))*log(nrow(y)) - ld
-        score = score  -2*fit$logLik + df.2 
-
-        alpha [[i]] = fit$optpar
-        sigma2[[i]] = fit$sigma2
-        logLik[[i]] = fit$logLik
-    }
-    return( list(score=score, alpha=alpha, sigma2=sigma2, logLik=logLik) )
+    trait.results <- collect_trait_fit_results(
+        tree, Y, shift.configuration, opt,
+        allow.parallel = FALSE
+    )
+    summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
+                                criterion="pBIC")
 }
 
 my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=FALSE,
