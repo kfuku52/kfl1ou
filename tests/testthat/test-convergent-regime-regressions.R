@@ -38,6 +38,18 @@ test_that("backward convergent-regime search handles zero-shift models", {
   expect_true(is.finite(conv$score))
 })
 
+test_that("convergent-regime outputs keep tip labels on fitted matrices", {
+  dat <- small_lizard_data(n_tips = 12, normalize = FALSE)
+  fit <- fit_OU(dat$tree, dat$Y, shift.configuration = 1L)
+
+  conv <- estimate_convergent_regimes(fit, criterion = "AICc", method = "backward")
+
+  for (component in c("mu", "residuals", "optima")) {
+    expect_equal(rownames(conv[[component]]), dat$tree$tip.label)
+    expect_equal(colnames(conv[[component]]), colnames(dat$Y))
+  }
+})
+
 test_that("rr convergent-regime search returns early for single-shift models", {
   dat <- small_lizard_data(n_tips = 12)
   fit <- fit_OU(dat$tree, dat$Y, shift.configuration = 1)
@@ -50,6 +62,7 @@ test_that("rr convergent-regime search returns early for single-shift models", {
 })
 
 test_that("find_convergent_regimes tolerates rank-deficient design matrices", {
+  skip_if_not_installed("genlasso")
   dat <- small_lizard_data(n_tips = 16)
 
   expect_warning(
@@ -203,7 +216,8 @@ test_that("fit_OU keeps trait-specific shift means in multivariate fits", {
     fit$shift.values[1, i] * edge.max
   }, numeric(1))
 
-  expect_equal(drop(fit$shift.means), expected, tolerance = 1e-8)
+  expect_equal(unname(drop(fit$shift.means)), expected, tolerance = 1e-8)
+  expect_equal(colnames(fit$shift.means), colnames(dat$Y))
 })
 
 test_that("multivariate second search only uses two grplasso passes", {

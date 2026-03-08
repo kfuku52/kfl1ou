@@ -1,3 +1,28 @@
+test_that("fit_OU preserves tip and trait dimnames on fitted tip matrices", {
+  dat <- small_lizard_data(n_tips = 10, traits = 1:2, normalize = FALSE)
+
+  fit <- suppressWarnings(
+    capture_silently(
+      fit_OU(
+        dat$tree,
+        dat$Y,
+        shift.configuration = 1L,
+        criterion = "AICc"
+      )
+    )
+  )
+
+  for (component in c("mu", "residuals", "optima")) {
+    expect_equal(rownames(fit[[component]]), rownames(dat$Y))
+    expect_equal(colnames(fit[[component]]), colnames(dat$Y))
+  }
+
+  expect_equal(rownames(fit$shift.values), "1")
+  expect_equal(colnames(fit$shift.values), colnames(dat$Y))
+  expect_equal(rownames(fit$shift.means), "1")
+  expect_equal(colnames(fit$shift.means), colnames(dat$Y))
+})
+
 test_that("restore_original_tree_fit pads dropped tips back onto the original tree", {
   env <- new.env(parent = emptyenv())
   data("lizard.tree", package = "kfl1ou", envir = env)
@@ -28,6 +53,8 @@ test_that("restore_original_tree_fit pads dropped tips back onto the original tr
   expect_equal(restored$restoration$removed.tips, keep[[1]])
   expect_true(all(is.na(restored$Y[keep[[1]], ])))
   expect_true(all(is.na(restored$mu[keep[[1]], ])))
+  expect_equal(rownames(restored$mu), original.tree$tip.label)
+  expect_equal(colnames(restored$mu), colnames(restored$Y))
   expect_equal(restored$Y[fit$tree$tip.label, , drop = FALSE], fit$Y)
   expect_equal(
     unname(restored$mu[fit$tree$tip.label, , drop = FALSE]),

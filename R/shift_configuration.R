@@ -1026,6 +1026,11 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
     Y      = as.matrix(Y)
     nEdges = Nedge(tree)
     nTips  = length(tree$tip.label)
+    trait.names <- colnames(Y)
+    if( is.null(trait.names) ){
+        trait.names <- paste0("trait", seq_len(ncol(Y)))
+        colnames(Y) <- trait.names
+    }
 
     resi = mu = optima = matrix(data=NA, nrow=nTips, ncol=ncol(Y))
     if(length(shift.configuration) > 0){
@@ -1092,7 +1097,13 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
         optima[,i] <- optima.tmp
     }
 
-    rownames(optima) <- tree$tip.label
+    dimnames(mu) <- list(tree$tip.label, trait.names)
+    dimnames(resi) <- list(tree$tip.label, trait.names)
+    dimnames(optima) <- list(tree$tip.label, trait.names)
+    if( length(shift.configuration) > 0 ){
+        dimnames(shift.values) <- list(as.character(shift.configuration), trait.names)
+        dimnames(shift.means) <- list(as.character(shift.configuration), trait.names)
+    }
 
     score.info <- summarize_trait_fit_results(tree, shift.configuration, opt, trait.results,
                                               criterion=opt$criterion)
