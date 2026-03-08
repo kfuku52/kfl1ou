@@ -43,6 +43,47 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// effective_sample_size_c
+Rcpp::NumericVector effective_sample_size_c(int N, int n, int pN, int root, double transa, Rcpp::NumericVector transb, Rcpp::IntegerVector des, Rcpp::IntegerVector anc, Rcpp::IntegerVector edge);
+RcppExport SEXP _kfl1ou_effective_sample_size_c(SEXP NSEXP, SEXP nSEXP, SEXP pNSEXP, SEXP rootSEXP, SEXP transaSEXP, SEXP transbSEXP, SEXP desSEXP, SEXP ancSEXP, SEXP edgeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type N(NSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< int >::type pN(pNSEXP);
+    Rcpp::traits::input_parameter< int >::type root(rootSEXP);
+    Rcpp::traits::input_parameter< double >::type transa(transaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type transb(transbSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type des(desSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type anc(ancSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type edge(edgeSEXP);
+    rcpp_result_gen = Rcpp::wrap(effective_sample_size_c(N, n, pN, root, transa, transb, des, anc, edge));
+    return rcpp_result_gen;
+END_RCPP
+}
+// threepoint_l1ou_c
+Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX, int root, double transa, Rcpp::NumericVector transb, Rcpp::IntegerVector des, Rcpp::IntegerVector anc, Rcpp::NumericVector y, Rcpp::NumericVector X);
+RcppExport SEXP _kfl1ou_threepoint_l1ou_c(SEXP NSEXP, SEXP nSEXP, SEXP pNSEXP, SEXP dYSEXP, SEXP dXSEXP, SEXP rootSEXP, SEXP transaSEXP, SEXP transbSEXP, SEXP desSEXP, SEXP ancSEXP, SEXP ySEXP, SEXP XSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type N(NSEXP);
+    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< int >::type pN(pNSEXP);
+    Rcpp::traits::input_parameter< int >::type dY(dYSEXP);
+    Rcpp::traits::input_parameter< int >::type dX(dXSEXP);
+    Rcpp::traits::input_parameter< int >::type root(rootSEXP);
+    Rcpp::traits::input_parameter< double >::type transa(transaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type transb(transbSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type des(desSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type anc(ancSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type y(ySEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type X(XSEXP);
+    rcpp_result_gen = Rcpp::wrap(threepoint_l1ou_c(N, n, pN, dY, dX, root, transa, transb, des, anc, y, X));
+    return rcpp_result_gen;
+END_RCPP
+}
 // add_configuration_score_to_db
 void add_configuration_score_to_db(std::string str_key, double value, std::string mInfo);
 RcppExport SEXP _kfl1ou_add_configuration_score_to_db(SEXP str_keySEXP, SEXP valueSEXP, SEXP mInfoSEXP) {
@@ -121,18 +162,11 @@ BEGIN_RCPP
 END_RCPP
 }
 
-RcppExport void effectiveSampleSize(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-RcppExport void threepoint_l1ou(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-
-static const R_CMethodDef CEntries[] = {
-    {"effectiveSampleSize", (DL_FUNC) &effectiveSampleSize, 10},
-    {"threepoint_l1ou",     (DL_FUNC) &threepoint_l1ou,     13},
-    {NULL, NULL, 0}
-};
-
 static const R_CallMethodDef CallEntries[] = {
     {"_kfl1ou_linreg_group_lasso_lambda_max_cpp", (DL_FUNC) &_kfl1ou_linreg_group_lasso_lambda_max_cpp, 3},
     {"_kfl1ou_linreg_group_lasso_path_cpp", (DL_FUNC) &_kfl1ou_linreg_group_lasso_path_cpp, 10},
+    {"_kfl1ou_effective_sample_size_c", (DL_FUNC) &_kfl1ou_effective_sample_size_c, 9},
+    {"_kfl1ou_threepoint_l1ou_c", (DL_FUNC) &_kfl1ou_threepoint_l1ou_c, 12},
     {"_kfl1ou_add_configuration_score_to_db", (DL_FUNC) &_kfl1ou_add_configuration_score_to_db, 3},
     {"_kfl1ou_get_stored_config_score", (DL_FUNC) &_kfl1ou_get_stored_config_score, 0},
     {"_kfl1ou_erase_configuration_score_db", (DL_FUNC) &_kfl1ou_erase_configuration_score_db, 0},
@@ -144,6 +178,6 @@ static const R_CallMethodDef CallEntries[] = {
 };
 
 RcppExport void R_init_kfl1ou(DllInfo *dll) {
-    R_registerRoutines(dll, CEntries, CallEntries, NULL, NULL);
+    R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
 }

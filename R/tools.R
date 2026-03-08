@@ -425,14 +425,14 @@ effective.sample.size <- function(phy, edges=NULL,
             r <- rank(edges)
             sortededges <- c(edges[o],rootedge)
         }
-        tmp <- .C("effectiveSampleSize", as.integer(dim(phy$edge)[1]), # edges
-                  as.integer(length(phy$tip.label)), as.integer(phy$Nnode), # tips and nodes
-                  as.integer(length(phy$tip.label)+1), # root index
-                  as.double(phy$root.edge),as.double(phy$edge.length),
-                  as.integer(phy$edge[, 2]), as.integer(phy$edge[, 1]), # descendents and ancestors
-                  as.integer(sortededges), # edges to cut, including root edge
-                  PACKAGE = "kfl1ou",
-                  result=double(length(edges)+1))$result # tmp has, in this order:
+        tmp <- effective_sample_size_c(
+            as.integer(dim(phy$edge)[1]), # edges
+            as.integer(length(phy$tip.label)), as.integer(phy$Nnode), # tips and nodes
+            as.integer(length(phy$tip.label)+1), # root index
+            as.double(phy$root.edge), as.double(phy$edge.length),
+            as.integer(phy$edge[, 2]), as.integer(phy$edge[, 1]), # descendents and ancestors
+            as.integer(sortededges) # edges to cut, including root edge
+        ) # tmp has, in this order:
         if (is.null(edges))
             res <- tmp
         else res <- tmp[c(length(tmp),r)]
@@ -481,7 +481,7 @@ alpha_upper_bound <- function(tree){
 
 
 get_num_solutions <- function(sol.path){
-    if ( grepl("lars",sol.path$call)[[1]]  ){
+    if ( grepl("lars",sol.path$call)[[1]] || grepl("l1ou_.*_path", sol.path$call)[[1]] ){
         return ( length(sol.path$beta[,1]) )
     } 
 
@@ -494,7 +494,7 @@ get_num_solutions <- function(sol.path){
 
 
 get_configuration_in_sol_path <- function(sol.path, index, Y, tidx=1){
-    if ( grepl("lars",sol.path$call)[[1]]  ){
+    if ( grepl("lars",sol.path$call)[[1]] || grepl("l1ou_.*_path", sol.path$call)[[1]] ){
         beta      = sol.path$beta[index,]
         shift.configuration  = which( abs(beta) > 0 )
     } else if( any( grepl("grplasso",sol.path$call) ) ){

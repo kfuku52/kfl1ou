@@ -2,38 +2,46 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 linreg_group_lasso_lambda_max_cpp <- function(x, y, group) {
-    .Call('_kfl1ou_linreg_group_lasso_lambda_max_cpp', PACKAGE = 'kfl1ou', x, y, group)
+    .Call(`_kfl1ou_linreg_group_lasso_lambda_max_cpp`, x, y, group)
 }
 
 linreg_group_lasso_path_cpp <- function(x, y, group, lambda, tol = 5e-8, max_iter = 500L, inner_loops = 10L, beta_ls = 0.5, sigma_ls = 0.1, line_search = TRUE) {
-    .Call('_kfl1ou_linreg_group_lasso_path_cpp', PACKAGE = 'kfl1ou', x, y, group, lambda, tol, max_iter, inner_loops, beta_ls, sigma_ls, line_search)
+    .Call(`_kfl1ou_linreg_group_lasso_path_cpp`, x, y, group, lambda, tol, max_iter, inner_loops, beta_ls, sigma_ls, line_search)
+}
+
+effective_sample_size_c <- function(N, n, pN, root, transa, transb, des, anc, edge) {
+    .Call(`_kfl1ou_effective_sample_size_c`, N, n, pN, root, transa, transb, des, anc, edge)
+}
+
+threepoint_l1ou_c <- function(N, n, pN, dY, dX, root, transa, transb, des, anc, y, X) {
+    .Call(`_kfl1ou_threepoint_l1ou_c`, N, n, pN, dY, dX, root, transa, transb, des, anc, y, X)
 }
 
 add_configuration_score_to_db <- function(str_key, value, mInfo) {
-    invisible(.Call('_kfl1ou_add_configuration_score_to_db', PACKAGE = 'kfl1ou', str_key, value, mInfo))
+    invisible(.Call(`_kfl1ou_add_configuration_score_to_db`, str_key, value, mInfo))
 }
 
 get_stored_config_score <- function() {
-    .Call('_kfl1ou_get_stored_config_score', PACKAGE = 'kfl1ou')
+    .Call(`_kfl1ou_get_stored_config_score`)
 }
 
 erase_configuration_score_db <- function() {
-    invisible(.Call('_kfl1ou_erase_configuration_score_db', PACKAGE = 'kfl1ou'))
+    invisible(.Call(`_kfl1ou_erase_configuration_score_db`))
 }
 
 get_score_of_configuration <- function(str_key) {
-    .Call('_kfl1ou_get_score_of_configuration', PACKAGE = 'kfl1ou', str_key)
+    .Call(`_kfl1ou_get_score_of_configuration`, str_key)
 }
 
 get_runtime_thread_settings <- function() {
-    .Call('_kfl1ou_get_runtime_thread_settings', PACKAGE = 'kfl1ou')
+    .Call(`_kfl1ou_get_runtime_thread_settings`)
 }
 
 set_runtime_thread_settings <- function(blas_threads = -1L, openmp_threads = -1L) {
-    .Call('_kfl1ou_set_runtime_thread_settings', PACKAGE = 'kfl1ou', blas_threads, openmp_threads)
+    .Call(`_kfl1ou_set_runtime_thread_settings`, blas_threads, openmp_threads)
 }
 
 cmp_sqrt_OU_covariance <- function(edgeList, nTips, rootEdge) {
-    .Call('_kfl1ou_cmp_sqrt_OU_covariance', PACKAGE = 'kfl1ou', edgeList, nTips, rootEdge)
+    .Call(`_kfl1ou_cmp_sqrt_OU_covariance`, edgeList, nTips, rootEdge)
 }
 

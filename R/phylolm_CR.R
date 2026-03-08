@@ -91,11 +91,9 @@ phylolm_CR <- function(formula, data=list(), phy,
         tree = transf.branch.lengths(phy,model,parameters=parameters,
                                      check.pruningwise=F,check.ultrametric=F,D=D,check.names=F)$tree
 
-        tmp <- .C("threepoint_l1ou", as.integer(N),as.integer(n),as.integer(phy$Nnode),
+        tmp <- threepoint_l1ou_c(as.integer(N),as.integer(n),as.integer(phy$Nnode),
                as.integer(1),as.integer(d),as.integer(ROOT),as.double(tree$root.edge),as.double(tree$edge.length),
-               as.integer(des), as.integer(anc), as.double(as.vector(y)), as.double(as.vector(X)),
-               PACKAGE = "kfl1ou",
-               result=double(ole))$result # tmp has, in this order:
+               as.integer(des), as.integer(anc), as.double(as.vector(y)), as.double(as.vector(X))) # tmp has, in this order:
 
         ## logdetV, 1'V^{-1}1, y'V^{-1}1, y'V^{-1}y, X'V^{-1}1, X'V^{-1}X, X'V^{-1}y
         comp = list(vec11=tmp[2], y1=tmp[3], yy=tmp[4], X1=tmp[5:(4+d)],

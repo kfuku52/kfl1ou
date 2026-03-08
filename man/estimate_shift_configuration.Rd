@@ -35,7 +35,7 @@ estimate_shift_configuration(tree, Y,
 
 \item{alpha.lower}{optional lower bound for the phylogenetic adaptation rate.}
 
-\item{lars.alg}{model selection algorithm for LARS in univariate case.}
+\item{lars.alg}{sparse-path algorithm used in the univariate case. The option name is kept for backward compatibility.}
 
 \item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 then it runs sequentially. Otherwise, when fork-based parallelism is

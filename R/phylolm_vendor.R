@@ -174,14 +174,13 @@ phylolm <- function(formula, data = list(), phy,
             X <- exp(-parameters$alpha * D) * X
         }
 
-        tmp <- .C("threepoint_l1ou",
-                  as.integer(N), as.integer(n), as.integer(phy$Nnode),
-                  as.integer(1), as.integer(d), as.integer(ROOT),
-                  as.double(tree$root.edge), as.double(tree$edge.length),
-                  as.integer(des), as.integer(anc),
-                  as.double(as.vector(y)), as.double(as.vector(X)),
-                  result = double(ole),
-                  PACKAGE = "kfl1ou")$result
+        tmp <- threepoint_l1ou_c(
+            as.integer(N), as.integer(n), as.integer(phy$Nnode),
+            as.integer(1), as.integer(d), as.integer(ROOT),
+            as.double(tree$root.edge), as.double(tree$edge.length),
+            as.integer(des), as.integer(anc),
+            as.double(as.vector(y)), as.double(as.vector(X))
+        )
 
         comp <- list(
             vec11 = tmp[2],
@@ -198,14 +197,13 @@ phylolm <- function(formula, data = list(), phy,
             t(betahat) %*% comp$XX %*% betahat) / n)
         if(sigma2hat < 0){
             resdl <- X %*% betahat - y
-            tmpyy <- .C("threepoint_l1ou",
-                        as.integer(N), as.integer(n), as.integer(phy$Nnode),
-                        as.integer(1), as.integer(d), as.integer(ROOT),
-                        as.double(tree$root.edge), as.double(tree$edge.length),
-                        as.integer(des), as.integer(anc),
-                        as.double(as.vector(resdl)), as.double(as.vector(X)),
-                        result = double(ole),
-                        PACKAGE = "kfl1ou")$result[4]
+            tmpyy <- threepoint_l1ou_c(
+                as.integer(N), as.integer(n), as.integer(phy$Nnode),
+                as.integer(1), as.integer(d), as.integer(ROOT),
+                as.double(tree$root.edge), as.double(tree$edge.length),
+                as.integer(des), as.integer(anc),
+                as.double(as.vector(resdl)), as.double(as.vector(X))
+            )[4]
             sigma2hat <- tmpyy / n
         }
         vcov <- sigma2hat * invXX * n / (n - d)

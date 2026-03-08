@@ -16,7 +16,8 @@
 #'@param alpha.starting.value optional starting value for the optimization of the phylogenetic adaptation rate. 
 #'@param alpha.upper optional upper bound for the phylogenetic adaptation rate. The default value is log(2) over the minimum branch length connected to tips. 
 #'@param alpha.lower optional lower bound for the phylogenetic adaptation rate.
-#'@param lars.alg model selection algorithm for LARS in univariate case. 
+#'@param lars.alg sparse-path algorithm used in the univariate case. The
+#' option name is kept for backward compatibility.
 #'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 #' then it runs sequentially. Otherwise, when fork-based parallelism is
 #' available, \code{kfl1ou} may use up to \code{nCores} forked workers via
@@ -358,10 +359,8 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     XX  = XX[-nrow(XX), ]
 
     capture.output(
-            sol.path  <- lars(XX, YY, type=opt$lars.alg, normalize=FALSE,
-                              #intercept=TRUE, max.steps=opt$max.nShifts)
-                              intercept=FALSE, max.steps=opt$max.nShifts)
-        )
+        sol.path <- run_univariate_sparse_path(XX, YY, opt)
+    )
 
     Tmp = matrix(0, nrow(sol.path$beta), nP)
     Tmp[,-to.be.removed] = sol.path$beta
@@ -1716,21 +1715,20 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         }
 
         edge.length <- d2 - d1
-        tmp <- .C("threepoint_l1ou",
-                  as.integer(N),
-                  as.integer(n),
-                  as.integer(phy$Nnode),
-                  as.integer(1),
-                  as.integer(d),
-                  as.integer(prepared.tree$ROOT),
-                  as.double(min(distFromRoot)),
-                  as.double(edge.length),
-                  as.integer(prepared.tree$des),
-                  as.integer(prepared.tree$anc),
-                  as.double(y),
-                  as.double(as.vector(X)),
-                  result = double(ole),
-                  PACKAGE = "kfl1ou")$result
+        tmp <- threepoint_l1ou_c(
+            as.integer(N),
+            as.integer(n),
+            as.integer(phy$Nnode),
+            as.integer(1),
+            as.integer(d),
+            as.integer(prepared.tree$ROOT),
+            as.double(min(distFromRoot)),
+            as.double(edge.length),
+            as.integer(prepared.tree$des),
+            as.integer(prepared.tree$anc),
+            as.double(y),
+            as.double(as.vector(X))
+        )
 
         XX <- matrix(tmp[(5 + d):(ole - d)], d, d)
         Xy <- tmp[(ole - d + 1):ole]
@@ -1750,21 +1748,20 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         )
         if(sigma2hat < 0){
             resdl <- X %*% betahat - y
-            sigma2hat <- .C("threepoint_l1ou",
-                            as.integer(N),
-                            as.integer(n),
-                            as.integer(phy$Nnode),
-                            as.integer(1),
-                            as.integer(d),
-                            as.integer(prepared.tree$ROOT),
-                            as.double(min(distFromRoot)),
-                            as.double(edge.length),
-                            as.integer(prepared.tree$des),
-                            as.integer(prepared.tree$anc),
-                            as.double(as.vector(resdl)),
-                            as.double(as.vector(X)),
-                            result = double(ole),
-                            PACKAGE = "kfl1ou")$result[4] / n
+            sigma2hat <- threepoint_l1ou_c(
+                as.integer(N),
+                as.integer(n),
+                as.integer(phy$Nnode),
+                as.integer(1),
+                as.integer(d),
+                as.integer(prepared.tree$ROOT),
+                as.double(min(distFromRoot)),
+                as.double(edge.length),
+                as.integer(prepared.tree$des),
+                as.integer(prepared.tree$anc),
+                as.double(as.vector(resdl)),
+                as.double(as.vector(X))
+            )[4] / n
         }
         vcov <- sigma2hat * invXX * n/(n - d)
         res <- list(

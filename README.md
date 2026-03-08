@@ -36,7 +36,7 @@ Windows users will first need to install [Rtools](https://cran.r-project.org/bin
 To resolve dependencies, first install the following packages from CRAN, then the knitr package.
 From within R:
 ```r
-install.packages(c("igraph", "phylolm", "lars", "grplasso", "magic", "Rcpp"))
+install.packages(c("igraph", "phylolm", "magic", "Rcpp"))
 install.packages("knitr")
 ```
 
