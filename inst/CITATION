@@ -4,10 +4,10 @@ citEntry(entry = "Manual",
   author = personList(as.person("Kenji Fukushima")),
   year = 2026,
   title = "kfl1ou: Independently maintained fork of l1ou",
-  note = "R package version 2.0.0",
+  note = "R package version 2.0.1",
   textVersion = paste("Fukushima, K. (2026).",
     "kfl1ou: Independently maintained fork of l1ou.",
-    "R package version 2.0.0."))
+    "R package version 2.0.1."))
 
 citEntry(entry = "Article",
   author = personList(as.person("Mohammad Khabbazian"),
