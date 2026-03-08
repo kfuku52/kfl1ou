@@ -471,7 +471,7 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'@param model fitted object of class l1ou returned by \pkg{kfl1ou}.
 #'@param criterion information criterion for model selection (see Details in \code{\link{configuration_ic}}).
 #'@param method search method for finding convergent regimes. ``rr'' is based on
-#'  the optional \code{genlasso} package for regularized linear regression.
+#'  the optionally installed \code{genlasso} package for regularized linear regression.
 #'  Currenly, this method can only accept a single trait.
 #'  The default ``backward'' method is a heuristic similar to \code{surface_backward}
 #'  in the \code{surface} package,

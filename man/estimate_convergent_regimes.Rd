@@ -13,7 +13,7 @@ estimate_convergent_regimes(model, criterion = c("AICc", "pBIC", "BIC"),
 \item{criterion}{information criterion for model selection (see Details in \code{\link{configuration_ic}}).}
 
 \item{method}{search method for finding convergent regimes. ``rr'' is based on
-the optional \code{genlasso} package for regularized linear regression.
+the optionally installed \code{genlasso} package for regularized linear regression.
 Currenly, this method can only accept a single trait.
 The default ``backward'' method is a heuristic similar to \code{surface_backward}
 in the \code{surface} package,

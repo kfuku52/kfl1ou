@@ -26,7 +26,6 @@ From within R:
 ```r
 install.packages("devtools")
 library(devtools)
-install_github("glmgen/genlasso")
 install_github("kfuku52/kfl1ou")
 ```
 Windows users will first need to install [Rtools](https://cran.r-project.org/bin/windows/Rtools/).
@@ -36,15 +35,11 @@ Windows users will first need to install [Rtools](https://cran.r-project.org/bin
 To resolve dependencies, first install the following packages from CRAN, then the knitr package.
 From within R:
 ```r
-install.packages(c("igraph", "phylolm", "magic", "Rcpp"))
+install.packages(c("igraph", "magic", "Rcpp"))
 install.packages("knitr")
 ```
 
-Download genlasso version 1.3 R package from CRAN archive [(link)](https://cran.r-project.org/src/contrib/Archive/genlasso/genlasso_1.3.tar.gz). 
-From within R:
-```r
- install.packages("genlasso_1.3.tar.gz", repos=NULL, type="source")
- ```
+If you want to use `estimate_convergent_regimes(method = "rr")`, install `genlasso` separately.
 
 Now in the shell, after cloning your fork and replacing the asterisks with the correct version number:
 ```shell
