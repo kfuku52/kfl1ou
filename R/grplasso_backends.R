@@ -13,6 +13,13 @@ resolve_grplasso_backend <- function(opt) {
     backend
 }
 
+l1ou_require_grplasso <- function() {
+
+    if (!requireNamespace("grplasso", quietly = TRUE)) {
+        stop("grplasso backend = 'package' requires the optional package 'grplasso'.")
+    }
+}
+
 grplasso_path_result <- function(coefficients, lambda, backend, converged = rep(TRUE, length(lambda))) {
 
     list(
@@ -25,6 +32,7 @@ grplasso_path_result <- function(coefficients, lambda, backend, converged = rep(
 
 run_package_grplasso_lambdamax <- function(grpX, grpY, grpIdx) {
 
+    l1ou_require_grplasso()
     suppressMessages(
         grplasso::lambdamax(
             as.matrix(grpX),
@@ -69,6 +77,7 @@ linreg_group_lasso_lambda_max <- function(grpX, grpY, grpIdx, backend = c("cpp",
 
 run_package_grplasso_path <- function(grpX, grpY, grpIdx, lambda, tol) {
 
+    l1ou_require_grplasso()
     sol <- grplasso::grplasso(
         as.matrix(grpX),
         y = as.numeric(grpY),

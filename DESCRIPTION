@@ -26,13 +26,13 @@ NeedsCompilation: yes
 Depends:
     R (>= 3.1.0),
     ape (>= 4.0),
-    lars,
-    grplasso
+    lars
 Imports:
     Rcpp
 LinkingTo: Rcpp
 Suggests:
     genlasso,
+    grplasso,
     phylolm,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
