@@ -69,14 +69,599 @@ generate_prediction_vec  <-  function(tr,
     return(W)
 }
 
-phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed.alpha=FALSE, opt){
+normalize_convergent_regimes <- function(regimes, shift.configuration){
 
-    if( isTRUE(opt$measurement_error) || !is.null(opt$input_error) ){
-        stop("convergent regime estimation does not yet support measurement_error or input_error.")
+    if(is.null(regimes)){
+        if(is.null(names(shift.configuration))){
+            stop("the convergent regimes must be indicated through the names of the shift.configuration vector.")
+        }
+        regimes <- list()
+        cr.names <- names(shift.configuration)
+        idx <- 1L
+        for(cr in cr.names){
+            regimes[[idx]] <- sort(shift.configuration[which(cr.names == cr)])
+            idx <- idx + 1L
+        }
     }
 
-    shift.configuration <- opt$shift.configuration
-    preds <- generate_prediction_vec(tr, shift.configuration, conv.regimes, alpha, ageMatrix=opt$ageMatrix)
+    regimes <- lapply(regimes, function(reg){
+        sort(unique(as.integer(reg)))
+    })
+    regimes <- regimes[vapply(regimes, length, integer(1)) > 0L]
+
+    bg.idx <- which(vapply(regimes, function(reg) 0L %in% reg, logical(1)))
+    if(length(bg.idx) == 0L){
+        regimes <- c(list(0L), regimes)
+    } else if(length(bg.idx) > 1L){
+        merged.bg <- sort(unique(unlist(regimes[bg.idx])))
+        regimes <- c(list(merged.bg), regimes[-bg.idx])
+    } else if(bg.idx != 1L){
+        regimes <- c(regimes[bg.idx], regimes[-bg.idx])
+    }
+
+    return(regimes)
+}
+
+map_convergent_regimes_to_trait <- function(regimes, original.shift.configuration,
+                                            augmented.shift.configuration){
+
+    original.shift.configuration <- as.integer(original.shift.configuration)
+    augmented.shift.configuration <- as.integer(augmented.shift.configuration)
+
+    mapped.regimes <- list()
+    seen.keys <- character(0)
+
+    for(reg in regimes){
+        reg <- as.integer(reg)
+        mapped <- integer(0)
+
+        if(any(reg == 0L)){
+            mapped <- c(mapped, 0L)
+        }
+
+        edge.reg <- setdiff(reg, 0L)
+        if(length(edge.reg) > 0L){
+            idx <- match(edge.reg, original.shift.configuration)
+            if(any(is.na(idx))){
+                stop("convergent regimes do not match with the shift positions.")
+            }
+            mapped.edges <- augmented.shift.configuration[idx]
+            mapped.edges <- mapped.edges[!is.na(mapped.edges)]
+            if(length(mapped.edges) > 0L){
+                mapped <- c(mapped, mapped.edges)
+            }
+        }
+
+        mapped <- sort(unique(as.integer(mapped)))
+        if(length(mapped) == 0L){
+            next
+        }
+
+        key <- paste(mapped, collapse = " ")
+        if(key %in% seen.keys){
+            next
+        }
+
+        mapped.regimes[[length(mapped.regimes) + 1L]] <- mapped
+        seen.keys <- c(seen.keys, key)
+    }
+
+    if(length(mapped.regimes) == 0L){
+        return(list(0L))
+    }
+
+    bg.idx <- which(vapply(mapped.regimes, function(reg) 0L %in% reg, logical(1)))
+    if(length(bg.idx) == 0L){
+        mapped.regimes <- c(list(0L), mapped.regimes)
+    } else if(length(bg.idx) > 1L){
+        merged.bg <- sort(unique(unlist(mapped.regimes[bg.idx])))
+        mapped.regimes <- c(list(merged.bg), mapped.regimes[-bg.idx])
+    } else if(bg.idx != 1L){
+        mapped.regimes <- c(mapped.regimes[bg.idx], mapped.regimes[-bg.idx])
+    }
+
+    return(mapped.regimes)
+}
+
+dynamic_known_input_error_gls_fit <- function(tree, Y, build_preds,
+                                              lower.bound=NA_real_,
+                                              upper.bound=NA_real_,
+                                              starting.value=NA_real_,
+                                              quietly=TRUE,
+                                              input_error){
+
+    Y <- as.matrix(Y)
+    y <- as.numeric(Y[, 1])
+    n <- length(y)
+    phy <- reorder(tree, "pruningwise")
+    mean.tip.height <- mean(pruningwise.distFromRoot(phy)[seq_len(n)])
+    tol <- 1e-10
+
+    if(is.null(names(input_error))){
+        names(input_error) <- tree$tip.label
+    }
+    input_error <- as.numeric(input_error[tree$tip.label])
+
+    fit_for_alpha <- function(alpha){
+
+        preds <- as.matrix(build_preds(alpha))
+        d <- ncol(preds)
+        if(n <= d){
+            return(list(n2llh = .Machine$double.xmax))
+        }
+
+        re <- sqrt_OU_covariance(
+            tree,
+            alpha = alpha,
+            root.model = "OUfixedRoot",
+            sigma2 = 1,
+            input_error = input_error,
+            check.order = FALSE,
+            check.ultrametric = FALSE
+        )
+        Linv <- t(re$sqrtInvSigma)
+        Xt <- Linv %*% preds
+        yt <- drop(Linv %*% y)
+
+        XX <- crossprod(Xt)
+        Xy <- crossprod(Xt, yt)
+
+        inv.solve <- tryCatch({
+            chol.XX <- chol(XX)
+            list(
+                invXX = chol2inv(chol.XX),
+                betahat = drop(backsolve(chol.XX, forwardsolve(t(chol.XX), Xy)))
+            )
+        }, error = function(e) {
+            invXX <- tryCatch(solve(XX), error = function(e2) NULL)
+            if(is.null(invXX)){
+                return(NULL)
+            }
+            list(invXX = invXX, betahat = drop(invXX %*% Xy))
+        })
+
+        if(is.null(inv.solve)){
+            return(list(n2llh = .Machine$double.xmax))
+        }
+
+        fitted.values <- drop(preds %*% inv.solve$betahat)
+        residuals <- y - fitted.values
+        sigma2hat <- sum((yt - drop(Xt %*% inv.solve$betahat))^2) / n
+        if(!is.finite(sigma2hat) || sigma2hat <= 0){
+            return(list(n2llh = .Machine$double.xmax))
+        }
+
+        logdet <- 2 * as.numeric(determinant(re$sqrtSigma, logarithm = TRUE)$modulus)
+        n2llh <- as.numeric(n * log(2 * pi) + n + n * log(sigma2hat) + logdet)
+        vcov <- sigma2hat * inv.solve$invXX * n/(n - d)
+
+        list(
+            n2llh = n2llh,
+            betahat = inv.solve$betahat,
+            sigma2hat = sigma2hat,
+            vcov = vcov,
+            fitted.values = fitted.values,
+            residuals = residuals,
+            preds = preds,
+            d = d
+        )
+    }
+
+    lower.bound <- ifelse(is.null(lower.bound), NA_real_, as.numeric(lower.bound[[1]]))
+    upper.bound <- ifelse(is.null(upper.bound), NA_real_, as.numeric(upper.bound[[1]]))
+    starting.value <- ifelse(is.null(starting.value), NA_real_, as.numeric(starting.value[[1]]))
+
+    if(is.na(lower.bound) && is.na(starting.value)){
+        lower.opt <- 1e-07 / mean.tip.height
+    } else{
+        lower.opt <- ifelse(is.na(lower.bound), 0, lower.bound)
+    }
+
+    if(is.na(upper.bound) || upper.bound <= 0){
+        stop("convergent input_error fits require a strictly positive alpha.upper bound.")
+    }
+
+    if(lower.opt == upper.bound){
+        alpha.hat <- lower.opt
+    } else if(lower.opt > 0){
+        opt.res <- optimize(
+            function(logalpha) fit_for_alpha(exp(logalpha))$n2llh,
+            interval = c(log(lower.opt), log(upper.bound)),
+            tol = 1e-6
+        )
+        alpha.hat <- as.numeric(exp(opt.res$minimum))
+    } else{
+        opt.res <- optimize(
+            function(alpha) fit_for_alpha(alpha)$n2llh,
+            interval = c(0, upper.bound),
+            tol = 1e-6
+        )
+        alpha.hat <- as.numeric(opt.res$minimum)
+    }
+
+    if(!quietly &&
+       (isTRUE(all.equal(alpha.hat, lower.opt, tolerance = tol)) ||
+        isTRUE(all.equal(alpha.hat, upper.bound, tolerance = tol)))){
+        warning(paste("the estimation of alpha matches the upper/lower bound for this parameter.\n                          You may change the bounds using options \"upper.bound\" and \"lower.bound\".\n"))
+    }
+
+    fit <- fit_for_alpha(alpha.hat)
+    if(!is.finite(fit$n2llh) || fit$n2llh >= .Machine$double.xmax){
+        stop("failed to fit the convergent regime model with the supplied input_error.")
+    }
+
+    coefficient.names <- colnames(fit$preds)
+    coefficients <- fit$betahat
+    names(coefficients) <- coefficient.names
+    vcov <- fit$vcov
+    colnames(vcov) <- coefficient.names
+    rownames(vcov) <- coefficient.names
+    p <- fit$d + 2L
+
+    list(
+        coefficients = coefficients,
+        sigma2 = fit$sigma2hat,
+        optpar = alpha.hat,
+        sigma2_error = 0,
+        logLik = -fit$n2llh/2,
+        p = p,
+        aic = 2 * p + fit$n2llh,
+        vcov = vcov,
+        fitted.values = fit$fitted.values,
+        residuals = fit$residuals,
+        mean.tip.height = mean.tip.height,
+        y = y,
+        X = fit$preds,
+        n = n,
+        d = fit$d,
+        model = "OUfixedRoot"
+    )
+}
+
+dynamic_joint_input_measurement_error_gls_fit <- function(tree, Y, build_preds,
+                                                          lower.bound=NA_real_,
+                                                          upper.bound=NA_real_,
+                                                          starting.value=NA_real_,
+                                                          quietly=TRUE,
+                                                          input_error){
+
+    Y <- as.matrix(Y)
+    y <- as.numeric(Y[, 1])
+    n <- length(y)
+    phy <- reorder(tree, "pruningwise")
+    mean.tip.height <- mean(pruningwise.distFromRoot(phy)[seq_len(n)])
+    tol <- 1e-10
+    objective.ceiling <- .Machine$double.xmax / 1000
+
+    if(is.null(names(input_error))){
+        names(input_error) <- tree$tip.label
+    }
+    input_error <- as.numeric(input_error[tree$tip.label])
+
+    fit_profiled_gls <- function(Sigma, preds){
+
+        Sigma <- 0.5 * (Sigma + t(Sigma))
+        chol.Sigma <- tryCatch(chol(Sigma), error = function(e) NULL)
+        if(is.null(chol.Sigma)){
+            return(NULL)
+        }
+
+        Xt <- tryCatch(forwardsolve(t(chol.Sigma), preds), error = function(e) NULL)
+        yt <- tryCatch(drop(forwardsolve(t(chol.Sigma), matrix(y, ncol = 1))),
+                       error = function(e) NULL)
+        if(is.null(Xt) || is.null(yt)){
+            return(NULL)
+        }
+
+        d <- ncol(preds)
+        XX <- crossprod(Xt)
+        Xy <- crossprod(Xt, yt)
+
+        inv.solve <- tryCatch({
+            chol.XX <- chol(XX)
+            list(
+                invXX = chol2inv(chol.XX),
+                betahat = drop(backsolve(chol.XX, forwardsolve(t(chol.XX), Xy)))
+            )
+        }, error = function(e) {
+            invXX <- tryCatch(solve(XX), error = function(e2) NULL)
+            if(is.null(invXX)){
+                return(NULL)
+            }
+            list(invXX = invXX, betahat = drop(invXX %*% Xy))
+        })
+
+        if(is.null(inv.solve)){
+            return(NULL)
+        }
+
+        residuals.whitened <- yt - drop(Xt %*% inv.solve$betahat)
+        rss <- sum(residuals.whitened^2)
+        if(!is.finite(rss) || rss < 0){
+            return(NULL)
+        }
+
+        fitted.values <- drop(preds %*% inv.solve$betahat)
+        residuals <- y - fitted.values
+        logdet <- 2 * sum(log(diag(chol.Sigma)))
+        n2llh <- as.numeric(n * log(2 * pi) + logdet + rss)
+        vcov.scale <- if(n > d) rss/(n - d) else 1
+
+        list(
+            n2llh = n2llh,
+            betahat = inv.solve$betahat,
+            vcov = inv.solve$invXX * vcov.scale,
+            fitted.values = fitted.values,
+            residuals = residuals,
+            preds = preds,
+            d = d
+        )
+    }
+
+    lower.bound <- ifelse(is.null(lower.bound), NA_real_, as.numeric(lower.bound[[1]]))
+    upper.bound <- ifelse(is.null(upper.bound), NA_real_, as.numeric(upper.bound[[1]]))
+    starting.value <- ifelse(is.null(starting.value), NA_real_, as.numeric(starting.value[[1]]))
+
+    if(is.na(lower.bound) && is.na(starting.value)){
+        alpha.lower <- 1e-07 / mean.tip.height
+    } else{
+        alpha.lower <- ifelse(is.na(lower.bound), 0, lower.bound)
+    }
+    alpha.upper <- upper.bound
+    if(is.na(alpha.upper) || alpha.upper <= 0){
+        stop("convergent measurement_error fits require a strictly positive alpha.upper bound.")
+    }
+
+    alpha.hat <- NA_real_
+    optimize.alpha <- !isTRUE(all.equal(alpha.lower, alpha.upper, tolerance = tol))
+    alpha.log.scale <- optimize.alpha && alpha.lower > 0
+    if(optimize.alpha){
+        alpha.start <- ifelse(is.na(starting.value), max(0.5/mean.tip.height, alpha.lower), starting.value)
+        alpha.start <- min(max(alpha.start, alpha.lower), alpha.upper)
+    } else{
+        alpha.hat <- alpha.lower
+    }
+
+    covariance.cache <- new.env(parent = emptyenv())
+
+    get_phylo_covariance <- function(alpha){
+
+        key <- paste0("alpha:", format(alpha, digits = 16, scientific = FALSE))
+        if(exists(key, envir = covariance.cache, inherits = FALSE)){
+            return(get(key, envir = covariance.cache, inherits = FALSE))
+        }
+
+        re <- sqrt_OU_covariance(
+            tree,
+            alpha = alpha,
+            root.model = "OUfixedRoot",
+            sigma2 = 1,
+            check.order = FALSE,
+            check.ultrametric = FALSE
+        )
+        Sigma <- tcrossprod(re$sqrtSigma)
+        Sigma <- 0.5 * (Sigma + t(Sigma))
+        assign(key, Sigma, envir = covariance.cache)
+        Sigma
+    }
+
+    baseline <- try(
+        dynamic_known_input_error_gls_fit(
+            tree,
+            Y,
+            build_preds = build_preds,
+            lower.bound = lower.bound,
+            upper.bound = upper.bound,
+            starting.value = starting.value,
+            quietly = quietly,
+            input_error = input_error
+        ),
+        silent = TRUE
+    )
+
+    sigma2.start <- if(inherits(baseline, "try-error")){
+        max(stats::var(y), 1e-08)
+    } else{
+        max(as.numeric(baseline$sigma2), 1e-08)
+    }
+    sigma2_error.start <- max(median(input_error, na.rm = TRUE) * 0.25, 0)
+
+    decode_parameters <- function(par){
+
+        idx <- 0L
+        if(optimize.alpha){
+            idx <- idx + 1L
+            alpha <- if(alpha.log.scale) exp(par[[idx]]) else par[[idx]]
+        } else{
+            alpha <- alpha.hat
+        }
+
+        idx <- idx + 1L
+        sigma2 <- exp(par[[idx]])
+        idx <- idx + 1L
+        sigma2_error <- par[[idx]]
+
+        list(alpha = alpha, sigma2 = sigma2, sigma2_error = sigma2_error)
+    }
+
+    fit_for_parameters <- function(alpha, sigma2, sigma2_error){
+
+        if(!is.finite(sigma2) || sigma2 <= 0 || !is.finite(sigma2_error) || sigma2_error < 0){
+            return(list(n2llh = objective.ceiling))
+        }
+
+        preds <- as.matrix(build_preds(alpha))
+        d <- ncol(preds)
+        if(n <= d){
+            return(list(n2llh = objective.ceiling))
+        }
+
+        phylo.cov <- get_phylo_covariance(alpha)
+        total.cov <- sigma2 * phylo.cov
+        diag(total.cov) <- diag(total.cov) + input_error + sigma2_error
+
+        fit <- fit_profiled_gls(total.cov, preds)
+        if(is.null(fit)){
+            return(list(n2llh = objective.ceiling))
+        }
+
+        fit$sigma2 <- sigma2
+        fit$sigma2_error <- sigma2_error
+        fit
+    }
+
+    objective <- function(par){
+        prm <- decode_parameters(par)
+        fit_for_parameters(prm$alpha, prm$sigma2, prm$sigma2_error)$n2llh
+    }
+
+    par <- lower <- upper <- numeric()
+    if(optimize.alpha){
+        if(alpha.log.scale){
+            par <- c(par, log(alpha.start))
+            lower <- c(lower, log(alpha.lower))
+            upper <- c(upper, log(alpha.upper))
+        } else{
+            par <- c(par, alpha.start)
+            lower <- c(lower, alpha.lower)
+            upper <- c(upper, alpha.upper)
+        }
+    }
+
+    par <- c(par, log(sigma2.start), sigma2_error.start)
+    lower <- c(lower, log(.Machine$double.eps), 0)
+    upper <- c(upper, Inf, Inf)
+
+    opt.res <- optim(
+        par,
+        fn = objective,
+        method = "L-BFGS-B",
+        lower = lower,
+        upper = upper
+    )
+
+    prm <- decode_parameters(opt.res$par)
+    if(is.na(alpha.hat)){
+        alpha.hat <- prm$alpha
+    }
+    fit <- fit_for_parameters(prm$alpha, prm$sigma2, prm$sigma2_error)
+
+    if(!is.finite(fit$n2llh) || fit$n2llh >= objective.ceiling){
+        stop("failed to fit the convergent regime model with the supplied input_error and measurement_error.")
+    }
+
+    if(!quietly && optimize.alpha &&
+       (isTRUE(all.equal(alpha.hat, alpha.lower, tolerance = tol)) ||
+        isTRUE(all.equal(alpha.hat, alpha.upper, tolerance = tol)))){
+        warning(paste("the estimation of alpha matches the upper/lower bound for this parameter.\n                          You may change the bounds using options \"upper.bound\" and \"lower.bound\".\n"))
+    }
+
+    coefficient.names <- colnames(fit$preds)
+    coefficients <- fit$betahat
+    names(coefficients) <- coefficient.names
+    vcov <- fit$vcov
+    colnames(vcov) <- coefficient.names
+    rownames(vcov) <- coefficient.names
+    p <- fit$d + 3L
+
+    list(
+        coefficients = coefficients,
+        sigma2 = fit$sigma2,
+        optpar = alpha.hat,
+        sigma2_error = fit$sigma2_error,
+        logLik = -fit$n2llh/2,
+        p = p,
+        aic = 2 * p + fit$n2llh,
+        vcov = vcov,
+        fitted.values = fit$fitted.values,
+        residuals = fit$residuals,
+        mean.tip.height = mean.tip.height,
+        y = y,
+        X = fit$preds,
+        n = n,
+        d = fit$d,
+        model = "OUfixedRoot"
+    )
+}
+
+convergent_error_interface_CR <- function(tr, Y, conv.regimes = list(), alpha=NA,
+                                          fixed.alpha=FALSE, opt,
+                                          shift.configuration = opt$shift.configuration,
+                                          input_error = opt$input_error){
+
+    fixed.alpha <- isTRUE(fixed.alpha) || isTRUE(opt$fixed.alpha)
+
+    build_preds <- function(alpha.value){
+        preds <- generate_prediction_vec(
+            tr,
+            shift.configuration,
+            conv.regimes,
+            alpha = alpha.value,
+            ageMatrix = NULL
+        )
+        if(fixed.alpha){
+            preds <- ifelse(preds > 0, 1, 0)
+            colnames(preds) <- colnames(generate_prediction_vec(
+                tr,
+                shift.configuration,
+                conv.regimes,
+                alpha = alpha.value,
+                ageMatrix = NULL
+            ))
+        }
+        preds
+    }
+
+    lower.bound <- if(fixed.alpha) alpha else alpha/100
+    upper.bound <- if(fixed.alpha) alpha else max(alpha, opt$alpha.upper.bound + .Machine$double.eps)
+    starting.value <- alpha
+
+    if(isTRUE(opt$measurement_error)){
+        if(is.null(input_error)){
+            input_error <- stats::setNames(rep(0, length(tr$tip.label)), tr$tip.label)
+        }
+        return(dynamic_joint_input_measurement_error_gls_fit(
+            tr,
+            Y,
+            build_preds = build_preds,
+            lower.bound = lower.bound,
+            upper.bound = upper.bound,
+            starting.value = starting.value,
+            quietly = TRUE,
+            input_error = input_error
+        ))
+    }
+
+    return(dynamic_known_input_error_gls_fit(
+        tr,
+        Y,
+        build_preds = build_preds,
+        lower.bound = lower.bound,
+        upper.bound = upper.bound,
+        starting.value = starting.value,
+        quietly = TRUE,
+        input_error = input_error
+    ))
+}
+
+phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed.alpha=FALSE, opt,
+                                   shift.configuration = opt$shift.configuration,
+                                   input_error = opt$input_error){
+
+    if( isTRUE(opt$measurement_error) || !is.null(input_error) ){
+        return(convergent_error_interface_CR(
+            tr,
+            Y,
+            conv.regimes = conv.regimes,
+            alpha = alpha,
+            fixed.alpha = fixed.alpha,
+            opt = opt,
+            shift.configuration = shift.configuration,
+            input_error = input_error
+        ))
+    }
+
+    preds <- generate_prediction_vec(tr, shift.configuration, conv.regimes, alpha, ageMatrix=NULL)
     prev.val <- options()$warn
     options(warn = -1) # dangerous!
 
@@ -112,13 +697,14 @@ phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed
 cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
 
     shift.configuration <- opt$shift.configuration
+    conv.regimes <- normalize_convergent_regimes(conv.regimes, shift.configuration)
     stopifnot( length(alpha) == ncol(Y) )
 
     nShifts    <- length( shift.configuration )
     nShiftVals <- length( conv.regimes ) -1## conv.regimes has intercept as an optimum value
     nTips      <- length( tree$tip.label )
 
-    p <- nShifts + (nShiftVals + 3)*ncol(Y)
+    p <- nShifts + (nShiftVals + 3 + extra_error_df(opt))*ncol(Y)
     N <- nTips*ncol(Y)
     df.1 <- 2*p + (2*p*(p+1))/(N-p-1) 
     if( p > N-2)  ##  for this criterion we should have p < N.
@@ -126,9 +712,21 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
     df.2 <- 0
     score <- df.1
     for( i in 1:ncol(Y)){
-      # matrix(Y[,i]) keeps the nx1 dimensions, but forgets the row names: no match with tip labels in tree
-      # Y[,i, drop=FALSE] keeps nx1 dim (does not coerce result to lowest dim), and keeps row names
-	fit   <- phylolm_interface_CR(tree, Y[,i,drop=F], conv.regimes, alpha=alpha[[i]], opt=opt)
+        r <- get_data(tree, Y, shift.configuration, opt, i)
+        trait.regimes <- map_convergent_regimes_to_trait(
+            conv.regimes,
+            shift.configuration,
+            r$augmented.s.c
+        )
+        fit <- phylolm_interface_CR(
+            r$tr,
+            r$y,
+            trait.regimes,
+            alpha = alpha[[i]],
+            opt = opt,
+            shift.configuration = r$s.c,
+            input_error = r$input_error
+        )
         if ( all( is.na( fit) ) ){ return(Inf) } 
         score <- score  -2*fit$logLik + df.2
     }
@@ -139,6 +737,7 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
 cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
 
     shift.configuration <- opt$shift.configuration
+    conv.regimes <- normalize_convergent_regimes(conv.regimes, shift.configuration)
     stopifnot( length(alpha) == ncol(Y) )
 
     nEdges     <- Nedge(tree)
@@ -153,8 +752,22 @@ cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
 
     for( i in 1:nVariables ){
 
-        df.2 <- log(nTips)*(nShifts + 3)
-        fit  <- phylolm_interface_CR(tree, Y[,i,drop=F], conv.regimes, alpha=alpha[[i]], opt=opt)
+        df.2 <- log(nTips)*(nShifts + 3 + extra_error_df(opt))
+        r <- get_data(tree, Y, shift.configuration, opt, i)
+        trait.regimes <- map_convergent_regimes_to_trait(
+            conv.regimes,
+            shift.configuration,
+            r$augmented.s.c
+        )
+        fit  <- phylolm_interface_CR(
+            r$tr,
+            r$y,
+            trait.regimes,
+            alpha = alpha[[i]],
+            opt = opt,
+            shift.configuration = r$s.c,
+            input_error = r$input_error
+        )
         if ( all(is.na(fit)) ){ return(Inf) } 
         score <- score  -2*fit$logLik + df.2
     }
@@ -167,6 +780,7 @@ cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
 cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
 
     shift.configuration <- opt$shift.configuration
+    conv.regimes <- normalize_convergent_regimes(conv.regimes, shift.configuration)
     nShifts = length(shift.configuration)
     nEdges  = Nedge(tree)
     nTips   = length(tree$tip.label)
@@ -177,15 +791,38 @@ cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
     #alpha  <- sigma2 <- logLik <- rep(0, ncol(Y))
 
     for(i in 1:ncol(Y)){
-        fit   <- phylolm_interface_CR(tree, Y[,i,drop=F], conv.regimes, alpha=alpha[[i]], opt=opt)
-        fit2  <- phylolm_interface_CR(tree, Y[,i,drop=F], conv.regimes, alpha=alpha[[i]], fixed.alpha=TRUE, opt=opt)
+        r <- get_data(tree, Y, shift.configuration, opt, i)
+        trait.regimes <- map_convergent_regimes_to_trait(
+            conv.regimes,
+            shift.configuration,
+            r$augmented.s.c
+        )
+        fit <- phylolm_interface_CR(
+            r$tr,
+            r$y,
+            trait.regimes,
+            alpha = alpha[[i]],
+            opt = opt,
+            shift.configuration = r$s.c,
+            input_error = r$input_error
+        )
+        fit2 <- phylolm_interface_CR(
+            r$tr,
+            r$y,
+            trait.regimes,
+            alpha = alpha[[i]],
+            fixed.alpha = TRUE,
+            opt = opt,
+            shift.configuration = r$s.c,
+            input_error = r$input_error
+        )
         if( all( is.na(fit) ) ){
            return(Inf)
         } 
-        varY  <- var(Y[,i])
+        varY  <- var(as.numeric(r$y))
         ld    <- as.numeric(determinant(fit2$vcov * (fit$n - fit$d)/(varY*fit$n),
                                         logarithm = TRUE)$modulus)
-        df.2  <- 2*log(nTips) - ld
+        df.2  <- (2 + extra_error_df(opt))*log(nrow(r$y)) - ld
         score <- score  -2*fit$logLik + df.2
     }
     return( score )
@@ -195,19 +832,7 @@ cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
 cmp_model_score_CR <- function(tree, Y, regimes=NULL, alpha=NA, opt){
 
     shift.configuration <- opt$shift.configuration
-
-    if(is.null(regimes)){
-        if(is.null(names(shift.configuration))){
-            stop("the convergent regimes must be indicated through the names of the shift.configuration vector.")
-        }
-        cr.names <- names(shift.configuration)
-        regimes <- list()
-        idx <- 1
-        for( cr in cr.names){
-           regimes[[idx]] <- sort( shift.configuration[which(cr.names==cr)] )
-           idx <- idx + 1
-        }
-    }
+    regimes <- normalize_convergent_regimes(regimes, shift.configuration)
 
     if( opt$criterion == "AICc"){
         score <- cmp_AICc_CR(tree, Y, conv.regimes = regimes, alpha=alpha, opt=opt)
@@ -476,6 +1101,8 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'  The default ``backward'' method is a heuristic similar to \code{surface_backward}
 #'  in the \code{surface} package,
 #'  using backward steps to repeatedly merge similar regimes into convergent regimes.
+#'  Models fitted with \code{measurement_error} or \code{input_error} are
+#'  currently supported only by \code{method = "backward"}.
 #'@param fixed.alpha indicates if the alpha parameters should be optimized during likelihood fitting.
 #'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 #' then it runs sequentially. Otherwise, when fork-based parallelism is
@@ -518,6 +1145,11 @@ estimate_convergent_regimes  <-  function(model,
     model$l1ou.options$criterion = criterion
     opt$shift.configuration <- model$shift.configuration
     opt$alpha.upper.bound  <- model$l1ou.options$alpha.upper.bound
+    opt$measurement_error <- isTRUE(model$l1ou.options$measurement_error)
+    opt$input_error <- model$l1ou.options$input_error
+    opt$multivariate.missing <- isTRUE(model$l1ou.options$multivariate.missing)
+    opt$tree.list <- model$l1ou.options$tree.list
+    opt$quietly <- TRUE
     opt$fixed.alpha <- fixed.alpha
 
     opt$nCores <- nCores
@@ -536,6 +1168,10 @@ estimate_convergent_regimes  <-  function(model,
     return(with_l1ou_thread_limit(thread.limit, {
         if(opt$method == "backward"){
             return(estimate_convergent_regimes_surface(model, opt=opt))
+        }
+
+        if(isTRUE(opt$measurement_error) || !is.null(opt$input_error)){
+            stop("estimate_convergent_regimes(method=\"rr\") does not yet support measurement_error or input_error.")
         }
 
 

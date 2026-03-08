@@ -968,19 +968,19 @@ fit_OU <- function(tree, Y, shift.configuration,
         if( length(s.c) != length(shift.configuration) )
             stop(paste0("the input shift configuration is not parsimonious. For instance, shifts on these edges:\n",
                         s.c, "provides an alternative equivalent configuration with fewer shifts."))
+        opt$shift.configuration <- shift.configuration
 
          eModel = fit_OU_model(tree, Y, shift.configuration, opt)
          if(!is.null(cr.regimes) ){
-            if( isTRUE(opt$measurement_error) || !is.null(opt$input_error) ){
-                stop("convergent regime fitting does not yet support measurement_error or input_error.")
-            }
-
             if( !( 0 %in% unlist(cr.regimes) ) ){
                 stop("background/intercept is not included in the regimes! Represent the background by \"0\".")
             }
-            if( !(identical(sort(c(0,shift.configuration)), sort(unlist(cr.regimes)) ) ) ){
+            sc.reference <- sort(as.integer(c(0, shift.configuration)))
+            cr.reference <- sort(as.integer(unlist(cr.regimes)))
+            if( !identical(sc.reference, cr.reference) ){
                 stop("convergent regimes do not match with the shift positions.")
             }
+            opt$shift.configuration <- shift.configuration
             cr.score <- cmp_model_score_CR(tree, Y, regimes=cr.regimes,
                                alpha=eModel$alpha, opt=opt)
             eModel$cr.score <- cr.score

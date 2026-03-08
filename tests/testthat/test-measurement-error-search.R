@@ -95,19 +95,19 @@ test_that("bootstrap uses the measurement-error covariance path", {
   expect_true(all(bs$detection.rate >= 0 & bs$detection.rate <= 1))
 })
 
-test_that("convergent-regime fitting rejects measurement error explicitly", {
+test_that("convergent-regime fitting supports measurement error", {
   dat <- small_lizard_data(n_tips = 10)
 
-  expect_error(
-    fit_OU(
-      dat$tree,
-      dat$Y,
-      shift.configuration = c(1),
-      cr.regimes = list(c(0), c(1)),
-      measurement_error = TRUE
-    ),
-    "does not yet support measurement_error or input_error"
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = c(1),
+    cr.regimes = list(c(0), c(1)),
+    measurement_error = TRUE
   )
+
+  expect_s3_class(fit, "l1ou")
+  expect_true(is.finite(fit$cr.score))
 })
 
 test_that("fit_OU supports fixed-alpha input_error fits", {

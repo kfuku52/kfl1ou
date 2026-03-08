@@ -17,7 +17,9 @@ the optionally installed \code{genlasso} package for regularized linear regressi
 Currenly, this method can only accept a single trait.
 The default ``backward'' method is a heuristic similar to \code{surface_backward}
 in the \code{surface} package,
-using backward steps to repeatedly merge similar regimes into convergent regimes.}
+using backward steps to repeatedly merge similar regimes into convergent regimes.
+Models fitted with \code{measurement_error} or \code{input_error} are
+currently supported only by \code{method = "backward"}.}
 
 \item{fixed.alpha}{indicates if the alpha parameters should be optimized during likelihood fitting.}
 
