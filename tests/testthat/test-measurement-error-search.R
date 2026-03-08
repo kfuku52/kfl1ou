@@ -162,29 +162,61 @@ test_that("estimate_shift_configuration supports input_error", {
   expect_true(all(is.finite(est$sigma2)))
 })
 
-test_that("input_error with measurement_error is rejected explicitly", {
+test_that("fit_OU supports input_error with measurement_error at fixed alpha", {
   dat <- small_lizard_data(n_tips = 10)
   input_error <- named_input_error(dat$Y, value = 0.01)
+  alpha <- 0.4
 
-  expect_error(
-    fit_OU(
-      dat$tree,
-      dat$Y,
-      shift.configuration = c(),
-      input_error = input_error,
-      measurement_error = TRUE
-    ),
-    "measurement_error=TRUE"
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = c(),
+    input_error = input_error,
+    measurement_error = TRUE,
+    alpha.lower = alpha,
+    alpha.upper = alpha,
+    alpha.starting.value = alpha
   )
-  expect_error(
+  direct <- direct_joint_error_intercept_fit(
+    dat$tree,
+    dat$Y,
+    alpha = alpha,
+    input_error = input_error
+  )
+
+  expect_s3_class(fit, "l1ou")
+  expect_equal(unname(fit$alpha), alpha, tolerance = 1e-12)
+  expect_equal(unname(fit$intercept), unname(direct$coefficients), tolerance = 1e-8)
+  expect_equal(unname(fit$sigma2), unname(direct$sigma2), tolerance = 1e-6)
+  expect_equal(unname(fit$sigma2_error), unname(direct$sigma2_error), tolerance = 1e-8)
+  expect_equal(unname(fit$logLik), unname(direct$logLik), tolerance = 1e-8)
+})
+
+test_that("estimate_shift_configuration supports input_error with measurement_error", {
+  dat <- small_lizard_data(n_tips = 12, traits = 1:2)
+  dat$Y[1, 1] <- NA
+  dat$Y[2, 2] <- NA
+  input_error <- matrix(
+    0.01,
+    nrow = nrow(dat$Y),
+    ncol = ncol(dat$Y),
+    dimnames = dimnames(dat$Y)
+  )
+
+  est <- capture_silently(
     estimate_shift_configuration(
       dat$tree,
       dat$Y,
-      max.nShifts = 0,
+      max.nShifts = 1,
       input_error = input_error,
       measurement_error = TRUE,
       quietly = TRUE
-    ),
-    "measurement_error=TRUE"
+    )
   )
+
+  expect_s3_class(est, "l1ou")
+  expect_true(isTRUE(est$l1ou.options$multivariate.missing))
+  expect_length(est$sigma2_error, 2)
+  expect_true(all(is.finite(est$sigma2_error)))
+  expect_true(all(est$sigma2_error >= 0))
 })

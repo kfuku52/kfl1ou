@@ -30,7 +30,7 @@ configuration_ic(tree, Y, shift.configuration, criterion = c("pBIC",
 
 \item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. \code{kfl1ou} can use these directly when \code{measurement_error = FALSE}. Combining them with \code{measurement_error = TRUE} is not yet supported.}
+\item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
 
 \item{fit.OU.model}{logical. If TRUE, it returns an object of class l1ou with all the parameters estimated.}
 

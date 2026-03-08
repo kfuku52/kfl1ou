@@ -33,7 +33,7 @@ same optimum.}
 
 \item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. \code{kfl1ou} can use these directly when \code{measurement_error = FALSE}. Combining them with \code{measurement_error = TRUE} is not yet supported.}
+\item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }

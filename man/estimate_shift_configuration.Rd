@@ -5,7 +5,7 @@
 \title{Detects evolutionary shifts under an OU model}
 \usage{
 estimate_shift_configuration(tree, Y,
-  max.nShifts = floor(length(tree$tip.label)/2), criterion = c("pBIC",
+  max.nShifts = NULL, criterion = c("pBIC",
   "pBICess", "mBIC", "BIC", "AICc"), root.model = c("OUfixedRoot",
   "OUrandomRoot"), candid.edges = NA, quietly = TRUE,
   alpha.starting.value = NA, alpha.upper = alpha_upper_bound(tree),
@@ -19,7 +19,7 @@ estimate_shift_configuration(tree, Y,
 
 \item{Y}{trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.}
 
-\item{max.nShifts}{upper bound for the number of shifts. The default value is half the number of tips.}
+\item{max.nShifts}{upper bound for the number of shifts. If \code{NULL} or \code{"auto"}, it is set to half the number of tree edges.}
 
 \item{criterion}{information criterion for model selection (see Details in \code{\link{configuration_ic}}).}
 
@@ -53,7 +53,7 @@ overall computation respects this budget when possible.}
 
 \item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. \code{kfl1ou} can use these directly when \code{measurement_error = FALSE}. Combining them with \code{measurement_error = TRUE} is not yet supported.}
+\item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }

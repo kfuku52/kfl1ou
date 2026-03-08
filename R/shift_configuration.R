@@ -8,7 +8,8 @@
 #'
 #'@param tree ultrametric tree of class phylo with branch lengths, and edges in postorder.
 #'@param Y trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.
-#'@param max.nShifts upper bound for the number of shifts. The default value is half the number of tips.
+#'@param max.nShifts upper bound for the number of shifts. If \code{NULL} or
+#' \code{"auto"}, it is set to half the number of tree edges.
 #'@param criterion information criterion for model selection (see Details in \code{\link{configuration_ic}}).
 #'@param root.model ancestral state model at the root.
 #'@param candid.edges a vector of indices of candidate edges where the shifts may occur. If provided, shifts will only be allowed on these edges; otherwise all edges will be considered.
@@ -27,6 +28,13 @@
 #'@param edge.length.threshold minimum edge length that is considered non-zero. Branches with shorter length are considered as soft polytomies, disallowing shifts on such branches.
 #'@param grp.delta internal (used when the data contain multiple traits). The input lambda sequence for the group lasso, in `grplasso', will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
 #'@param grp.seq.ub (used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
+#'@param measurement_error logical. If TRUE, estimates an observation-level
+#' measurement error variance for each trait through \code{kfl1ou}'s bundled
+#' likelihood solver.
+#'@param input_error optional vector or matrix of known observation error
+#' variances. When combined with \code{measurement_error = TRUE},
+#' \code{kfl1ou} treats these as known tip-specific variances and estimates an
+#' additional shared measurement-error variance per trait.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'@return 
 #' \item{Y}{input trait vector/matrix.}
@@ -39,6 +47,8 @@
 #' \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
 #' \item{alpha}{maximum likelihood estimate(s) of the adaptation rate \eqn{\alpha}{alpha}, one per trait.}
 #' \item{sigma2}{maximum likelihood estimate(s) of the variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
+#' \item{sigma2_error}{maximum likelihood estimate(s) of the observation-level
+#' measurement error variance, one per trait.}
 #' \item{mu}{fitted values, i.e. estimated trait means.}
 #' \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 #' \item{score}{information criterion value of the estimated shift configuration.}
@@ -98,7 +108,7 @@
 #'
 #'@export
 estimate_shift_configuration <- function(tree, Y, 
-           max.nShifts            = floor(length(tree$tip.label)/2), 
+           max.nShifts            = NULL, 
            criterion              = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"), 
            root.model             = c("OUfixedRoot", "OUrandomRoot"),
            candid.edges           = NA,
@@ -185,13 +195,15 @@ estimate_shift_configuration <- function(tree, Y,
     stopifnot(all(rownames(Y) == tree$tip.label))
     stopifnot(identical(rownames(Y), tree$tip.label))
 
+    max.nShifts <- normalize_max_n_shifts(max.nShifts, tree)
+
     if( max.nShifts > length(tree$tip.label)){
         warning("max.nShifts should be a positive number less than number of tips. I set it to number of tips.\n")
         max.nShifts  <-  length(tree$tip.label)
     }
     if( max.nShifts < 0){
         warning("max.nShifts should be a positive number less than number of tips. I set it to 0.\n")
-        max.nShifts  <- 1 
+        max.nShifts  <- 0 
     }
 
     alpha.bounds <- sanitize_alpha_bounds(alpha.lower, alpha.upper)
@@ -250,6 +262,7 @@ estimate_shift_configuration <- function(tree, Y,
         if( is.null(l1ou.options$measurement_error) ){
             l1ou.options$measurement_error <- FALSE
         }
+        l1ou.options$max.nShifts <- normalize_max_n_shifts(l1ou.options$max.nShifts, tree)
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
     }
     check_input_error_support(l1ou.options$measurement_error, l1ou.options$input_error)
@@ -702,6 +715,13 @@ do_backward_correction <- function(tree, Y, shift.configuration, opt){
 #'@param alpha.starting.value optional starting value for the optimization of the phylogenetic adaptation rate. 
 #'@param alpha.upper optional upper bound for the phylogenetic adaptation rate. The default value is log(2) over the minimum length of external branches, corresponding to a half life greater or equal to the minimum external branch length.
 #'@param alpha.lower optional lower bound for the phylogenetic adaptation rate.
+#'@param measurement_error logical. If TRUE, estimates an observation-level
+#' measurement error variance for each trait through \code{kfl1ou}'s bundled
+#' likelihood solver.
+#'@param input_error optional vector or matrix of known observation error
+#' variances. When combined with \code{measurement_error = TRUE},
+#' \code{kfl1ou} treats these as known tip-specific variances and estimates an
+#' additional shared measurement-error variance per trait.
 #'@param fit.OU.model logical. If TRUE, it returns an object of class l1ou with all the parameters estimated.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'
@@ -829,6 +849,13 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'@param alpha.starting.value optional starting value for the optimization of the phylogenetic adaptation rate. 
 #'@param alpha.upper optional upper bound for the phylogenetic adaptation rate. The default value is log(2) over the minimum length of external branches, corresponding to a half life greater or equal to the minimum external branch length.
 #'@param alpha.lower optional lower bound for the phylogenetic adaptation rate.
+#'@param measurement_error logical. If TRUE, estimates an observation-level
+#' measurement error variance for each trait through \code{kfl1ou}'s bundled
+#' likelihood solver.
+#'@param input_error optional vector or matrix of known observation error
+#' variances. When combined with \code{measurement_error = TRUE},
+#' \code{kfl1ou} treats these as known tip-specific variances and estimates an
+#' additional shared measurement-error variance per trait.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'
 #'@return an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
@@ -1200,6 +1227,28 @@ sanitize_alpha_bounds <- function(alpha.lower, alpha.upper){
     return(list(lower=lower, upper=upper))
 }
 
+normalize_max_n_shifts <- function(max.nShifts, tree){
+
+    auto.max.n.shifts <- floor(Nedge(tree) / 2)
+
+    if( is.null(max.nShifts) ){
+        return(auto.max.n.shifts)
+    }
+
+    if( is.character(max.nShifts) ){
+        if( length(max.nShifts) == 1L && identical(tolower(max.nShifts), "auto") ){
+            return(auto.max.n.shifts)
+        }
+        stop('max.nShifts should be a single non-negative number, NULL, or "auto".')
+    }
+
+    if( !is.numeric(max.nShifts) || length(max.nShifts) != 1L || is.na(max.nShifts) ){
+        stop('max.nShifts should be a single non-negative number, NULL, or "auto".')
+    }
+
+    return(as.integer(floor(max.nShifts)))
+}
+
 get_trait_input_error <- function(opt, idx, tree=NULL, available=NULL, input_error=opt$input_error){
 
     if( is.null(input_error) ){
@@ -1277,8 +1326,21 @@ estimate_whitening_fit <- function(tree, Y, alpha=0, est.alpha=FALSE, opt, input
     prep <- prepare_trait_phylolm_data(tree, Y, input_error=input_error)
     yy <- as.numeric(prep$Y[, 1])
     names(yy) <- rownames(prep$Y)
-    if( requires_phylolm_input_error_support(opt$measurement_error, prep$input_error) ){
-        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
+    if( can_use_dense_joint_input_error_fit(opt$measurement_error, prep$input_error) ){
+        return(
+            dense_joint_input_measurement_error_gls_fit(
+                prep$tree,
+                prep$Y,
+                preds = matrix(1, nrow=nrow(prep$Y), ncol=1),
+                model = ifelse(est.alpha, "BM", opt$root.model),
+                lower.bound = ifelse(est.alpha, NA_real_, alpha),
+                upper.bound = ifelse(est.alpha, NA_real_, alpha),
+                starting.value = ifelse(est.alpha, NA_real_, alpha),
+                quietly = opt$quietly,
+                input_error = prep$input_error,
+                coefficient_names = "(Intercept)"
+            )
+        )
     }
     if( can_use_dense_input_error_fit(opt$measurement_error, prep$input_error) ){
         return(
@@ -1344,6 +1406,13 @@ requires_phylolm_input_error_support <- function(measurement_error=FALSE, input_
         !phylolm_supports_input_error()
 }
 
+can_use_dense_joint_input_error_fit <- function(measurement_error=FALSE, input_error=NULL){
+
+    !is.null(input_error) &&
+        isTRUE(measurement_error) &&
+        !phylolm_supports_input_error()
+}
+
 can_use_dense_input_error_fit <- function(measurement_error=FALSE, input_error=NULL){
 
     !is.null(input_error) &&
@@ -1352,10 +1421,6 @@ can_use_dense_input_error_fit <- function(measurement_error=FALSE, input_error=N
 }
 
 check_input_error_support <- function(measurement_error=FALSE, input_error=NULL){
-
-    if( requires_phylolm_input_error_support(measurement_error, input_error) ){
-        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
-    }
 
     invisible(NULL)
 }
@@ -1506,6 +1571,292 @@ dense_known_input_error_gls_fit <- function(tree, Y, preds, model,
         sigma2 = fit$sigma2hat,
         optpar = alpha.hat,
         sigma2_error = 0,
+        logLik = -fit$n2llh/2,
+        p = p,
+        aic = 2 * p + fit$n2llh,
+        vcov = vcov,
+        fitted.values = fit$fitted.values,
+        residuals = fit$residuals,
+        mean.tip.height = mean.tip.height,
+        y = y,
+        X = preds,
+        n = n,
+        d = d,
+        model = model
+    )
+}
+
+dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
+                                                        lower.bound=NA_real_,
+                                                        upper.bound=NA_real_,
+                                                        starting.value=NA_real_,
+                                                        quietly=TRUE,
+                                                        input_error,
+                                                        coefficient_names=NULL){
+
+    Y <- as.matrix(Y)
+    preds <- as.matrix(preds)
+    y <- as.numeric(Y[, 1])
+    n <- length(y)
+    d <- ncol(preds)
+
+    if( n <= d ){
+        stop("not enough taxa remain to fit the model with the requested input_error.")
+    }
+
+    phy <- reorder(tree, "pruningwise")
+    mean.tip.height <- mean(pruningwise.distFromRoot(phy)[seq_len(n)])
+    tol <- 1e-10
+    objective.ceiling <- .Machine$double.xmax / 1000
+
+    if( is.null(names(input_error)) ){
+        names(input_error) <- tree$tip.label
+    }
+    input_error <- as.numeric(input_error[tree$tip.label])
+
+    fit_profiled_gls <- function(Sigma){
+
+        Sigma <- 0.5 * (Sigma + t(Sigma))
+        chol.Sigma <- tryCatch(chol(Sigma), error = function(e) NULL)
+        if( is.null(chol.Sigma) ){
+            return(NULL)
+        }
+
+        Xt <- tryCatch(forwardsolve(t(chol.Sigma), preds), error = function(e) NULL)
+        yt <- tryCatch(drop(forwardsolve(t(chol.Sigma), matrix(y, ncol=1))),
+                       error = function(e) NULL)
+
+        if( is.null(Xt) || is.null(yt) ){
+            return(NULL)
+        }
+
+        XX <- crossprod(Xt)
+        Xy <- crossprod(Xt, yt)
+
+        inv.solve <- tryCatch({
+            chol.XX <- chol(XX)
+            list(
+                invXX = chol2inv(chol.XX),
+                betahat = drop(backsolve(chol.XX, forwardsolve(t(chol.XX), Xy)))
+            )
+        }, error = function(e) {
+            invXX <- tryCatch(solve(XX), error = function(e2) NULL)
+            if( is.null(invXX) ){
+                return(NULL)
+            }
+            list(invXX = invXX, betahat = drop(invXX %*% Xy))
+        })
+
+        if( is.null(inv.solve) ){
+            return(NULL)
+        }
+
+        residuals.whitened <- yt - drop(Xt %*% inv.solve$betahat)
+        rss <- sum(residuals.whitened^2)
+        if( !is.finite(rss) || rss < 0 ){
+            return(NULL)
+        }
+
+        fitted.values <- drop(preds %*% inv.solve$betahat)
+        residuals <- y - fitted.values
+        logdet <- 2 * sum(log(diag(chol.Sigma)))
+        n2llh <- as.numeric(n * log(2 * pi) + logdet + rss)
+        vcov.scale <- if( n > d ) rss/(n - d) else 1
+
+        list(
+            n2llh = n2llh,
+            betahat = inv.solve$betahat,
+            vcov = inv.solve$invXX * vcov.scale,
+            fitted.values = fitted.values,
+            residuals = residuals
+        )
+    }
+
+    alpha.lower <- alpha.upper <- alpha.start <- alpha.hat <- NULL
+    alpha.log.scale <- FALSE
+    optimize.alpha <- FALSE
+
+    if( model != "BM" ){
+        alpha.lower.raw <- ifelse(is.null(lower.bound), NA_real_, as.numeric(lower.bound[[1]]))
+        alpha.upper <- ifelse(is.null(upper.bound), NA_real_, as.numeric(upper.bound[[1]]))
+        alpha.start.raw <- ifelse(is.null(starting.value), NA_real_, as.numeric(starting.value[[1]]))
+
+        if( is.na(alpha.lower.raw) && is.na(alpha.start.raw) ){
+            alpha.lower <- 1e-07 / mean.tip.height
+        } else{
+            alpha.lower <- ifelse(is.na(alpha.lower.raw), 0, alpha.lower.raw)
+        }
+
+        if( is.na(alpha.upper) || alpha.upper <= 0 ){
+            stop("input_error fallback requires a strictly positive alpha.upper bound.")
+        }
+
+        optimize.alpha <- !isTRUE(all.equal(alpha.lower, alpha.upper, tolerance = tol))
+        if( optimize.alpha ){
+            alpha.start <- ifelse(is.na(alpha.start.raw), max(0.5/mean.tip.height, alpha.lower), alpha.start.raw)
+            alpha.start <- min(max(alpha.start, alpha.lower), alpha.upper)
+            alpha.log.scale <- alpha.lower > 0
+        } else{
+            alpha.hat <- alpha.lower
+        }
+    }
+
+    covariance.cache <- new.env(parent = emptyenv())
+
+    get_phylo_covariance <- function(alpha){
+
+        key <- if( is.null(alpha) ){
+            "BM"
+        } else{
+            paste0("alpha:", format(alpha, digits = 16, scientific = FALSE))
+        }
+
+        if( exists(key, envir = covariance.cache, inherits = FALSE) ){
+            return(get(key, envir = covariance.cache, inherits = FALSE))
+        }
+
+        root.model <- ifelse(model == "BM" || (!is.null(alpha) && alpha <= 0), "OUfixedRoot", model)
+        re <- sqrt_OU_covariance(
+            tree,
+            alpha = ifelse(model == "BM", 0, alpha),
+            root.model = root.model,
+            sigma2 = 1,
+            check.order = FALSE,
+            check.ultrametric = FALSE
+        )
+        Sigma <- tcrossprod(re$sqrtSigma)
+        Sigma <- 0.5 * (Sigma + t(Sigma))
+        assign(key, Sigma, envir = covariance.cache)
+        Sigma
+    }
+
+    baseline <- try(
+        dense_known_input_error_gls_fit(
+            tree,
+            Y,
+            preds,
+            model = model,
+            lower.bound = lower.bound,
+            upper.bound = upper.bound,
+            starting.value = starting.value,
+            quietly = quietly,
+            input_error = input_error,
+            coefficient_names = coefficient_names
+        ),
+        silent = TRUE
+    )
+
+    sigma2.start <- if( inherits(baseline, "try-error") ){
+        max(stats::var(y), 1e-08)
+    } else{
+        max(as.numeric(baseline$sigma2), 1e-08)
+    }
+    sigma2_error.start <- max(median(input_error, na.rm=TRUE) * 0.25, 0)
+
+    decode_parameters <- function(par){
+
+        idx <- 0L
+
+        if( model == "BM" ){
+            alpha <- NULL
+        } else if( optimize.alpha ){
+            idx <- idx + 1L
+            alpha <- if( alpha.log.scale ) exp(par[[idx]]) else par[[idx]]
+        } else{
+            alpha <- alpha.hat
+        }
+
+        idx <- idx + 1L
+        sigma2 <- exp(par[[idx]])
+        idx <- idx + 1L
+        sigma2_error <- par[[idx]]
+
+        list(alpha = alpha, sigma2 = sigma2, sigma2_error = sigma2_error)
+    }
+
+    fit_for_parameters <- function(alpha, sigma2, sigma2_error){
+
+        if( !is.finite(sigma2) || sigma2 <= 0 || !is.finite(sigma2_error) || sigma2_error < 0 ){
+            return(list(n2llh = objective.ceiling))
+        }
+
+        phylo.cov <- get_phylo_covariance(alpha)
+        total.cov <- sigma2 * phylo.cov
+        diag(total.cov) <- diag(total.cov) + input_error + sigma2_error
+
+        fit <- fit_profiled_gls(total.cov)
+        if( is.null(fit) ){
+            return(list(n2llh = objective.ceiling))
+        }
+
+        fit$sigma2 <- sigma2
+        fit$sigma2_error <- sigma2_error
+        fit
+    }
+
+    objective <- function(par){
+        prm <- decode_parameters(par)
+        fit_for_parameters(prm$alpha, prm$sigma2, prm$sigma2_error)$n2llh
+    }
+
+    par <- lower <- upper <- numeric()
+
+    if( model != "BM" && optimize.alpha ){
+        if( alpha.log.scale ){
+            par <- c(par, log(alpha.start))
+            lower <- c(lower, log(alpha.lower))
+            upper <- c(upper, log(alpha.upper))
+        } else{
+            par <- c(par, alpha.start)
+            lower <- c(lower, alpha.lower)
+            upper <- c(upper, alpha.upper)
+        }
+    }
+
+    par <- c(par, log(sigma2.start), sigma2_error.start)
+    lower <- c(lower, log(.Machine$double.eps), 0)
+    upper <- c(upper, Inf, Inf)
+
+    opt.res <- optim(
+        par,
+        fn = objective,
+        method = "L-BFGS-B",
+        lower = lower,
+        upper = upper
+    )
+
+    prm <- decode_parameters(opt.res$par)
+    if( is.null(alpha.hat) ){
+        alpha.hat <- prm$alpha
+    }
+    fit <- fit_for_parameters(prm$alpha, prm$sigma2, prm$sigma2_error)
+
+    if( !is.finite(fit$n2llh) || fit$n2llh >= objective.ceiling ){
+        stop("failed to fit the OU model with the supplied input_error and measurement_error.")
+    }
+
+    if( !quietly && model != "BM" && optimize.alpha &&
+        (isTRUE(all.equal(alpha.hat, alpha.lower, tolerance = tol)) ||
+         isTRUE(all.equal(alpha.hat, alpha.upper, tolerance = tol))) ){
+        warning(paste("the estimation of alpha matches the upper/lower bound for this parameter.\n                          You may change the bounds using options \"upper.bound\" and \"lower.bound\".\n"))
+    }
+
+    if( is.null(coefficient_names) ){
+        coefficient_names <- paste0("preds", seq_len(d))
+    }
+
+    coefficients <- fit$betahat
+    names(coefficients) <- coefficient_names
+    vcov <- fit$vcov
+    colnames(vcov) <- coefficient_names
+    rownames(vcov) <- coefficient_names
+    p <- d + 1L + ifelse(model == "BM", 0L, 1L) + 1L
+
+    list(
+        coefficients = coefficients,
+        sigma2 = fit$sigma2,
+        optpar = if( model == "BM" ) NULL else alpha.hat,
+        sigma2_error = fit$sigma2_error,
         logLik = -fit$n2llh/2,
         p = p,
         aic = 2 * p + fit$n2llh,
@@ -2103,8 +2454,25 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
 
 
     preds = cbind(1, Z[ ,shift.configuration])
-    if( requires_phylolm_input_error_support(opt$measurement_error, input_error) ){
-        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
+    if( can_use_dense_joint_input_error_fit(opt$measurement_error, input_error) ){
+        fit <- try(
+            dense_joint_input_measurement_error_gls_fit(
+                tree,
+                Y,
+                preds,
+                model = opt$root.model,
+                lower.bound = opt$alpha.lower.bound,
+                upper.bound = opt$alpha.upper.bound,
+                starting.value = opt$alpha.starting.value,
+                quietly = opt$quietly,
+                input_error = input_error,
+                coefficient_names = paste0("preds", seq_len(ncol(preds)))
+            ),
+            silent = opt$quietly
+        )
+        if(class(fit) != "try-error"){
+            return(fit)
+        }
     }
     if( can_use_dense_input_error_fit(opt$measurement_error, input_error) ){
         fit <- try(
