@@ -4,23 +4,56 @@
 \alias{adjust_data}
 \title{Adjusts the tree and traits to meet the requirements of \code{estimate_shift_configuration}}
 \usage{
-adjust_data(tree, Y, normalize = TRUE, quietly = FALSE)
+adjust_data(
+  tree,
+  Y,
+  normalize = TRUE,
+  quietly = FALSE,
+  repair.tree = TRUE,
+  min.edge.length = 1e-08,
+  ultrametric.tolerance = c(0.01, 0.05, 0.1, 1, Inf),
+  drop.all.missing = TRUE,
+  drop.invariant = TRUE,
+  invariant.tolerance = 0
+)
 }
 \arguments{
-\item{tree}{ultrametric tree of class phylo with branch lengths.}
+\item{tree}{tree of class phylo with branch lengths.}
 
-\item{Y}{trait vector/matrix without missing entries.}
+\item{Y}{trait vector/matrix.}
 
 \item{normalize}{logical. If TRUE, normalizes branch lengths to a unit tree height.}
 
 \item{quietly}{logical. If FALSE, changes in tree/trait are printed.}
+
+\item{repair.tree}{logical. If TRUE, repairs non-positive branch lengths and
+nearly ultrametric trees before normalization.}
+
+\item{min.edge.length}{positive numeric lower bound used when repairing short
+or non-positive branch lengths.}
+
+\item{ultrametric.tolerance}{numeric vector of relative change thresholds used
+when attempting automatic ultrametric repair.}
+
+\item{drop.all.missing}{logical. If TRUE, tips with no observed trait values
+are dropped together with their tree tips.}
+
+\item{drop.invariant}{logical. If TRUE, invariant traits are removed before
+fitting.}
+
+\item{invariant.tolerance}{non-negative numeric tolerance used to detect
+invariant traits.}
 }
 \value{
 \item{tree}{tree of class phylo, with the same topology as the input \code{tree} but adjusted edge order.}
 \item{Y}{trait vector/matrix with adjusted row names and row order.}
+\item{removed.tips}{tip labels dropped because all trait values were missing.}
+\item{removed.traits}{trait names dropped because they were invariant.}
 }
 \description{
-Returns a new tree and new data matrix, where the tree edges are in postorder, and the data row names match the order of the tree tip labels.
+Returns a new tree and new data matrix, where the tree edges are in
+postorder, the data row names match the order of the tree tip labels, and
+common pathological inputs are sanitized.
 }
 \examples{
 data(lizard.tree, lizard.traits)
@@ -32,4 +65,3 @@ lizard <- adjust_data(lizard.tree, lizard.traits[,1])
 lizard.traits <- as.data.frame(lizard.traits)
 lizard <- adjust_data(lizard.tree, subset(lizard.traits, select=1))
 }
-

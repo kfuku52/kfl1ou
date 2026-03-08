@@ -1,15 +1,31 @@
 #' Adjusts the tree and traits to meet the requirements of \code{estimate_shift_configuration}
 #'
-#' Returns a new tree and new data matrix, where the tree edges are in postorder, and the data row names match the order of the tree tip labels.
+#' Returns a new tree and new data matrix, where the tree edges are in
+#' postorder, the data row names match the order of the tree tip labels, and
+#' common pathological inputs are sanitized.
 #'
 #'@param tree ultrametric tree of class phylo with branch lengths.
-#'@param Y trait vector/matrix without missing entries.
+#'@param Y trait vector/matrix.
 #'@param normalize logical. If TRUE, normalizes branch lengths to a unit tree height.
 #'@param quietly logical. If FALSE, changes in tree/trait are printed.
+#'@param repair.tree logical. If TRUE, repairs non-positive branch lengths and
+#' nearly ultrametric trees before normalization.
+#'@param min.edge.length positive numeric lower bound used when repairing short
+#' or non-positive branch lengths.
+#'@param ultrametric.tolerance numeric vector of relative change thresholds used
+#' when attempting automatic ultrametric repair.
+#'@param drop.all.missing logical. If TRUE, tips with no observed trait values
+#' are dropped together with their tree tips.
+#'@param drop.invariant logical. If TRUE, invariant traits are removed before
+#' fitting.
+#'@param invariant.tolerance non-negative numeric tolerance used to detect
+#' invariant traits.
 #'
 #'@return 
 #' \item{tree}{tree of class phylo, with the same topology as the input \code{tree} but adjusted edge order.}
 #' \item{Y}{trait vector/matrix with adjusted row names and row order.}
+#' \item{removed.tips}{tip labels dropped because all trait values were missing.}
+#' \item{removed.traits}{trait names dropped because they were invariant.}
 #'@examples
 #' data(lizard.tree, lizard.traits)
 #' # here, lizard.traits is a matrix, so columns retain row names:
@@ -20,23 +36,18 @@
 #' lizard.traits <- as.data.frame(lizard.traits)
 #' lizard <- adjust_data(lizard.tree, subset(lizard.traits, select=1))
 #'@export
-adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE){
+adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
+                        repair.tree = TRUE,
+                        min.edge.length = 1e-8,
+                        ultrametric.tolerance = c(0.01, 0.05, 0.1, 1, Inf),
+                        drop.all.missing = TRUE,
+                        drop.invariant = TRUE,
+                        invariant.tolerance = 0){
 
     if (!inherits(tree, "phylo"))  stop("object \"tree\" is not of class \"phylo\".")
-    if( !identical(tree$edge, reorder(tree, "postorder")$edge)){
-        if(!quietly)
-            cat("the new tree edges are ordered differently: in postorder.\n")
-        tree  <- reorder(tree, "postorder")
-    }
     if (!is.null(tree$root.edge))
 	    if (tree$root.edge>0)
 		    stop("the tree has a non-zero root edge.")
-
-    if( normalize ){
-        tree <- normalize_tree(tree)
-        if(!quietly)
-            cat("the new tree is normalized: each tip at distance 1 from the root.\n")
-    }
 
     if (!inherits(Y, "matrix")){
         Y <- as.matrix(Y)
@@ -76,18 +87,370 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE){
 
         if(!quietly)
             cat("reordered the rows of the trait vector/matrix (Y) to match the order of the tip labels.\n")
- 
+
         #Y  <-  Y[order(rownames(Y)),  ] 
         #Y  <-  Y[order(order(tree$tip.label)), ]
-        Y <- as.matrix(Y[tree$tip.label, ])
+        Y <- as.matrix(Y[tree$tip.label, , drop=FALSE])
 
     }
 
+    removed.tips <- character(0)
+    if( drop.all.missing ){
+        observed.per.tip <- rowSums(!is.na(Y))
+        missing.tip.idx <- which(observed.per.tip == 0L)
+        if( length(missing.tip.idx) > 0 ){
+            removed.tips <- rownames(Y)[missing.tip.idx]
+            if(!quietly){
+                cat("dropped", length(removed.tips),
+                    "tip(s) with no observed trait values.\n")
+            }
+            tree <- ape::drop.tip(tree, removed.tips)
+            Y <- as.matrix(Y[tree$tip.label, , drop=FALSE])
+        }
+    }
+
+    if( repair.tree ){
+        tree <- sanitize_tree_edge_lengths(
+            tree,
+            min.edge.length = min.edge.length,
+            quietly = quietly
+        )
+        tree <- repair_ultrametric_tree(
+            tree,
+            tolerances = ultrametric.tolerance,
+            min.edge.length = min.edge.length,
+            quietly = quietly
+        )
+    }
+
+    if( !identical(tree$edge, reorder(tree, "postorder")$edge)){
+        if(!quietly)
+            cat("the new tree edges are ordered differently: in postorder.\n")
+        tree  <- reorder(tree, "postorder")
+    }
+
+    if( normalize ){
+        tree <- normalize_tree(tree)
+        if(!quietly)
+            cat("the new tree is normalized: each tip at distance 1 from the root.\n")
+    }
+
+    removed.traits <- character(0)
+    if( drop.invariant ){
+        filtered <- drop_invariant_traits(
+            Y,
+            tolerance = invariant.tolerance,
+            quietly = quietly
+        )
+        Y <- filtered$Y
+        removed.traits <- filtered$removed.traits
+    }
 
     stopifnot(all(rownames(Y) == tree$tip.label))
     stopifnot(identical(rownames(Y), tree$tip.label))
 
-    return(list(tree=tree, Y=Y))
+    return(list(tree=tree, Y=Y,
+                removed.tips=removed.tips,
+                removed.traits=removed.traits))
+}
+
+sanitize_tree_edge_lengths <- function(tree, min.edge.length = 1e-8, quietly = FALSE){
+    if( is.null(tree$edge.length) ){
+        stop("the tree has no branch lengths.")
+    }
+    if( !is.numeric(min.edge.length) || length(min.edge.length) != 1L ||
+        is.na(min.edge.length) || min.edge.length <= 0 ){
+        stop("min.edge.length must be a single positive number.")
+    }
+    if( any(is.na(tree$edge.length)) ){
+        stop("the tree has missing branch lengths.")
+    }
+    if( any(!is.finite(tree$edge.length)) ){
+        stop("the tree has non-finite branch lengths.")
+    }
+
+    short.idx <- which(tree$edge.length < min.edge.length)
+    if( length(short.idx) > 0 ){
+        if(!quietly){
+            cat("raised", length(short.idx),
+                "branch length(s) to at least", min.edge.length, "\n")
+        }
+        tree$edge.length[short.idx] <- min.edge.length
+    }
+
+    tree
+}
+
+repair_ultrametric_tree <- function(tree,
+                                    tolerances = c(0.01, 0.05, 0.1, 1, Inf),
+                                    min.edge.length = 1e-8,
+                                    quietly = FALSE){
+    if( isTRUE(is.ultrametric(tree)) ){
+        return(tree)
+    }
+
+    tolerances <- as.numeric(tolerances)
+    tolerances <- tolerances[!is.na(tolerances) & tolerances >= 0]
+    if( !length(tolerances) ){
+        stop("ultrametric.tolerance must contain at least one non-negative number.")
+    }
+
+    original <- tree
+    trial <- tryCatch(suppressWarnings(ape::chronoMPL(tree)), error = function(e) e)
+    if( inherits(trial, "phylo") ){
+        trial <- sanitize_tree_edge_lengths(
+            trial,
+            min.edge.length = min.edge.length,
+            quietly = TRUE
+        )
+        sum.adjustment <- sum(abs(trial$edge.length - original$edge.length))
+        total.length <- max(sum(abs(original$edge.length)), .Machine$double.eps)
+        rel.change <- sum.adjustment / total.length
+        accepted <- tolerances[is.infinite(tolerances) | rel.change <= tolerances]
+        if( length(accepted) > 0 && isTRUE(is.ultrametric(trial)) ){
+            if(!quietly){
+                cat("repaired a non-ultrametric tree with chronoMPL",
+                    "(relative edge-length change =", signif(rel.change, 4), ").\n")
+            }
+            return(trial)
+        }
+    }
+
+    trial <- tryCatch(
+        suppressWarnings(ape::chronos(tree, lambda = 1, quiet = TRUE)),
+        error = function(e) e
+    )
+    if( inherits(trial, "phylo") ){
+        trial <- sanitize_tree_edge_lengths(
+            trial,
+            min.edge.length = min.edge.length,
+            quietly = TRUE
+        )
+        if( isTRUE(is.ultrametric(trial)) ){
+            if(!quietly){
+                cat("repaired a non-ultrametric tree with chronos fallback.\n")
+            }
+            return(trial)
+        }
+    }
+
+    stop("the input tree is not ultrametric and automatic repair failed.")
+}
+
+drop_invariant_traits <- function(Y, tolerance = 0, quietly = FALSE){
+    if( !is.numeric(tolerance) || length(tolerance) != 1L ||
+        is.na(tolerance) || tolerance < 0 ){
+        stop("invariant.tolerance must be a single non-negative number.")
+    }
+
+    n.traits <- ncol(Y)
+    trait.names <- colnames(Y)
+    if( is.null(trait.names) ){
+        trait.names <- as.character(seq_len(n.traits))
+    }
+
+    keep <- rep(TRUE, n.traits)
+    for(i in seq_len(n.traits)){
+        vals <- Y[, i]
+        vals <- vals[is.finite(vals)]
+        if( length(vals) == 0L ){
+            keep[[i]] <- FALSE
+            next
+        }
+        keep[[i]] <- ((max(vals) - min(vals)) > tolerance)
+    }
+
+    removed.traits <- trait.names[!keep]
+    if( length(removed.traits) > 0 ){
+        if(!quietly){
+            cat("removed", length(removed.traits),
+                "invariant trait(s).\n")
+        }
+        Y <- Y[, keep, drop=FALSE]
+    }
+
+    if( ncol(Y) == 0L ){
+        stop("all traits are invariant or entirely missing after adjustment.")
+    }
+
+    list(Y = Y, removed.traits = removed.traits)
+}
+
+restore_tip_matrix_to_tree <- function(x, original.tips, observed.tips){
+    x <- as.matrix(x)
+    if( is.null(rownames(x)) ){
+        rownames(x) <- observed.tips
+    }
+    x <- x[observed.tips, , drop=FALSE]
+
+    out <- matrix(NA_real_, nrow=length(original.tips), ncol=ncol(x))
+    rownames(out) <- original.tips
+    colnames(out) <- colnames(x)
+    out[observed.tips, ] <- x
+    out
+}
+
+edge_descendant_tip_keys <- function(tree, observed.tips = tree$tip.label){
+    observed.tips <- as.character(observed.tips)
+    if( !all(observed.tips %in% tree$tip.label) ){
+        stop("observed.tips must be a subset of tree$tip.label.")
+    }
+
+    Z <- generate_design_matrix(tree, type="simpX")
+    rownames(Z) <- tree$tip.label
+    Z <- Z[observed.tips, , drop=FALSE]
+
+    tip.sets <- lapply(seq_len(ncol(Z)), function(idx){
+        sort(rownames(Z)[Z[, idx] > 0])
+    })
+    keys <- vapply(tip.sets, function(tips){
+        if( length(tips) == 0 ){
+            return("")
+        }
+        paste(tips, collapse="\r")
+    }, character(1))
+
+    list(tip.sets=tip.sets, keys=keys)
+}
+
+map_pruned_edges_to_original <- function(pruned.tree, original.tree,
+                                         representative=c("tipward", "rootward")){
+    representative <- match.arg(representative)
+    pruned.tree <- reorder(pruned.tree, "postorder")
+    original.tree <- reorder(original.tree, "postorder")
+
+    if( anyDuplicated(pruned.tree$tip.label) || anyDuplicated(original.tree$tip.label) ){
+        stop("tree tip labels must be unique.")
+    }
+    if( !all(pruned.tree$tip.label %in% original.tree$tip.label) ){
+        stop("original.tree must contain all tips from the fitted tree.")
+    }
+
+    observed.tips <- pruned.tree$tip.label
+    pruned.info <- edge_descendant_tip_keys(pruned.tree, observed.tips)
+    original.info <- edge_descendant_tip_keys(original.tree, observed.tips)
+
+    key.lookup <- setNames(seq_along(pruned.info$keys), pruned.info$keys)
+    nonempty <- nzchar(original.info$keys)
+    original.to.pruned <- rep(NA_integer_, Nedge(original.tree))
+    original.to.pruned[nonempty] <- unname(key.lookup[original.info$keys[nonempty]])
+    if( any(is.na(original.to.pruned[nonempty])) ){
+        stop("failed to map pruned edges back to original.tree.")
+    }
+
+    pruned.to.original <- vector("list", Nedge(pruned.tree))
+    for(idx in seq_len(Nedge(pruned.tree))){
+        pruned.to.original[[idx]] <- which(original.to.pruned == idx)
+    }
+
+    child.depths <- tree_node_depths(original.tree)[original.tree$edge[, 2]]
+    representative.edge <- vapply(pruned.to.original, function(path){
+        if( length(path) == 0 ){
+            return(NA_integer_)
+        }
+        if( representative == "tipward" ){
+            return(path[[which.max(child.depths[path])]])
+        }
+        path[[which.min(child.depths[path])]]
+    }, integer(1))
+
+    list(
+        observed.tips = observed.tips,
+        original.to.pruned.edge = original.to.pruned,
+        pruned.to.original.edge = pruned.to.original,
+        representative.edge = representative.edge
+    )
+}
+
+#' Restores a pruned fit to the original tree
+#'
+#' This helper is intended for reporting after a fit was run on a tree pruned
+#' for missing-tip handling. It pads tip-level outputs back to the original tip
+#' set and maps each shift edge to the corresponding edge path in the original
+#' tree.
+#'
+#'@param model object of class \code{"l1ou"} returned by \pkg{kfl1ou}.
+#'@param original.tree original tree before pruning tips with missing data.
+#'@param representative how to choose a single representative original edge when
+#' a pruned edge maps to a collapsed path in \code{original.tree}. The default
+#' \code{"tipward"} picks the deepest edge on that path; \code{"rootward"}
+#' picks the shallowest one.
+#'
+#'@return
+#'An object of class \code{"restored_l1ou"} and \code{"l1ou"} with the
+#' original tree, tip-level matrices padded back to the original tip set, and a
+#' \code{restoration} component containing edge-path mappings.
+#'
+#'@export
+restore_original_tree_fit <- function(model, original.tree,
+                                      representative=c("tipward", "rootward")){
+    if( !inherits(model, "l1ou") ){
+        stop("model must inherit from class \"l1ou\".")
+    }
+    if( !inherits(original.tree, "phylo") ){
+        stop("original.tree must be of class \"phylo\".")
+    }
+
+    representative <- match.arg(representative)
+    pruned.tree <- reorder(model$tree, "postorder")
+    original.tree <- reorder(original.tree, "postorder")
+    mapping <- map_pruned_edges_to_original(
+        pruned.tree = pruned.tree,
+        original.tree = original.tree,
+        representative = representative
+    )
+
+    observed.tips <- pruned.tree$tip.label
+    original.tips <- original.tree$tip.label
+    removed.tips <- setdiff(original.tips, observed.tips)
+
+    restored <- model
+    restored$tree <- original.tree
+    restored$Y <- restore_tip_matrix_to_tree(model$Y, original.tips, observed.tips)
+    restored$mu <- restore_tip_matrix_to_tree(model$mu, original.tips, observed.tips)
+    restored$residuals <- restore_tip_matrix_to_tree(model$residuals, original.tips, observed.tips)
+    restored$optima <- restore_tip_matrix_to_tree(model$optima, original.tips, observed.tips)
+
+    pruned.shift.configuration <- model$shift.configuration
+    shift.edge.paths <- list()
+    restored.shift.configuration <- pruned.shift.configuration
+    if( length(pruned.shift.configuration) > 0 ){
+        pruned.idx <- as.integer(pruned.shift.configuration)
+        shift.edge.paths <- mapping$pruned.to.original.edge[pruned.idx]
+        names(shift.edge.paths) <- as.character(pruned.shift.configuration)
+        restored.shift.configuration <- mapping$representative.edge[pruned.idx]
+        names(restored.shift.configuration) <- names(pruned.shift.configuration)
+    }
+    restored$shift.configuration <- restored.shift.configuration
+
+    if( !is.null(restored$l1ou.options$Z) ){
+        restored$l1ou.options$Z <- generate_design_matrix(original.tree, type="simpX")
+    }
+
+    restored$restoration <- list(
+        pruned.tree = pruned.tree,
+        observed.tips = observed.tips,
+        removed.tips = removed.tips,
+        representative = representative,
+        pruned.shift.configuration = pruned.shift.configuration,
+        shift.edge.paths = shift.edge.paths,
+        ambiguous.shifts = lengths(shift.edge.paths) > 1L,
+        original.to.pruned.edge = mapping$original.to.pruned.edge,
+        pruned.to.original.edge = mapping$pruned.to.original.edge
+    )
+
+    class(restored) <- c("restored_l1ou", class(model))
+
+    if( any(restored$restoration$ambiguous.shifts) ){
+        warning(
+            "Some restored shifts map to collapsed edge paths on original.tree; ",
+            "representative edges were chosen ", representative,
+            ". Full paths are stored in $restoration$shift.edge.paths.",
+            call. = FALSE
+        )
+    }
+
+    restored
 }
 
 lnorm <- function(v,l=1)   { return( (sum(abs(v)^l, na.rm=TRUE))^(1/l) ) }
@@ -472,10 +835,13 @@ correct_unidentifiability <- function(tree, shift.configuration, opt){
 
 alpha_upper_bound <- function(tree){
     nTips       = length(tree$tip.label)
-    #eLenSorted  = sort(tree$edge.length[which(tree$edge[,2] < nTips)]) 
-    #topMinLen   = ceiling( length(eLenSorted)*(5/100) )
-    #return( log(2)/median(eLenSorted[1:topMinLen]) )
-    return( log(2)/min(tree$edge.length[which(tree$edge[,2] < nTips)]) )
+    eLenSorted  = sort(tree$edge.length[which(tree$edge[,2] < nTips)])
+    eLenSorted  = eLenSorted[is.finite(eLenSorted) & (eLenSorted > 0)]
+    if( !length(eLenSorted) ){
+        return(Inf)
+    }
+    topMinLen   = min(length(eLenSorted), max(5L, ceiling(length(eLenSorted) * 0.05)))
+    return( log(2)/stats::median(eLenSorted[seq_len(topMinLen)]) )
 }
 
 
@@ -783,6 +1149,13 @@ plot.l1ou <- function (x, palette = NA,
     par(new=par.new.default)
 }
 
+#'@export
+plot.restored_l1ou <- function(x, ...){
+    tmp <- x
+    class(tmp) <- setdiff(class(tmp), "restored_l1ou")
+    plot.l1ou(tmp, ...)
+}
+
 #'
 #' Prints out a summary of the shift configurations investigated by \code{\link{estimate_shift_configuration}}  
 #'
@@ -1021,4 +1394,24 @@ print.l1ou <- function(x, ...){
     }
     print(tmp.mat)
     cat("\n")
+}
+
+#'@export
+print.restored_l1ou <- function(x, ...){
+    tmp <- x
+    class(tmp) <- setdiff(class(tmp), "restored_l1ou")
+    print.l1ou(tmp, ...)
+
+    removed.tips <- x$restoration$removed.tips
+    if( length(removed.tips) > 0 ){
+        cat("restoration note: padded", length(removed.tips),
+            "dropped tip(s) back onto the original tree.\n")
+    }
+    if( any(x$restoration$ambiguous.shifts) ){
+        cat("restoration note: some shifts remain ambiguous on the original tree; ",
+            "representative edges were chosen ", x$restoration$representative,
+            ". Full paths are stored in $restoration$shift.edge.paths.\n",
+            sep="")
+    }
+    invisible(x)
 }
