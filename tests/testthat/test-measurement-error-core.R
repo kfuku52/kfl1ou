@@ -28,6 +28,7 @@ test_that("sqrt_OU_covariance adds scalar and tip-specific observation error und
 })
 
 test_that("fit_OU with measurement error matches direct phylolm for a no-shift model", {
+  testthat::skip_if_not_installed("phylolm")
   dat <- small_lizard_data(n_tips = 20)
   fit <- fit_OU(dat$tree, dat$Y, shift.configuration = c(), measurement_error = TRUE)
 

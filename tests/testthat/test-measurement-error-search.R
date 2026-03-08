@@ -110,39 +110,81 @@ test_that("convergent-regime fitting rejects measurement error explicitly", {
   )
 })
 
-test_that("input_error handling is version-gated against the installed phylolm", {
+test_that("fit_OU supports fixed-alpha input_error fits", {
+  dat <- small_lizard_data(n_tips = 10)
+  input_error <- named_input_error(dat$Y, value = 0.01)
+  alpha <- 0.4
+
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = c(),
+    input_error = input_error,
+    alpha.lower = alpha,
+    alpha.upper = alpha,
+    alpha.starting.value = alpha
+  )
+  manual <- kfl1ou:::dense_known_input_error_gls_fit(
+    dat$tree,
+    dat$Y,
+    preds = matrix(1, nrow = nrow(dat$Y), ncol = 1),
+    model = "OUfixedRoot",
+    lower.bound = alpha,
+    upper.bound = alpha,
+    starting.value = alpha,
+    input_error = input_error,
+    coefficient_names = "(Intercept)"
+  )
+
+  expect_s3_class(fit, "l1ou")
+  expect_equal(unname(fit$alpha), alpha, tolerance = 1e-12)
+  expect_equal(unname(fit$intercept), unname(manual$coefficients[[1]]), tolerance = 1e-10)
+  expect_equal(unname(fit$sigma2), unname(manual$sigma2), tolerance = 1e-10)
+  expect_equal(unname(fit$logLik), unname(manual$logLik), tolerance = 1e-10)
+})
+
+test_that("estimate_shift_configuration supports input_error", {
   dat <- small_lizard_data(n_tips = 10)
   input_error <- named_input_error(dat$Y, value = 0.01)
 
-  if (kfl1ou:::phylolm_supports_input_error()) {
-    fit <- fit_OU(dat$tree, dat$Y, shift.configuration = c(), input_error = input_error)
-    est <- capture_silently(
-      estimate_shift_configuration(
-        dat$tree,
-        dat$Y,
-        max.nShifts = 0,
-        input_error = input_error,
-        quietly = TRUE
-      )
+  est <- capture_silently(
+    estimate_shift_configuration(
+      dat$tree,
+      dat$Y,
+      max.nShifts = 0,
+      input_error = input_error,
+      quietly = TRUE
     )
+  )
 
-    expect_s3_class(fit, "l1ou")
-    expect_s3_class(est, "l1ou")
-    expect_true(all(is.finite(fit$sigma2)))
-  } else {
-    expect_error(
-      fit_OU(dat$tree, dat$Y, shift.configuration = c(), input_error = input_error),
-      "does not support input_error"
-    )
-    expect_error(
-      estimate_shift_configuration(
-        dat$tree,
-        dat$Y,
-        max.nShifts = 0,
-        input_error = input_error,
-        quietly = TRUE
-      ),
-      "does not support input_error"
-    )
-  }
+  expect_s3_class(est, "l1ou")
+  expect_equal(est$nShifts, 0)
+  expect_true(all(is.finite(est$sigma2)))
+})
+
+test_that("input_error with measurement_error is rejected explicitly", {
+  dat <- small_lizard_data(n_tips = 10)
+  input_error <- named_input_error(dat$Y, value = 0.01)
+
+  expect_error(
+    fit_OU(
+      dat$tree,
+      dat$Y,
+      shift.configuration = c(),
+      input_error = input_error,
+      measurement_error = TRUE
+    ),
+    "measurement_error=TRUE"
+  )
+  expect_error(
+    estimate_shift_configuration(
+      dat$tree,
+      dat$Y,
+      max.nShifts = 0,
+      input_error = input_error,
+      measurement_error = TRUE,
+      quietly = TRUE
+    ),
+    "measurement_error=TRUE"
+  )
 })

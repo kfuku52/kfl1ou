@@ -51,9 +51,9 @@ overall computation respects this budget when possible.}
 
 \item{grp.seq.ub}{(used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).}
 
-\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{phylolm}.}
+\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. This requires a \code{phylolm} version that supports \code{input_error}.}
+\item{input_error}{optional vector or matrix of known observation error variances. \code{kfl1ou} can use these directly when \code{measurement_error = FALSE}. Combining them with \code{measurement_error = TRUE} is not yet supported.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }

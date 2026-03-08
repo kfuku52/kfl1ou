@@ -31,9 +31,9 @@ same optimum.}
 
 \item{alpha.lower}{optional lower bound for the phylogenetic adaptation rate.}
 
-\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{phylolm}.}
+\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. This requires a \code{phylolm} version that supports \code{input_error}.}
+\item{input_error}{optional vector or matrix of known observation error variances. \code{kfl1ou} can use these directly when \code{measurement_error = FALSE}. Combining them with \code{measurement_error = TRUE} is not yet supported.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }

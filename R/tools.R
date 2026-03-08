@@ -431,6 +431,7 @@ effective.sample.size <- function(phy, edges=NULL,
                   as.double(phy$root.edge),as.double(phy$edge.length),
                   as.integer(phy$edge[, 2]), as.integer(phy$edge[, 1]), # descendents and ancestors
                   as.integer(sortededges), # edges to cut, including root edge
+                  PACKAGE = "kfl1ou",
                   result=double(length(edges)+1))$result # tmp has, in this order:
         if (is.null(edges))
             res <- tmp

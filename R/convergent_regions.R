@@ -476,7 +476,7 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'  The default ``backward'' method is a heuristic similar to \code{surface_backward}
 #'  in the \code{surface} package,
 #'  using backward steps to repeatedly merge similar regimes into convergent regimes.
-#'@param fixed.alpha indicates if the alpha parameters should be optimized while phylolm optimize the likelihood function.
+#'@param fixed.alpha indicates if the alpha parameters should be optimized during likelihood fitting.
 #'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 #' then it runs sequentially. Otherwise, when fork-based parallelism is
 #' available, \code{kfl1ou} may use up to \code{nCores} forked workers via

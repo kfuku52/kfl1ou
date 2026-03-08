@@ -18,7 +18,36 @@ The full GPL v3 license text is included in `LICENSE`. Because kfl1ou includes
 modifications of code originally distributed as l1ou, redistribution of this
 package must comply with the GPL terms.
 
+Vendored code from phylolm
+--------------------------
+This repository also includes adapted code from the CRAN package `phylolm`
+(version 2.6.5), originally distributed under `GPL (>= 2) | file LICENSE`.
+
+Vendored files:
+- `R/phylolm_tools_vendor.R`
+- `R/phylolm_vendor.R`
+
+Original `phylolm` authors credited in the package metadata:
+- Lam Si Tung Ho
+- Cecile Ane
+- Robert Lachlan
+- Kelsey Tarpinian
+- Rachel Feldman
+- Qing Yu
+- Wouter van der Bijl
+- Joan Maspons
+- Rutger Vos
+- Paul Bastide
+
+Local modifications were made in kfl1ou on 2026-03-08 to vendor a subset of
+the likelihood code, route low-level calls through kfl1ou's bundled C
+implementation, and remove unsupported paths. A copy of the upstream `phylolm`
+license text is included at `inst/licenses/phylolm-LICENSE`.
+
 Copyright
 ---------
 Copyright in the original l1ou code remains with its original authors.
 Copyright in subsequent modifications remains with their respective authors.
+Copyright in vendored `phylolm` code remains with the original `phylolm`
+authors and contributors, with copyright in local modifications remaining with
+their respective authors.

@@ -251,9 +251,7 @@ estimate_shift_configuration <- function(tree, Y,
         }
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
     }
-    if( !is.null(l1ou.options$input_error) && !phylolm_supports_input_error() ){
-        stop("the installed phylolm version does not support input_error. Upgrade phylolm or use measurement_error=TRUE.")
-    }
+    check_input_error_support(l1ou.options$measurement_error, l1ou.options$input_error)
     l1ou.options <- initialize_design_cache(tree, l1ou.options)
     l1ou.options <- initialize_fast_phylolm_cache(tree, l1ou.options)
 
@@ -795,9 +793,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
     opt$alpha.lower.bound <- alpha.bounds$lower
     opt$alpha.upper.bound <- alpha.bounds$upper
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
-    if( !is.null(opt$input_error) && !phylolm_supports_input_error() ){
-        stop("the installed phylolm version does not support input_error. Upgrade phylolm or use measurement_error=TRUE.")
-    }
+    check_input_error_support(opt$measurement_error, opt$input_error)
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
 
@@ -926,9 +922,7 @@ fit_OU <- function(tree, Y, shift.configuration,
     opt$alpha.lower.bound <- alpha.bounds$lower
     opt$alpha.upper.bound <- alpha.bounds$upper
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
-    if( !is.null(opt$input_error) && !phylolm_supports_input_error() ){
-        stop("the installed phylolm version does not support input_error. Upgrade phylolm or use measurement_error=TRUE.")
-    }
+    check_input_error_support(opt$measurement_error, opt$input_error)
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
 
@@ -1284,8 +1278,24 @@ estimate_whitening_fit <- function(tree, Y, alpha=0, est.alpha=FALSE, opt, input
     prep <- prepare_trait_phylolm_data(tree, Y, input_error=input_error)
     yy <- as.numeric(prep$Y[, 1])
     names(yy) <- rownames(prep$Y)
-    if( !is.null(prep$input_error) && !phylolm_supports_input_error() ){
-        stop("the installed phylolm version does not support input_error.")
+    if( requires_phylolm_input_error_support(opt$measurement_error, prep$input_error) ){
+        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
+    }
+    if( can_use_dense_input_error_fit(opt$measurement_error, prep$input_error) ){
+        return(
+            dense_known_input_error_gls_fit(
+                prep$tree,
+                prep$Y,
+                preds = matrix(1, nrow=nrow(prep$Y), ncol=1),
+                model = ifelse(est.alpha, "BM", opt$root.model),
+                lower.bound = ifelse(est.alpha, NA_real_, alpha),
+                upper.bound = ifelse(est.alpha, NA_real_, alpha),
+                starting.value = ifelse(est.alpha, NA_real_, alpha),
+                quietly = opt$quietly,
+                input_error = prep$input_error,
+                coefficient_names = "(Intercept)"
+            )
+        )
     }
 
     prev.val <- options()$warn
@@ -1326,6 +1336,190 @@ extra_error_df <- function(opt){
 
 phylolm_supports_input_error <- function(){
     return("input_error" %in% names(formals(phylolm)))
+}
+
+requires_phylolm_input_error_support <- function(measurement_error=FALSE, input_error=NULL){
+
+    !is.null(input_error) &&
+        isTRUE(measurement_error) &&
+        !phylolm_supports_input_error()
+}
+
+can_use_dense_input_error_fit <- function(measurement_error=FALSE, input_error=NULL){
+
+    !is.null(input_error) &&
+        isFALSE(measurement_error) &&
+        !phylolm_supports_input_error()
+}
+
+check_input_error_support <- function(measurement_error=FALSE, input_error=NULL){
+
+    if( requires_phylolm_input_error_support(measurement_error, input_error) ){
+        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
+    }
+
+    invisible(NULL)
+}
+
+dense_known_input_error_gls_fit <- function(tree, Y, preds, model,
+                                            lower.bound=NA_real_,
+                                            upper.bound=NA_real_,
+                                            starting.value=NA_real_,
+                                            quietly=TRUE,
+                                            input_error,
+                                            coefficient_names=NULL){
+
+    Y <- as.matrix(Y)
+    preds <- as.matrix(preds)
+    y <- as.numeric(Y[, 1])
+    n <- length(y)
+    d <- ncol(preds)
+
+    if( n <= d ){
+        stop("not enough taxa remain to fit the model with the requested input_error.")
+    }
+
+    phy <- reorder(tree, "pruningwise")
+    mean.tip.height <- mean(pruningwise.distFromRoot(phy)[seq_len(n)])
+
+    fit_for_alpha <- function(alpha){
+
+        root.model <- ifelse(model == "BM", "OUfixedRoot", model)
+        re <- sqrt_OU_covariance(
+            tree,
+            alpha = ifelse(model == "BM", 0, alpha),
+            root.model = root.model,
+            sigma2 = 1,
+            input_error = input_error,
+            check.order = FALSE,
+            check.ultrametric = FALSE
+        )
+        Linv <- t(re$sqrtInvSigma)
+        Xt <- Linv %*% preds
+        yt <- drop(Linv %*% y)
+
+        XX <- crossprod(Xt)
+        Xy <- crossprod(Xt, yt)
+
+        inv.solve <- tryCatch({
+            chol.XX <- chol(XX)
+            list(
+                invXX = chol2inv(chol.XX),
+                betahat = drop(backsolve(chol.XX, forwardsolve(t(chol.XX), Xy)))
+            )
+        }, error = function(e) {
+            invXX <- tryCatch(solve(XX), error = function(e2) NULL)
+            if( is.null(invXX) ){
+                return(NULL)
+            }
+            list(invXX = invXX, betahat = drop(invXX %*% Xy))
+        })
+
+        if( is.null(inv.solve) ){
+            return(list(n2llh = .Machine$double.xmax))
+        }
+
+        fitted.values <- drop(preds %*% inv.solve$betahat)
+        residuals <- y - fitted.values
+        sigma2hat <- sum((yt - drop(Xt %*% inv.solve$betahat))^2) / n
+        if( !is.finite(sigma2hat) || sigma2hat <= 0 ){
+            return(list(n2llh = .Machine$double.xmax))
+        }
+
+        logdet <- 2 * as.numeric(determinant(re$sqrtSigma, logarithm = TRUE)$modulus)
+        n2llh <- as.numeric(n * log(2 * pi) + n + n * log(sigma2hat) + logdet)
+        vcov <- sigma2hat * inv.solve$invXX * n/(n - d)
+
+        list(
+            n2llh = n2llh,
+            betahat = inv.solve$betahat,
+            sigma2hat = sigma2hat,
+            vcov = vcov,
+            fitted.values = fitted.values,
+            residuals = residuals
+        )
+    }
+
+    tol <- 1e-10
+    if( model == "BM" ){
+        alpha.hat <- NULL
+        fit <- fit_for_alpha(0)
+        p <- d + 1L
+    } else{
+        lower.bound <- ifelse(is.null(lower.bound), NA_real_, as.numeric(lower.bound[[1]]))
+        upper.bound <- ifelse(is.null(upper.bound), NA_real_, as.numeric(upper.bound[[1]]))
+        starting.value <- ifelse(is.null(starting.value), NA_real_, as.numeric(starting.value[[1]]))
+
+        if( is.na(lower.bound) && is.na(starting.value) ){
+            lower.opt <- 1e-07 / mean.tip.height
+        } else{
+            lower.opt <- ifelse(is.na(lower.bound), 0, lower.bound)
+        }
+
+        if( is.na(upper.bound) || upper.bound <= 0 ){
+            stop("input_error fallback requires a strictly positive alpha.upper bound.")
+        }
+
+        if( lower.opt == upper.bound ){
+            alpha.hat <- lower.opt
+        } else if( lower.opt > 0 ){
+            opt.res <- optimize(
+                function(logalpha) fit_for_alpha(exp(logalpha))$n2llh,
+                interval = c(log(lower.opt), log(upper.bound)),
+                tol = 1e-6
+            )
+            alpha.hat <- as.numeric(exp(opt.res$minimum))
+        } else{
+            opt.res <- optimize(
+                function(alpha) fit_for_alpha(alpha)$n2llh,
+                interval = c(0, upper.bound),
+                tol = 1e-6
+            )
+            alpha.hat <- as.numeric(opt.res$minimum)
+        }
+
+        if( !quietly &&
+            (isTRUE(all.equal(alpha.hat, lower.opt, tolerance = tol)) ||
+             isTRUE(all.equal(alpha.hat, upper.bound, tolerance = tol))) ){
+            warning(paste("the estimation of alpha matches the upper/lower bound for this parameter.\n                          You may change the bounds using options \"upper.bound\" and \"lower.bound\".\n"))
+        }
+
+        fit <- fit_for_alpha(alpha.hat)
+        p <- d + 2L
+    }
+
+    if( !is.finite(fit$n2llh) || fit$n2llh >= .Machine$double.xmax ){
+        stop("failed to fit the OU model with the supplied input_error.")
+    }
+
+    if( is.null(coefficient_names) ){
+        coefficient_names <- paste0("preds", seq_len(d))
+    }
+
+    coefficients <- fit$betahat
+    names(coefficients) <- coefficient_names
+    vcov <- fit$vcov
+    colnames(vcov) <- coefficient_names
+    rownames(vcov) <- coefficient_names
+
+    list(
+        coefficients = coefficients,
+        sigma2 = fit$sigma2hat,
+        optpar = alpha.hat,
+        sigma2_error = 0,
+        logLik = -fit$n2llh/2,
+        p = p,
+        aic = 2 * p + fit$n2llh,
+        vcov = vcov,
+        fitted.values = fit$fitted.values,
+        residuals = fit$residuals,
+        mean.tip.height = mean.tip.height,
+        y = y,
+        X = preds,
+        n = n,
+        d = d,
+        model = model
+    )
 }
 
 get_l1ou_thread_state <- function(){
@@ -1912,8 +2106,28 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
 
 
     preds = cbind(1, Z[ ,shift.configuration])
-    if( !is.null(input_error) && !phylolm_supports_input_error() ){
-        stop("the installed phylolm version does not support input_error.")
+    if( requires_phylolm_input_error_support(opt$measurement_error, input_error) ){
+        stop("input_error is not supported when measurement_error=TRUE in the current kfl1ou likelihood solver. Set measurement_error=FALSE.")
+    }
+    if( can_use_dense_input_error_fit(opt$measurement_error, input_error) ){
+        fit <- try(
+            dense_known_input_error_gls_fit(
+                tree,
+                Y,
+                preds,
+                model = opt$root.model,
+                lower.bound = opt$alpha.lower.bound,
+                upper.bound = opt$alpha.upper.bound,
+                starting.value = opt$alpha.starting.value,
+                quietly = opt$quietly,
+                input_error = input_error,
+                coefficient_names = paste0("preds", seq_len(ncol(preds)))
+            ),
+            silent = opt$quietly
+        )
+        if(class(fit) != "try-error"){
+            return(fit)
+        }
     }
 
     if( isFALSE(opt$measurement_error) &&
@@ -1954,7 +2168,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
 
     if(class(fit) == "try-error"){ 
         if(!opt$quietly){
-            warning( paste0( "phylolm returned error with a shift configuration
+            warning( paste0( "the OU likelihood solver returned an error with a shift configuration
                             of size ", length(shift.configuration), ". You may
                             want to change alpha.upper/alpha.lower!") )
         }

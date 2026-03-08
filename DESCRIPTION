@@ -26,7 +26,6 @@ NeedsCompilation: yes
 Depends:
     R (>= 3.1.0),
     ape (>= 4.0),
-    phylolm (>= 2.0.0),
     lars,
     grplasso
 Imports:
@@ -34,6 +33,7 @@ Imports:
 LinkingTo: Rcpp
 Suggests:
     genlasso,
+    phylolm,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 RoxygenNote: 5.0.1

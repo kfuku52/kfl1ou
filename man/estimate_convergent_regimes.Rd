@@ -19,7 +19,7 @@ The default ``backward'' method is a heuristic similar to \code{surface_backward
 in the \code{surface} package,
 using backward steps to repeatedly merge similar regimes into convergent regimes.}
 
-\item{fixed.alpha}{indicates if the alpha parameters should be optimized while phylolm optimize the likelihood function.}
+\item{fixed.alpha}{indicates if the alpha parameters should be optimized during likelihood fitting.}
 
 \item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 then it runs sequentially. Otherwise, when fork-based parallelism is
