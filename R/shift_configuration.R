@@ -416,16 +416,12 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     ##to.be.removed = c(ncolX-1, which(tree$edge.length < opt$edge.length.threshold))
 
     if(!all(is.na(opt$candid.edges))){
-        to.be.removed  = setdiff(1:length(tree$edge.length), opt$candid.edges)
+        base.to.be.removed <- setdiff(seq_len(length(tree$edge.length)), opt$candid.edges)
     }else{
-        to.be.removed = c(nEdges, which(tree$edge.length < opt$edge.length.threshold))
+        base.to.be.removed <- c(nEdges, which(tree$edge.length < opt$edge.length.threshold))
     }
+    keep.edge.cols <- setdiff(seq_len(nEdges), base.to.be.removed)
 
-    offset        = rep(nEdges*(0:(ncol(Ymv)-1)), each=length(to.be.removed))
-    to.be.removed = rep(to.be.removed, ncol(Ymv)) + offset
-
-    YY  = Ymv
-    grpX.blocks = vector("list", ncol(Ymv))
     apprX <- NULL
     if(est.alpha){
         apprX <- cached_weighted_design_matrix(opt$Z, opt$edge.age, type="apprX")
@@ -469,32 +465,33 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
         ##grpX  = adiag(grpX, X)  
 	XX      = Cinvh%*%X
 	#NOTE: refer to whitening note above.
-	XX      = XX[-nrow(XX), ]
+	XX      = XX[-nrow(XX), keep.edge.cols, drop=FALSE]
+        yy      = yy[-length(yy)]
+        row.keep = !is.na(yy)
 
-	list(YY=yy, XX=XX)
+	list(YY=yy[row.keep], XX=XX[row.keep, , drop=FALSE])
     },
         opt=opt,
         allow.parallel = ncol(Ymv) > 1L
     )
-    for(i in seq_len(ncol(Ymv))){
-        YY[, i] <- whitening.blocks[[i]]$YY
-	grpX.blocks[[i]] <- whitening.blocks[[i]]$XX
+    active.traits <- which(vapply(whitening.blocks, function(block) {
+        nrow(block$XX) > 0 && ncol(block$XX) > 0
+    }, logical(1)))
+    if(length(active.traits) == 0){
+        stop("no observed multivariate trait entries remain after whitening.")
     }
+    grpY.blocks <- lapply(whitening.blocks[active.traits], `[[`, "YY")
+    grpX.blocks <- lapply(whitening.blocks[active.traits], `[[`, "XX")
     grpX = block_diag_matrix(grpX.blocks)
-    #NOTE: refer to the whitening note above.
-    YY  = YY[-nrow(YY), ] 
 
     np     = ncol(grpX)
-    grpY   = c(YY)
-    grpX   = as.matrix(grpX[,-to.be.removed])
-    grpIdx = rep(seq_len(ncol(opt$Z)), ncol(Ymv))[-to.be.removed]
+    grpY   = unlist(grpY.blocks, use.names=FALSE)
+    grpIdx = rep(keep.edge.cols, length(active.traits))
+    keep.col.idx <- unlist(lapply(active.traits, function(i) {
+        keep.edge.cols + (i - 1L) * nEdges
+    }), use.names=FALSE)
     ##grpIdx = rep(c(1:(ncol(X)-1),NA), ncol(Ymv))[-to.be.removed]
 
-
-    ###NOTE: handling NAs in grpY
-    grpY.ava = !is.na(grpY)
-    grpY     = grpY[grpY.ava]
-    grpX     = grpX[grpY.ava, ]
 
     grpX.col.nZero.idx = which(colSums(abs(grpX))!=0)
     grpX.nCol          = ncol(grpX)
@@ -508,8 +505,8 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     sol$coefficients         = Tmp
     ###end NOTE:
     
-    Tmp                  = matrix(0, np, ncol(sol$coefficients))
-    Tmp[-to.be.removed,] = matrix(sol$coefficients)
+    Tmp                  = matrix(0, nEdges * nVariables, ncol(sol$coefficients))
+    Tmp[keep.col.idx,]   = matrix(sol$coefficients)
     sol$coefficients     = Tmp
 
     ##removing the intercept results
@@ -550,9 +547,7 @@ estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.conf
         return(fit_OU_model(tree, Y, integer(), opt))
     }
 
-    search_ith_config <- function(sc){
-        do_backward_correction(tree, Y, sc, opt)
-    }
+    search_ith_config <- make_parallel_candidate_search(tree, Y, opt)
 
     if(opt$parallel.computing){
         all.res <- l1ou_mclapply(rev(candidate.configurations),
@@ -615,35 +610,47 @@ collect_candidate_configurations <- function(tree, Y, sol.path, opt){
     nSols = get_num_solutions(sol.path)
     stopifnot( nSols > 0 )
 
-    all.shifts = numeric()
-    prev.shift.configuration = NA
+    precomputed.configurations <- NULL
+    if(any(grepl("grplasso", sol.path$call))){
+        precomputed.configurations <- get_configurations_in_sol_path(sol.path, Y)
+    }
 
-    candid.idx <- 1
-    shift.configuration.list <- list()
-    for (idx in 1:nSols) {
+    shift.counts <- integer(Nedge(tree))
+    have.prev.configuration <- FALSE
+    prev.shift.configuration <- integer()
 
-        shift.configuration = get_configuration_in_sol_path(sol.path, idx, Y)
+    candid.idx <- 0L
+    shift.configuration.list <- vector("list", nSols)
+    for (idx in seq_len(nSols)) {
+
+        if(is.null(precomputed.configurations)){
+            shift.configuration <- get_configuration_in_sol_path(sol.path, idx, Y)
+        } else{
+            shift.configuration <- precomputed.configurations[[idx]]
+        }
         shift.configuration = correct_unidentifiability(tree, shift.configuration, opt)
+        shift.configuration = unname(shift.configuration)
 
         if ( length(shift.configuration) > opt$max.nShifts ){break}
-        if ( setequal(shift.configuration, prev.shift.configuration) ){next}
+        if ( have.prev.configuration &&
+             length(shift.configuration) == length(prev.shift.configuration) &&
+             setequal(shift.configuration, prev.shift.configuration) ){next}
+        have.prev.configuration <- TRUE
         prev.shift.configuration = shift.configuration
 
         ## sorting shifts based on their age in the solution path
-        all.shifts  = c(all.shifts, shift.configuration)
-        freq.shifts = rep(0, length(shift.configuration))
-        count = 1
-        for( s in shift.configuration){
-            freq.shifts[[count]] = length( which(all.shifts == s) )
-            count = count + 1
+        if(length(shift.configuration) > 0){
+            shift.counts[shift.configuration] <- shift.counts[shift.configuration] + 1L
+            shift.configuration <- shift.configuration[
+                order(shift.counts[shift.configuration], decreasing=TRUE)
+            ]
         }
-        names(shift.configuration)  <- freq.shifts
-        shift.configuration <- shift.configuration[order(names(shift.configuration), decreasing=TRUE)]
+
+        candid.idx <- candid.idx + 1L
         shift.configuration.list[[candid.idx]] <- shift.configuration
-        candid.idx <- candid.idx + 1
     }
 
-    shift.configuration.list
+    shift.configuration.list[seq_len(candid.idx)]
 }
 
 evaluate_candidate_configurations <- function(tree, Y, candidate.configurations, opt){
@@ -657,10 +664,7 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
                     candidate.configurations=candidate.configurations))
     }
 
-    search_ith_config <- function(sc){
-        res <- do_backward_correction(tree, Y, sc, opt)
-        return(res)
-    }
+    search_ith_config <- make_parallel_candidate_search(tree, Y, opt)
 
     if(opt$parallel.computing){
         all.res <- l1ou_mclapply(rev(candidate.configurations),
@@ -710,6 +714,27 @@ do_backward_correction <- function(tree, Y, shift.configuration, opt){
     }
 
     return(list(score=org.score, shift.configuration=shift.configuration))
+}
+
+make_parallel_candidate_search <- function(tree, Y, opt){
+
+    if(!isTRUE(opt$parallel.computing)){
+        return(function(sc){
+            do_backward_correction(tree, Y, sc, opt)
+        })
+    }
+
+    worker.opt <- opt
+    worker.opt$use.saved.scores <- TRUE
+    cache.initialized <- FALSE
+
+    function(sc){
+        if(!cache.initialized){
+            erase_configuration_score_db()
+            cache.initialized <<- TRUE
+        }
+        do_backward_correction(tree, Y, sc, worker.opt)
+    }
 }
 
 

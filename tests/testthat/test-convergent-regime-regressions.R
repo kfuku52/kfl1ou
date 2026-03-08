@@ -265,3 +265,74 @@ test_that("multivariate fit can parallelize over traits", {
   expect_s3_class(fit, "l1ou")
   expect_gte(calls, 1L)
 })
+
+test_that("parallel candidate search initializes a worker-local score cache once", {
+  erase_calls <- 0L
+  saved_score_flags <- logical()
+
+  local_mocked_bindings(
+    do_backward_correction = function(tree, Y, shift.configuration, opt) {
+      saved_score_flags <<- c(saved_score_flags, isTRUE(opt$use.saved.scores))
+      list(score = length(shift.configuration), shift.configuration = shift.configuration)
+    },
+    erase_configuration_score_db = function() {
+      erase_calls <<- erase_calls + 1L
+      invisible(NULL)
+    },
+    l1ou_mclapply = function(X, FUN, ..., mc.cores = 1L) {
+      lapply(X, FUN, ...)
+    },
+    .package = "kfl1ou"
+  )
+
+  opt <- list(parallel.computing = TRUE, nCores = 2L, use.saved.scores = FALSE)
+  out <- kfl1ou:::evaluate_candidate_configurations(
+    tree = NULL,
+    Y = NULL,
+    candidate.configurations = list(1L, c(1L, 2L)),
+    opt = opt
+  )
+
+  expect_equal(erase_calls, 1L)
+  expect_true(all(saved_score_flags))
+  expect_equal(out$shift.configuration, 1L)
+})
+
+test_that("candidate collection orders repeated shifts by numeric frequency", {
+  dat <- small_lizard_data(n_tips = 12, traits = 1:2)
+  n_edges <- Nedge(dat$tree)
+  n_traits <- ncol(dat$Y)
+  n_solutions <- 12L
+  coeffs <- matrix(0, nrow = n_edges * n_traits, ncol = n_solutions)
+
+  mark_edge <- function(col, edge) {
+    coeffs[edge, col] <<- 1
+    coeffs[edge + n_edges, col] <<- 1
+  }
+
+  mark_edges <- function(col, edges) {
+    for (edge in edges) {
+      mark_edge(col, edge)
+    }
+  }
+
+  for (idx in 1:10) {
+    mark_edges(idx, c(2L, idx + 2L))
+  }
+  mark_edge(11L, 1L)
+  mark_edges(12L, c(1L, 2L))
+
+  local_mocked_bindings(
+    correct_unidentifiability = function(tree, shift.configuration, opt) shift.configuration,
+    .package = "kfl1ou"
+  )
+
+  candidates <- kfl1ou:::collect_candidate_configurations(
+    dat$tree,
+    dat$Y,
+    list(call = "grplasso", coefficients = coeffs),
+    list(max.nShifts = 2L)
+  )
+
+  expect_equal(candidates[[length(candidates)]], c(2L, 1L))
+})

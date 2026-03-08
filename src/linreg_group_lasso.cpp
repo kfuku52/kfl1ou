@@ -32,6 +32,14 @@ inline double l2_norm(const std::vector<double>& x) {
     return std::sqrt(out);
 }
 
+inline double l2_norm_n(const std::vector<double>& x, int size) {
+    double out = 0.0;
+    for (int i = 0; i < size; ++i) {
+        out += x[static_cast<std::size_t>(i)] * x[static_cast<std::size_t>(i)];
+    }
+    return std::sqrt(out);
+}
+
 inline double group_norm(const std::vector<double>& coef, const GroupSpec& group) {
     double out = 0.0;
     for (int col : group.cols) {
@@ -153,19 +161,26 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
     const double sqrt_tol = std::sqrt(tol);
     const double min_scale = 1e-30;
     const double* x_ptr = x.begin();
+    int max_group_size = 0;
+    for (const GroupSpec& spec : groups) {
+        max_group_size = std::max(max_group_size, static_cast<int>(spec.cols.size()));
+    }
 
     Rcpp::NumericMatrix coefficients(p, n_lambda);
     Rcpp::LogicalVector converged(n_lambda, true);
 
     std::vector<double> coef(static_cast<std::size_t>(p), 0.0);
-    std::vector<double> coef_old(static_cast<std::size_t>(p), 0.0);
     std::vector<double> norms(static_cast<std::size_t>(n_groups), 0.0);
     std::vector<double> residual(y.begin(), y.end());
     std::vector<double> xjd(static_cast<std::size_t>(n), 0.0);
-    std::vector<double> coef_group;
-    std::vector<double> d;
-    std::vector<double> cond;
-    std::vector<double> gradient;
+    std::vector<double> coef_group(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<double> d(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<double> cond(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<double> gradient(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<double> coef_test(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<double> full_step(static_cast<std::size_t>(max_group_size), 0.0);
+    std::vector<int> active_groups;
+    active_groups.reserve(static_cast<std::size_t>(n_groups));
 
     double rss = std::inner_product(residual.begin(), residual.end(), residual.begin(), 0.0);
 
@@ -185,9 +200,8 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
             }
 
             const double fn_old = fn_value;
-            coef_old = coef;
-
-            std::vector<int> active_groups;
+            d_par = 0.0;
+            active_groups.clear();
             if (counter == 0 || counter > inner_loops) {
                 do_all = true;
                 active_groups.resize(static_cast<std::size_t>(n_groups));
@@ -213,62 +227,52 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
                 iter_count += 1;
             }
 
-            std::vector<double> start_pen(static_cast<std::size_t>(n_groups), 1.0);
-
             for (int g_index : active_groups) {
                 const GroupSpec& spec = groups[g_index];
                 const int group_size = static_cast<int>(spec.cols.size());
                 const double border = spec.sqrt_size * lambda_value;
 
-                coef_group.assign(static_cast<std::size_t>(group_size), 0.0);
-                gradient.assign(static_cast<std::size_t>(group_size), 0.0);
-                cond.assign(static_cast<std::size_t>(group_size), 0.0);
-                d.assign(static_cast<std::size_t>(group_size), 0.0);
-
                 for (int k = 0; k < group_size; ++k) {
                     const int col = spec.cols[k];
                     const double* x_col = x_ptr + static_cast<std::size_t>(n) * col;
                     const double grad = -2.0 * dot_ptr(x_col, residual, n);
-                    coef_group[k] = coef[col];
-                    gradient[k] = grad;
-                    cond[k] = -grad + spec.hessian * coef[col];
+                    coef_group[static_cast<std::size_t>(k)] = coef[col];
+                    gradient[static_cast<std::size_t>(k)] = grad;
+                    cond[static_cast<std::size_t>(k)] = -grad + spec.hessian * coef[col];
                 }
 
-                const double cond_norm = l2_norm(cond);
+                const double cond_norm = l2_norm_n(cond, group_size);
                 if (cond_norm > border) {
                     const double scale = (1.0 - border / cond_norm) / spec.hessian;
                     for (int k = 0; k < group_size; ++k) {
-                        d[k] = scale * cond[k] - coef_group[k];
+                        d[static_cast<std::size_t>(k)] =
+                            scale * cond[static_cast<std::size_t>(k)] -
+                            coef_group[static_cast<std::size_t>(k)];
                     }
                 } else {
                     for (int k = 0; k < group_size; ++k) {
-                        d[k] = -coef_group[k];
+                        d[static_cast<std::size_t>(k)] = -coef_group[static_cast<std::size_t>(k)];
                     }
                 }
 
-                bool has_step = false;
-                for (double value : d) {
-                    if (value != 0.0) {
-                        has_step = true;
-                        break;
-                    }
-                }
+                const bool has_step = cond_norm > border || norms[g_index] != 0.0;
                 if (!has_step) {
                     norms[g_index] = group_norm(coef, spec);
                     continue;
                 }
 
-                double step_scale = std::min(start_pen[g_index] / beta_ls, 1.0);
+                double step_scale = 1.0;
                 std::fill(xjd.begin(), xjd.end(), 0.0);
 
                 for (int k = 0; k < group_size; ++k) {
-                    if (d[k] == 0.0) {
+                    if (d[static_cast<std::size_t>(k)] == 0.0) {
                         continue;
                     }
                     const int col = spec.cols[k];
                     const double* x_col = x_ptr + static_cast<std::size_t>(n) * col;
                     for (int i = 0; i < n; ++i) {
-                        xjd[i] += x_col[i] * d[k];
+                        xjd[static_cast<std::size_t>(i)] +=
+                            x_col[i] * d[static_cast<std::size_t>(k)];
                     }
                 }
 
@@ -282,22 +286,20 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
                 const double coef_norm_old = norms[g_index];
                 double qh = 0.0;
                 for (int k = 0; k < group_size; ++k) {
-                    qh += gradient[k] * d[k];
+                    qh += gradient[static_cast<std::size_t>(k)] * d[static_cast<std::size_t>(k)];
+                    full_step[static_cast<std::size_t>(k)] =
+                        coef_group[static_cast<std::size_t>(k)] + d[static_cast<std::size_t>(k)];
                 }
-
-                std::vector<double> full_step(static_cast<std::size_t>(group_size), 0.0);
-                for (int k = 0; k < group_size; ++k) {
-                    full_step[k] = coef_group[k] + d[k];
-                }
-                qh += border * (l2_norm(full_step) - coef_norm_old);
+                qh += border * (l2_norm_n(full_step, group_size) - coef_norm_old);
 
                 double rss_test = rss - 2.0 * step_scale * dot_res_xjd +
                     step_scale * step_scale * dot_xjd_xjd;
-                std::vector<double> coef_test(static_cast<std::size_t>(group_size), 0.0);
                 for (int k = 0; k < group_size; ++k) {
-                    coef_test[k] = coef_group[k] + step_scale * d[k];
+                    coef_test[static_cast<std::size_t>(k)] =
+                        coef_group[static_cast<std::size_t>(k)] +
+                        step_scale * d[static_cast<std::size_t>(k)];
                 }
-                double left = rss_test + border * l2_norm(coef_test);
+                double left = rss_test + border * l2_norm_n(coef_test, group_size);
                 double right = rss + border * coef_norm_old + sigma_ls * step_scale * qh;
 
                 if (line_search) {
@@ -306,35 +308,36 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
                         rss_test = rss - 2.0 * step_scale * dot_res_xjd +
                             step_scale * step_scale * dot_xjd_xjd;
                         for (int k = 0; k < group_size; ++k) {
-                            coef_test[k] = coef_group[k] + step_scale * d[k];
+                            coef_test[static_cast<std::size_t>(k)] =
+                                coef_group[static_cast<std::size_t>(k)] +
+                                step_scale * d[static_cast<std::size_t>(k)];
                         }
-                        left = rss_test + border * l2_norm(coef_test);
+                        left = rss_test + border * l2_norm_n(coef_test, group_size);
                         right = rss + border * coef_norm_old + sigma_ls * step_scale * qh;
                     }
                 }
 
                 if (step_scale <= min_scale) {
-                    start_pen[g_index] = 1.0;
                     continue;
                 }
 
                 for (int k = 0; k < group_size; ++k) {
-                    coef[spec.cols[k]] = coef_test[k];
+                    const int col = spec.cols[k];
+                    const double new_coef = coef_test[static_cast<std::size_t>(k)];
+                    const double scaled = std::fabs(new_coef - coef[col]) /
+                        (1.0 + std::fabs(new_coef));
+                    d_par = std::max(d_par, scaled);
+                    coef[col] = new_coef;
                 }
                 for (int i = 0; i < n; ++i) {
-                    residual[i] -= step_scale * xjd[i];
+                    residual[static_cast<std::size_t>(i)] -=
+                        step_scale * xjd[static_cast<std::size_t>(i)];
                 }
                 rss = rss_test;
-                start_pen[g_index] = step_scale;
-                norms[g_index] = group_norm(coef, spec);
+                norms[g_index] = l2_norm_n(coef_test, group_size);
             }
 
             fn_value = rss + penalty_value(groups, norms, lambda_value);
-            d_par = 0.0;
-            for (int col = 0; col < p; ++col) {
-                const double scaled = std::fabs(coef[col] - coef_old[col]) / (1.0 + std::fabs(coef[col]));
-                d_par = std::max(d_par, scaled);
-            }
             d_fn = std::fabs(fn_old - fn_value) / (1.0 + std::fabs(fn_value));
 
             if (d_fn <= tol && d_par <= sqrt_tol) {

@@ -858,11 +858,41 @@ get_num_solutions <- function(sol.path){
 }
 
 
+get_configurations_in_sol_path <- function(sol.path, Y, tidx=1){
+    if ( grepl("lars",sol.path$call)[[1]] || grepl("l1ou_.*_path", sol.path$call)[[1]] ){
+        beta.mat <- as.matrix(sol.path$beta)
+        return(lapply(seq_len(nrow(beta.mat)), function(idx) {
+            which(beta.mat[idx, ] != 0)
+        }))
+    }
+
+    if( any( grepl("grplasso",sol.path$call) ) ){
+        coeff.mat <- as.matrix(sol.path$coefficients)
+        nVariables <- ncol(Y)
+        nGroups <- nrow(coeff.mat) %/% nVariables
+        stopifnot(nGroups * nVariables == nrow(coeff.mat))
+
+        threshold <- max(1L, ceiling(nVariables / 2))
+        support.counts <- rowsum(
+            (coeff.mat != 0) + 0L,
+            group = rep.int(seq_len(nGroups), nVariables),
+            reorder = FALSE
+        )
+        support.mat <- support.counts >= threshold
+        return(lapply(seq_len(ncol(support.mat)), function(idx) {
+            which(support.mat[, idx])
+        }))
+    }
+
+    stop(paste0(match.call(), ":undefined solver!"))
+}
+
+
 
 get_configuration_in_sol_path <- function(sol.path, index, Y, tidx=1){
     if ( grepl("lars",sol.path$call)[[1]] || grepl("l1ou_.*_path", sol.path$call)[[1]] ){
         beta      = sol.path$beta[index,]
-        shift.configuration  = which( abs(beta) > 0 )
+        shift.configuration  = which(beta != 0)
     } else if( any( grepl("grplasso",sol.path$call) ) ){
         #beta  = sol.path$coefficients[, index]
         #lIdx  = length(beta)/ncol(Y)
@@ -872,8 +902,8 @@ get_configuration_in_sol_path <- function(sol.path, index, Y, tidx=1){
 
         beta = sol.path$coefficients[, index]
         nVariables = ncol(Y)
-        MM = matrix(ifelse(abs(beta)>0,1,0), ncol = nVariables)
-        shift.configuration = which(rowSums(MM) >= nVariables/2)
+        threshold <- max(1L, ceiling(nVariables / 2))
+        shift.configuration = which(rowSums(matrix(beta != 0, ncol = nVariables)) >= threshold)
 
     } else {  
         stop(paste0(match.call(), ":undefined solver!"))
