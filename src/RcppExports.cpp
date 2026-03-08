@@ -10,6 +10,39 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// linreg_group_lasso_lambda_max_cpp
+double linreg_group_lasso_lambda_max_cpp(Rcpp::NumericMatrix x, Rcpp::NumericVector y, Rcpp::IntegerVector group);
+RcppExport SEXP _kfl1ou_linreg_group_lasso_lambda_max_cpp(SEXP xSEXP, SEXP ySEXP, SEXP groupSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type x(xSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type y(ySEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type group(groupSEXP);
+    rcpp_result_gen = Rcpp::wrap(linreg_group_lasso_lambda_max_cpp(x, y, group));
+    return rcpp_result_gen;
+END_RCPP
+}
+// linreg_group_lasso_path_cpp
+Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x, Rcpp::NumericVector y, Rcpp::IntegerVector group, Rcpp::NumericVector lambda, double tol, int max_iter, int inner_loops, double beta_ls, double sigma_ls, bool line_search);
+RcppExport SEXP _kfl1ou_linreg_group_lasso_path_cpp(SEXP xSEXP, SEXP ySEXP, SEXP groupSEXP, SEXP lambdaSEXP, SEXP tolSEXP, SEXP max_iterSEXP, SEXP inner_loopsSEXP, SEXP beta_lsSEXP, SEXP sigma_lsSEXP, SEXP line_searchSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type x(xSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type y(ySEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type group(groupSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< int >::type inner_loops(inner_loopsSEXP);
+    Rcpp::traits::input_parameter< double >::type beta_ls(beta_lsSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma_ls(sigma_lsSEXP);
+    Rcpp::traits::input_parameter< bool >::type line_search(line_searchSEXP);
+    rcpp_result_gen = Rcpp::wrap(linreg_group_lasso_path_cpp(x, y, group, lambda, tol, max_iter, inner_loops, beta_ls, sigma_ls, line_search));
+    return rcpp_result_gen;
+END_RCPP
+}
 // add_configuration_score_to_db
 void add_configuration_score_to_db(std::string str_key, double value, std::string mInfo);
 RcppExport SEXP _kfl1ou_add_configuration_score_to_db(SEXP str_keySEXP, SEXP valueSEXP, SEXP mInfoSEXP) {
@@ -98,6 +131,8 @@ static const R_CMethodDef CEntries[] = {
 };
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_kfl1ou_linreg_group_lasso_lambda_max_cpp", (DL_FUNC) &_kfl1ou_linreg_group_lasso_lambda_max_cpp, 3},
+    {"_kfl1ou_linreg_group_lasso_path_cpp", (DL_FUNC) &_kfl1ou_linreg_group_lasso_path_cpp, 10},
     {"_kfl1ou_add_configuration_score_to_db", (DL_FUNC) &_kfl1ou_add_configuration_score_to_db, 3},
     {"_kfl1ou_get_stored_config_score", (DL_FUNC) &_kfl1ou_get_stored_config_score, 0},
     {"_kfl1ou_erase_configuration_score_db", (DL_FUNC) &_kfl1ou_erase_configuration_score_db, 0},

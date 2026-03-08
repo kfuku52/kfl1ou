@@ -235,6 +235,7 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$grp.delta    <- grp.delta
         l1ou.options$candid.edges <- candid.edges
         l1ou.options$Z            <- generate_design_matrix(tree, "simpX")
+        l1ou.options$grplasso.backend <- "cpp"
         l1ou.options$measurement_error <- measurement_error
         l1ou.options$input_error       <- normalize_input_error(tree, Y, input_error)
         ## each tree in tree.list represents a trait where the tips corresponding
@@ -1966,17 +1967,16 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
 run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     delta  = opt$grp.delta
     seq.ub = opt$grp.seq.ub
+    backend <- resolve_grplasso_backend(opt)
     max.nTries = 7
     coarse.delta <- max(delta * 4, delta)
     min.delta <- delta / 4
-    suppressMessages(
-      lmbdMax  <-  1.2 * lambdamax(grpX, grpY, model = LinReg(), index = grpIdx, rescale = FALSE) + 1
-    )
+    lmbdMax  <-  1.2 * linreg_group_lasso_lambda_max(grpX, grpY, grpIdx, backend = backend) + 1
 
     base.seq = seq(0, seq.ub, coarse.delta)
     for (itrTmp in 1:max.nTries) {
         lmbd = lmbdMax * (0.5^base.seq)
-        sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd, tol = 0.01)
+        sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd, tol = 0.01, backend = backend)
 
         df.vec <- count_active_grplasso_groups(sol$coefficients, grpIdx, nVariables)
 
@@ -2003,7 +2003,7 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         coarse.sol <- sol
         coarse.sol$coefficients <- as.matrix(sol$coefficients)[, seq_along(final.lmbd), drop=FALSE]
     } else{
-        coarse.sol <- run_grplasso_path(grpX, grpY, grpIdx, final.lmbd, tol = 0.01)
+        coarse.sol <- run_grplasso_path(grpX, grpY, grpIdx, final.lmbd, tol = 0.01, backend = backend)
     }
     lmbd <- final.lmbd
     df.vec <- count_active_grplasso_groups(coarse.sol$coefficients, grpIdx, nVariables)
@@ -2012,7 +2012,7 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     if(length(refine.idx) == 0){
         refine.idx <- 1L
     }
-    sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd[refine.idx], tol = 1e-6)
+    sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd[refine.idx], tol = 1e-6, backend = backend)
 
     for (dfm in df.missing) {
         warning(paste0("There are no solutions with ", dfm, " number of shifts  
@@ -2061,15 +2061,6 @@ grplasso_support_change_indices <- function(coefficients, grpIdx, nVariables){
     }, character(1))
     keep <- c(TRUE, signatures[-1] != signatures[-nSolutions])
     which(keep)
-}
-
-run_grplasso_path <- function(grpX, grpY, grpIdx, lambda, tol){
-
-    sol <- grplasso(grpX, y = grpY, rescale = FALSE, center = FALSE,
-                    lambda = lambda, model = LinReg(), index = grpIdx,
-                    control = grpl.control(tol = tol, trace = 0))
-    sol$coefficients <- as.matrix(sol$coefficients)
-    sol
 }
 
 grplasso_refine_base_seq <- function(base.seq, df.vec, max.nShifts, min.delta){
