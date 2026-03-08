@@ -2024,7 +2024,10 @@ prepare_fast_phylolm_tree <- function(tree){
 
     phy <- reorder(tree, "pruningwise")
     n <- length(phy$tip.label)
+    n.edge <- nrow(phy$edge)
     des <- phy$edge[, 2]
+    anc <- phy$edge[, 1]
+    external.edge <- des <= n
     dist.from.root <- pruningwise.distFromRoot(phy)
     tip.height <- mean(dist.from.root[seq_len(n)])
     times <- tip.height - dist.from.root[(n + 1):(n + phy$Nnode)]
@@ -2032,13 +2035,23 @@ prepare_fast_phylolm_tree <- function(tree){
     list(
         phy = phy,
         n = n,
-        N = nrow(phy$edge),
+        N = n.edge,
+        Nnode = phy$Nnode,
         ROOT = n + 1L,
-        anc = phy$edge[, 1],
+        anc = anc,
         des = des,
-        externalEdge = des <= n,
+        anc.index = anc - n,
+        des.internal.index = des[!external.edge] - n,
+        externalEdge = external.edge,
+        internalEdge = !external.edge,
+        n.int = as.integer(n),
+        N.int = as.integer(n.edge),
+        Nnode.int = as.integer(phy$Nnode),
+        ROOT.int = as.integer(n + 1L),
+        anc.int = as.integer(anc),
+        des.int = as.integer(des),
         times = times,
-        edge.age = times[phy$edge[, 1] - n],
+        edge.age = times[anc - n],
         tip.height = tip.height,
         Tmax = max(times)
     )
@@ -2096,57 +2109,66 @@ initialize_fast_phylolm_cache <- function(tree, opt){
 
 fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
 
-    phy <- prepared.tree$phy
     n <- prepared.tree$n
-    N <- prepared.tree$N
     d <- ncol(preds)
     y <- as.numeric(Y[, 1])
     X <- as.matrix(preds)
+    X.vec <- as.double(X)
+    y.vec <- as.double(y)
     ole <- 4 + 2*d + d*d
     tol <- 1e-10
+    n2llh.offset <- n * (log(2 * pi) + 1)
+    root.is.random <- identical(opt$root.model, "OUrandomRoot")
+    external.edge <- prepared.tree$externalEdge
+    internal.edge <- prepared.tree$internalEdge
+    anc.index <- prepared.tree$anc.index
+    des.internal.index <- prepared.tree$des.internal.index
+    n.int <- prepared.tree$n.int
+    N.int <- prepared.tree$N.int
+    Nnode.int <- prepared.tree$Nnode.int
+    ROOT.int <- prepared.tree$ROOT.int
+    anc.int <- prepared.tree$anc.int
+    des.int <- prepared.tree$des.int
+    d.int <- as.integer(d)
     loglik.cache <- new.env(parent=emptyenv())
     loglik.cache$key <- NULL
     loglik.cache$value <- NULL
 
     loglik <- function(alpha){
-        cache.key <- format(alpha, digits=17, scientific=FALSE, trim=TRUE)
-        if( !is.null(loglik.cache$key) && identical(loglik.cache$key, cache.key) ){
+        if( !is.null(loglik.cache$key) && identical(loglik.cache$key, alpha) ){
             return(loglik.cache$value)
         }
 
-        if(opt$root.model == "OUrandomRoot"){
+        if(root.is.random){
             distFromRoot <- exp(-2 * alpha * prepared.tree$times)
-            d1 <- distFromRoot[prepared.tree$anc - n]
-            d2 <- numeric(N)
-            d2[prepared.tree$externalEdge] <- 1
-            d2[!prepared.tree$externalEdge] <- distFromRoot[
-                prepared.tree$des[!prepared.tree$externalEdge] - n
-            ]
+            d1 <- distFromRoot[anc.index]
+            d2 <- numeric(prepared.tree$N)
+            d2[external.edge] <- 1
+            d2[internal.edge] <- distFromRoot[des.internal.index]
         } else{
             distFromRoot <- exp(-2 * alpha * prepared.tree$times) *
                 (1 - exp(-2 * alpha * (prepared.tree$Tmax - prepared.tree$times)))
-            d1 <- distFromRoot[prepared.tree$anc - n]
-            d2 <- numeric(N)
-            d2[prepared.tree$externalEdge] <- 1 - exp(-2 * alpha * prepared.tree$Tmax)
-            d2[!prepared.tree$externalEdge] <- distFromRoot[
-                prepared.tree$des[!prepared.tree$externalEdge] - n
-            ]
+            d1 <- distFromRoot[anc.index]
+            d2 <- numeric(prepared.tree$N)
+            d2[external.edge] <- 1 - exp(-2 * alpha * prepared.tree$Tmax)
+            d2[internal.edge] <- distFromRoot[des.internal.index]
         }
 
         edge.length <- d2 - d1
+        min.dist.from.root <- min(distFromRoot)
         tmp <- threepoint_l1ou_c(
-            as.integer(N),
-            as.integer(n),
-            as.integer(phy$Nnode),
-            as.integer(1),
-            as.integer(d),
-            as.integer(prepared.tree$ROOT),
-            as.double(min(distFromRoot)),
-            as.double(edge.length),
-            as.integer(prepared.tree$des),
-            as.integer(prepared.tree$anc),
-            as.double(y),
-            as.double(as.vector(X))
+            N.int,
+            n.int,
+            Nnode.int,
+            1L,
+            d.int,
+            ROOT.int,
+            min.dist.from.root,
+            edge.length,
+            des.int,
+            anc.int,
+            y.vec,
+            X.vec
         )
 
         XX <- matrix(tmp[(5 + d):(ole - d)], d, d)
@@ -2162,34 +2184,32 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         invXX <- inv.solve$invXX
         betahat <- as.numeric(inv.solve$betahat)
 
-        sigma2hat <- as.numeric(
-            (tmp[4] - 2 * sum(betahat * Xy) + crossprod(betahat, XX %*% betahat)) / n
-        )
+        sigma2hat <- as.numeric((tmp[4] - sum(betahat * Xy)) / n)
         if(sigma2hat < 0){
             resdl <- X %*% betahat - y
             sigma2hat <- threepoint_l1ou_c(
-                as.integer(N),
-                as.integer(n),
-                as.integer(phy$Nnode),
-                as.integer(1),
-                as.integer(d),
-                as.integer(prepared.tree$ROOT),
-                as.double(min(distFromRoot)),
-                as.double(edge.length),
-                as.integer(prepared.tree$des),
-                as.integer(prepared.tree$anc),
-                as.double(as.vector(resdl)),
-                as.double(as.vector(X))
+                N.int,
+                n.int,
+                Nnode.int,
+                1L,
+                d.int,
+                ROOT.int,
+                min.dist.from.root,
+                edge.length,
+                des.int,
+                anc.int,
+                as.double(resdl),
+                X.vec
             )[4] / n
         }
         vcov <- sigma2hat * invXX * n/(n - d)
         res <- list(
-            n2llh = as.numeric(n * log(2 * pi) + n + n * log(sigma2hat) + tmp[1]),
+            n2llh = as.numeric(n2llh.offset + n * log(sigma2hat) + tmp[1]),
             betahat = betahat,
             sigma2hat = sigma2hat,
             vcov = vcov
         )
-        loglik.cache$key <- cache.key
+        loglik.cache$key <- alpha
         loglik.cache$value <- res
         res
     }
@@ -2238,6 +2258,7 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
     vcov <- fit$vcov
     colnames(vcov) <- colnames(X)
     rownames(vcov) <- colnames(X)
+    fitted.values <- drop(X %*% coefficients)
 
     results <- list(
         coefficients = coefficients,
@@ -2248,8 +2269,8 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         p = 2 + d,
         aic = 2 * (2 + d) + fit$n2llh,
         vcov = vcov,
-        fitted.values = drop(X %*% coefficients),
-        residuals = y - drop(X %*% coefficients),
+        fitted.values = fitted.values,
+        residuals = y - fitted.values,
         mean.tip.height = prepared.tree$tip.height,
         y = y,
         X = X,
@@ -2648,7 +2669,8 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         lmbd = lmbdMax * (0.5^base.seq)
         sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd, tol = 0.01, backend = backend)
 
-        df.vec <- count_active_grplasso_groups(sol$coefficients, grpIdx, nVariables)
+        support.summary <- grplasso_support_summary(sol$coefficients, grpIdx, nVariables)
+        df.vec <- support.summary$df.vec
 
         next.seq <- grplasso_refine_base_seq(base.seq, df.vec, opt$max.nShifts, min.delta)
         if(length(next.seq) == length(base.seq) &&
@@ -2676,9 +2698,10 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         coarse.sol <- run_grplasso_path(grpX, grpY, grpIdx, final.lmbd, tol = 0.01, backend = backend)
     }
     lmbd <- final.lmbd
-    df.vec <- count_active_grplasso_groups(coarse.sol$coefficients, grpIdx, nVariables)
+    coarse.summary <- grplasso_support_summary(coarse.sol$coefficients, grpIdx, nVariables)
+    df.vec <- coarse.summary$df.vec
     df.missing = setdiff(0:opt$max.nShifts, df.vec)
-    refine.idx <- grplasso_support_change_indices(coarse.sol$coefficients, grpIdx, nVariables)
+    refine.idx <- coarse.summary$refine.idx
     if(length(refine.idx) == 0){
         refine.idx <- 1L
     }
@@ -2691,6 +2714,41 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     return(sol);
 }
 
+grplasso_support_summary <- function(coefficients, grpIdx, nVariables){
+
+    coeff.mat <- as.matrix(coefficients)
+    valid <- !is.na(grpIdx)
+    nSolutions <- ncol(coeff.mat)
+    threshold <- max(1L, ceiling(nVariables / 2))
+
+    if(nSolutions == 0){
+        return(list(
+            active.by.group = matrix(FALSE, nrow=0, ncol=0),
+            df.vec = integer(),
+            refine.idx = integer()
+        ))
+    }
+
+    if(!any(valid)){
+        return(list(
+            active.by.group = matrix(FALSE, nrow=0, ncol=nSolutions),
+            df.vec = integer(nSolutions),
+            refine.idx = 1L
+        ))
+    }
+
+    active.by.group <- rowsum((coeff.mat[valid, , drop=FALSE] != 0) + 0L,
+                              group=grpIdx[valid], reorder=FALSE) >= threshold
+    keep <- c(TRUE, colSums(
+        active.by.group[, -1, drop=FALSE] != active.by.group[, -nSolutions, drop=FALSE]
+    ) > 0L)
+    list(
+        active.by.group = active.by.group,
+        df.vec = colSums(active.by.group),
+        refine.idx = which(keep)
+    )
+}
+
 grplasso_group_nonzero_counts <- function(coefficients, grpIdx){
 
     valid <- !is.na(grpIdx)
@@ -2699,38 +2757,17 @@ grplasso_group_nonzero_counts <- function(coefficients, grpIdx){
     }
 
     coeff.mat <- as.matrix(coefficients)[valid, , drop=FALSE]
-    rowsum((abs(coeff.mat) > 0) + 0L, group=grpIdx[valid], reorder=FALSE)
+    rowsum((coeff.mat != 0) + 0L, group=grpIdx[valid], reorder=FALSE)
 }
 
 count_active_grplasso_groups <- function(coefficients, grpIdx, nVariables){
 
-    active.by.group <- grplasso_group_nonzero_counts(coefficients, grpIdx)
-    if(nrow(active.by.group) == 0){
-        return(integer(ncol(as.matrix(coefficients))))
-    }
-    threshold <- max(1L, ceiling(nVariables / 2))
-    colSums(active.by.group >= threshold)
+    grplasso_support_summary(coefficients, grpIdx, nVariables)$df.vec
 }
 
 grplasso_support_change_indices <- function(coefficients, grpIdx, nVariables){
 
-    nSolutions <- ncol(as.matrix(coefficients))
-    if(nSolutions == 0){
-        return(integer())
-    }
-
-    active.by.group <- grplasso_group_nonzero_counts(coefficients, grpIdx)
-    if(nrow(active.by.group) == 0){
-        return(1L)
-    }
-
-    threshold <- max(1L, ceiling(nVariables / 2))
-    support.mat <- active.by.group >= threshold
-    signatures <- vapply(seq_len(ncol(support.mat)), function(idx) {
-        paste0(which(support.mat[, idx]), collapse=" ")
-    }, character(1))
-    keep <- c(TRUE, signatures[-1] != signatures[-nSolutions])
-    which(keep)
+    grplasso_support_summary(coefficients, grpIdx, nVariables)$refine.idx
 }
 
 grplasso_refine_base_seq <- function(base.seq, df.vec, max.nShifts, min.delta){

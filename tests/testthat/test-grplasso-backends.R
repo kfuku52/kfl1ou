@@ -91,6 +91,33 @@ test_that("cpp grplasso backend matches vendored backend", {
   )
 })
 
+test_that("grplasso support helpers detect repeated supports without string signatures", {
+  coeff <- matrix(
+    c(
+      1, 1, 0, 0,
+      1, 1, 0, 0,
+      0, 1, 1, 1,
+      0, 1, 1, 1
+    ),
+    nrow = 4,
+    byrow = TRUE
+  )
+  grp_idx <- c(1L, 1L, 2L, 2L)
+
+  summary <- kfl1ou:::grplasso_support_summary(coeff, grp_idx, nVariables = 2L)
+
+  expect_equal(summary$df.vec, c(1, 2, 1, 1))
+  expect_equal(summary$refine.idx, c(1L, 2L, 3L))
+  expect_equal(
+    kfl1ou:::count_active_grplasso_groups(coeff, grp_idx, nVariables = 2L),
+    c(1, 2, 1, 1)
+  )
+  expect_equal(
+    kfl1ou:::grplasso_support_change_indices(coeff, grp_idx, nVariables = 2L),
+    c(1L, 2L, 3L)
+  )
+})
+
 test_that("multivariate estimate_shift_configuration agrees across grplasso backends", {
   dat <- small_lizard_data(n_tips = 12, traits = 1:2)
 
