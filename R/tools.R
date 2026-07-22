@@ -1,3 +1,102 @@
+validate_l1ou_tree <- function(tree, require.positive.edges=FALSE,
+                               allow.negative.edges=FALSE){
+    if(!inherits(tree, "phylo")){
+        stop("tree must inherit from class \"phylo\".")
+    }
+    if(is.null(tree$tip.label) || length(tree$tip.label) < 2L){
+        stop("tree must contain at least two labelled tips.")
+    }
+    if(anyNA(tree$tip.label) || any(!nzchar(tree$tip.label)) ||
+       anyDuplicated(tree$tip.label)){
+        stop("tree tip labels must be non-missing, non-empty, and unique.")
+    }
+    if(is.null(tree$Nnode) || length(tree$Nnode) != 1L ||
+       !is.numeric(tree$Nnode) || !is.finite(tree$Nnode) ||
+       tree$Nnode < 1L || tree$Nnode != as.integer(tree$Nnode)){
+        stop("tree must contain a valid positive number of internal nodes.")
+    }
+    n.nodes <- length(tree$tip.label) + as.integer(tree$Nnode)
+    if(!is.matrix(tree$edge) || ncol(tree$edge) != 2L ||
+       !is.numeric(tree$edge) || any(!is.finite(tree$edge)) ||
+       any(tree$edge != as.integer(tree$edge)) ||
+       any(tree$edge < 1L | tree$edge > n.nodes) ||
+       nrow(tree$edge) != n.nodes - 1L ||
+       anyDuplicated(tree$edge[, 2L])){
+        stop("tree contains an invalid or disconnected edge matrix.")
+    }
+    roots <- setdiff(unique(tree$edge[, 1L]), tree$edge[, 2L])
+    if(length(roots) != 1L){
+        stop("tree must contain one directed root node.")
+    }
+    if(is.null(tree$edge.length)){
+        stop("the tree has no branch lengths.")
+    }
+    if(!is.numeric(tree$edge.length) ||
+       length(tree$edge.length) != nrow(tree$edge) ||
+       any(!is.finite(tree$edge.length))){
+        stop("tree branch lengths must be finite numeric values.")
+    }
+    if((!isTRUE(allow.negative.edges) && any(tree$edge.length < 0)) ||
+       (isTRUE(require.positive.edges) && any(tree$edge.length <= 0))){
+        qualifier <- if(isTRUE(require.positive.edges)) "strictly positive" else
+            "non-negative"
+        stop("tree branch lengths must be ", qualifier, ".")
+    }
+    if(!is.null(tree$root.edge) &&
+       (length(tree$root.edge) != 1L || !is.numeric(tree$root.edge) ||
+        !is.finite(tree$root.edge) || tree$root.edge < 0)){
+        stop("tree root.edge must be NULL or one finite non-negative number.")
+    }
+    invisible(tree)
+}
+
+as_l1ou_trait_matrix <- function(Y){
+    Y <- as.matrix(Y)
+    if(!is.numeric(Y)){
+        stop("Y must be a numeric vector, matrix, or data frame.")
+    }
+    if(length(Y) == 0L || nrow(Y) < 1L || ncol(Y) < 1L){
+        stop("Y must contain at least one row and one trait.")
+    }
+    if(any(is.nan(Y)) || any(is.infinite(Y))){
+        stop("Y cannot contain infinite or NaN values.")
+    }
+    if(!is.null(rownames(Y)) &&
+       (anyNA(rownames(Y)) || any(!nzchar(rownames(Y))) ||
+        anyDuplicated(rownames(Y)))){
+        stop("Y row names must be non-missing, non-empty, and unique.")
+    }
+    trait.names <- colnames(Y)
+    if(is.null(trait.names)){
+        colnames(Y) <- paste0("trait", seq_len(ncol(Y)))
+    } else{
+        missing.names <- is.na(trait.names) | !nzchar(trait.names)
+        trait.names[missing.names] <- paste0("trait", which(missing.names))
+        if(anyDuplicated(trait.names)){
+            stop("non-empty trait names must be unique.")
+        }
+        colnames(Y) <- trait.names
+    }
+    storage.mode(Y) <- "double"
+    Y
+}
+
+l1ou_integer_argument <- function(value, name, minimum=0L){
+    if(length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+       value != floor(value) || value < minimum ||
+       value > .Machine$integer.max){
+        stop(name, " must be one integer greater than or equal to ", minimum, ".")
+    }
+    as.integer(value)
+}
+
+l1ou_logical_argument <- function(value, name){
+    if(length(value) != 1L || !is.logical(value) || is.na(value)){
+        stop(name, " must be TRUE or FALSE.")
+    }
+    value
+}
+
 #' Adjusts the tree and traits to meet the requirements of \code{estimate_shift_configuration}
 #'
 #' Returns a new tree and new data matrix, where the tree edges are in
@@ -26,6 +125,8 @@
 #'@return 
 #' \item{tree}{tree of class phylo, with the same topology as the input \code{tree} but adjusted edge order.}
 #' \item{Y}{trait vector/matrix with adjusted row names and row order.}
+#' \item{tree.scale}{factor by which original branch lengths were divided when
+#' normalization was requested; equal to one otherwise.}
 #' \item{removed.tips}{tip labels dropped because all trait values were missing.}
 #' \item{removed.traits}{trait names dropped because they were invariant.}
 #'@examples
@@ -46,16 +147,20 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
                         drop.invariant = TRUE,
                         invariant.tolerance = 0){
 
-    if (!inherits(tree, "phylo"))  stop("object \"tree\" is not of class \"phylo\".")
+    validate_l1ou_tree(
+        tree,
+        require.positive.edges=!isTRUE(repair.tree),
+        allow.negative.edges=isTRUE(repair.tree)
+    )
     if (!is.null(tree$root.edge))
 	    if (tree$root.edge>0)
 		    stop("the tree has a non-zero root edge.")
 
     if (!inherits(Y, "matrix")){
-        Y <- as.matrix(Y)
         if(!quietly)
-            cat(paste("new Y: matrix of size", nrow(Y), "x", ncol(Y), "\n" ))
+            cat("converted Y to a numeric matrix.\n")
     }
+    Y <- as_l1ou_trait_matrix(Y)
 
     if( nrow(Y) != length(tree$tip.label)){
        stop("the number of entries/rows of the trait vector/matrix (Y) 
@@ -111,6 +216,7 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
         }
     }
 
+    input.tree <- tree
     if( repair.tree ){
         tree <- sanitize_tree_edge_lengths(
             tree,
@@ -121,8 +227,14 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
             tree,
             tolerances = ultrametric.tolerance,
             min.edge.length = min.edge.length,
-            quietly = quietly
+            quietly = quietly,
+            reference.tree = input.tree
         )
+    } else if(any(tree$edge.length <= 0)){
+        stop(paste0(
+            "the input tree has non-positive branch lengths; set ",
+            "repair.tree = TRUE to request bounded repair."
+        ))
     } else if( !isTRUE(is.ultrametric(tree)) ){
         stop("the input tree is not ultrametric; set repair.tree = TRUE to request bounded automatic repair.")
     }
@@ -133,7 +245,9 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
         tree  <- reorder(tree, "postorder")
     }
 
+    tree.scale <- 1
     if( normalize ){
+        tree.scale <- tree_height_scale(tree)
         tree <- normalize_tree(tree)
         if(!quietly)
             cat("the new tree is normalized: each tip at distance 1 from the root.\n")
@@ -153,7 +267,7 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
     stopifnot(all(rownames(Y) == tree$tip.label))
     stopifnot(identical(rownames(Y), tree$tip.label))
 
-    return(list(tree=tree, Y=Y,
+    return(list(tree=tree, Y=Y, tree.scale=tree.scale,
                 removed.tips=removed.tips,
                 removed.traits=removed.traits))
 }
@@ -185,13 +299,28 @@ sanitize_tree_edge_lengths <- function(tree, min.edge.length = 1e-8, quietly = F
     tree
 }
 
+edge_length_change <- function(reference.tree, candidate.tree){
+    reference.keys <- paste(reference.tree$edge[, 1L],
+                            reference.tree$edge[, 2L], sep="->")
+    candidate.keys <- paste(candidate.tree$edge[, 1L],
+                            candidate.tree$edge[, 2L], sep="->")
+    matched <- match(reference.keys, candidate.keys)
+    if(anyNA(matched) || length(candidate.keys) != length(reference.keys)){
+        return(Inf)
+    }
+    numerator <- sum(abs(
+        candidate.tree$edge.length[matched] - reference.tree$edge.length
+    ))
+    denominator <- max(sum(abs(reference.tree$edge.length)),
+                       .Machine$double.eps)
+    numerator / denominator
+}
+
 repair_ultrametric_tree <- function(tree,
                                     tolerances = 0.01,
                                     min.edge.length = 1e-8,
-                                    quietly = FALSE){
-    if( isTRUE(is.ultrametric(tree)) ){
-        return(tree)
-    }
+                                    quietly = FALSE,
+                                    reference.tree = tree){
 
     tolerances <- as.numeric(tolerances)
     tolerances <- tolerances[!is.na(tolerances) & tolerances >= 0]
@@ -200,6 +329,13 @@ repair_ultrametric_tree <- function(tree,
     }
 
     original <- tree
+    if(isTRUE(is.ultrametric(tree))){
+        rel.change <- edge_length_change(reference.tree, tree)
+        if(any(is.infinite(tolerances) | rel.change <= tolerances)){
+            return(tree)
+        }
+        stop("tree repair exceeded ultrametric.tolerance.")
+    }
     trial <- tryCatch(suppressWarnings(ape::chronoMPL(tree)), error = function(e) e)
     if( inherits(trial, "phylo") ){
         trial <- sanitize_tree_edge_lengths(
@@ -207,9 +343,7 @@ repair_ultrametric_tree <- function(tree,
             min.edge.length = min.edge.length,
             quietly = TRUE
         )
-        sum.adjustment <- sum(abs(trial$edge.length - original$edge.length))
-        total.length <- max(sum(abs(original$edge.length)), .Machine$double.eps)
-        rel.change <- sum.adjustment / total.length
+        rel.change <- edge_length_change(reference.tree, trial)
         accepted <- tolerances[is.infinite(tolerances) | rel.change <= tolerances]
         if( length(accepted) > 0 && isTRUE(is.ultrametric(trial)) ){
             if(!quietly){
@@ -230,9 +364,7 @@ repair_ultrametric_tree <- function(tree,
             min.edge.length = min.edge.length,
             quietly = TRUE
         )
-        sum.adjustment <- sum(abs(trial$edge.length - original$edge.length))
-        total.length <- max(sum(abs(original$edge.length)), .Machine$double.eps)
-        rel.change <- sum.adjustment / total.length
+        rel.change <- edge_length_change(reference.tree, trial)
         accepted <- tolerances[is.infinite(tolerances) | rel.change <= tolerances]
         if( length(accepted) > 0 && isTRUE(is.ultrametric(trial)) ){
             if(!quietly){
@@ -782,6 +914,7 @@ effective.sample.size <- function(phy, edges=NULL,
         # where V = phylogenetic covariance matrix for the subtree.
         model = match.arg(model)
         if (!inherits(phy, "phylo")) stop("object \"phy\" is not of class \"phylo\".")
+        validate_l1ou_tree(phy, require.positive.edges=FALSE)
         if (check.pruningwise) phy = reorder(phy,"pruningwise")
         if (check.ultrametric)
             if (!is.ultrametric(phy))
@@ -793,6 +926,11 @@ effective.sample.size <- function(phy, edges=NULL,
         rootedge <- dim(phy$edge)[1]+1
         if (is.null(edges)){ sortededges <- rootedge }
         else{
+            if(!is.numeric(edges) || anyNA(edges) || any(!is.finite(edges)) ||
+               any(edges != floor(edges)) || any(edges < 1L) ||
+               any(edges >= rootedge) || anyDuplicated(edges)){
+                stop("edges must contain unique, finite non-root edge indices.")
+            }
             o <- order(edges) 
             r <- rank(edges)
             sortededges <- c(edges[o],rootedge)
@@ -948,22 +1086,29 @@ get_configuration_in_sol_path <- function(sol.path, index, Y, tidx=1){
 #'@export
 convert_shifts2regions <-function(tree, shift.configuration, shift.values){
 
-    stopifnot( length(shift.configuration) == length(shift.values) )
+    validate_l1ou_tree(tree, require.positive.edges=FALSE)
+    if(!is.numeric(shift.configuration) ||
+       any(!is.finite(shift.configuration)) ||
+       any(shift.configuration != as.integer(shift.configuration)) ||
+       any(shift.configuration < 1L | shift.configuration > Nedge(tree))){
+        stop("shift.configuration must contain valid integer edge indices.")
+    }
+    if(!is.numeric(shift.values) || any(!is.finite(shift.values)) ||
+       length(shift.configuration) != length(shift.values)){
+        stop("shift.values must contain one finite numeric value per shift edge.")
+    }
 
     nEdges  = Nedge(tree)
     children = tree_children_edges(tree)
     o.vec = rep(0, nEdges)
 
-    prev.val <-options()$warn 
-    options(warn = -1)
     if( length(shift.configuration) > 0)
-        for(itr in 1:length(shift.configuration) ){
+        for(itr in seq_along(shift.configuration)){
             eIdx     = shift.configuration[[itr]]
             o.vec.tmp = rep(0, nEdges)
             o.vec.tmp[subtree_edges_for_edge(tree, eIdx, children=children)] = shift.values[[itr]]
             o.vec = o.vec + o.vec.tmp 
         }
-    options(warn = prev.val)
     return( o.vec )
 }
 
@@ -978,24 +1123,103 @@ convert_shifts2regions <-function(tree, shift.configuration, shift.values){
 #'@export
 normalize_tree <- function(tree, check.ultrametric=TRUE){
 
+    validate_l1ou_tree(tree, require.positive.edges=FALSE)
+    if(length(check.ultrametric) != 1L || !is.logical(check.ultrametric) ||
+       is.na(check.ultrametric)){
+        stop("check.ultrametric must be TRUE or FALSE.")
+    }
+
     if(check.ultrametric){
         if(!is.ultrametric(tree)) 
             stop("the input tree is not ultrametric")
     }
 
-    nTips  = length(tree$tip.label)
-    children <- tree_children_edges(tree)
-    depths <- tree_node_depths(tree, children=children)
-
-    root.edge <- ifelse(is.null(tree$root.edge), 0, tree$root.edge)
-    Tval     = root.edge + max(depths[seq_len(nTips)])
+    Tval <- tree_height_scale(tree)
     #Tval = mean ( sapply( 1:nTips, FUN=function(x) sum(tree$edge.length[root2tip[[x]]])   )  )
 
     tree$edge.length = tree$edge.length / Tval
     if(!is.null(tree$root.edge)){
 	    tree$root.edge <- tree$root.edge / Tval 
     }
+    attr(tree, "l1ou.time.scale") <- Tval
     return(tree)
+}
+
+tree_height_scale <- function(tree){
+    validate_l1ou_tree(tree, require.positive.edges=FALSE)
+    nTips <- length(tree$tip.label)
+    children <- tree_children_edges(tree)
+    depths <- tree_node_depths(tree, children=children)
+    root.edge <- if(is.null(tree$root.edge)) 0 else tree$root.edge
+    scale <- root.edge + max(depths[seq_len(nTips)])
+    if(length(scale) != 1L || !is.finite(scale) || scale <= 0){
+        stop("tree height must be finite and strictly positive.")
+    }
+    scale
+}
+
+l1ou_tree_time_scale <- function(tree){
+    scale <- attr(tree, "l1ou.time.scale", exact=TRUE)
+    if(is.null(scale)) return(1)
+    scale <- as.numeric(scale[[1L]])
+    if(!is.finite(scale) || scale <= 0) 1 else scale
+}
+
+#' Convert fitted process parameters to the original tree-time scale
+#'
+#' Trees returned by \code{adjust_data(normalize = TRUE)} retain the factor used
+#' to divide their branch lengths. This helper converts rate parameters from the
+#' normalized scale back to the input tree's time unit. Trait optima and
+#' observation-error variances do not require conversion.
+#'
+#'@param model fitted object of class \code{"l1ou"}.
+#'@return A list containing the time-scale factor, adaptation rates, evolutionary
+#' innovation covariance or marginal rates, and observation-error variances.
+#'@export
+original_time_parameters <- function(model){
+    if(!inherits(model, "l1ou")){
+        stop("model must inherit from class \"l1ou\".")
+    }
+    scale <- if(is.null(model$tree.scale)){
+        l1ou_tree_time_scale(model$tree)
+    } else as.numeric(model$tree.scale[[1L]])
+    if(!is.finite(scale) || scale <= 0){
+        stop("model contains an invalid tree-time scale.")
+    }
+    covariance <- if(is.null(model$trait.covariance)) NULL else
+        model$trait.covariance / scale
+    list(
+        tree.scale=scale,
+        alpha=as.numeric(model$alpha) / scale,
+        trait.covariance=covariance,
+        sigma2=as.numeric(model$sigma2) / scale,
+        sigma2_error=model$sigma2_error
+    )
+}
+
+#' Convert between OU adaptation rate and phylogenetic half-life
+#'
+#'@param alpha non-negative OU adaptation rate.
+#'@param half.life positive phylogenetic half-life.
+#'@return A numeric vector on the converted scale.
+#'@export
+alpha_to_half_life <- function(alpha){
+    alpha <- as.numeric(alpha)
+    if(anyNA(alpha) || any(alpha < 0)){
+        stop("alpha must contain non-negative finite values.")
+    }
+    if(any(!is.finite(alpha))) stop("alpha must contain finite values.")
+    ifelse(alpha == 0, Inf, log(2) / alpha)
+}
+
+#'@rdname alpha_to_half_life
+#'@export
+half_life_to_alpha <- function(half.life){
+    half.life <- as.numeric(half.life)
+    if(anyNA(half.life) || any(half.life <= 0)){
+        stop("half.life must contain positive values.")
+    }
+    ifelse(is.infinite(half.life), 0, log(2) / half.life)
 }
 
 
@@ -1050,6 +1274,11 @@ plot.l1ou <- function (x, palette = NA,
                        edge.ann.cex = 1, 
                        plot.bar = TRUE, bar.axis = TRUE, ...) 
 {
+    old.par <- par(no.readonly=TRUE)
+    on.exit({
+        if(plot.bar) layout(matrix(1L))
+        par(old.par)
+    }, add=TRUE)
     model = x
     tree = model$tree
     s.c = model$shift.configuration
@@ -1072,10 +1301,13 @@ plot.l1ou <- function (x, palette = NA,
 
     #NOTE: assiging colors the shifts
     if (all(is.na(palette))) {
-        palette = c(sample(rainbow(nShifts)), "gray")
+        shift.colors <- if(nShifts > 0L){
+            grDevices::hcl.colors(nShifts, palette="Dark 3")
+        } else character()
+        palette = c(shift.colors, "gray")
         if( !is.null(names(s.c)) ){
             ids = unique(names(s.c))
-            tmp = sample(rainbow(length(ids)))
+		    tmp <- grDevices::hcl.colors(max(1L, length(ids)), palette="Dark 3")
 	    for( id in ids ){
 		    if(id == "0"){
 			    palette[which(names(s.c) == id)] = "gray"  #background 
@@ -1274,6 +1506,8 @@ profile.l1ou <- function(fitted, ...)
 #'
 #'@export
 get_shift_configuration <- function(model, nShifts){
+    if(!inherits(model, "l1ou")) stop("model must inherit from class \"l1ou\".")
+    nShifts <- l1ou_integer_argument(nShifts, "nShifts", 0L)
     p.d = profile(model) 
     if( nShifts > length(p.d$shift.configurations)+1) # starts at 0 shifts
         stop("There is no configuration with the given number of shifts")
@@ -1290,7 +1524,7 @@ get_shift_configuration <- function(model, nShifts){
 #'
 #' prints out a summary of the model 
 #'
-#'@param model object of class l1ou returned by \pkg{kfl1ou}.
+#'@param object object of class l1ou returned by \pkg{kfl1ou}.
 #'@param nTop.scores number of top scores and shift configuration to print out.
 #'@param ... further arguments. 
 #'

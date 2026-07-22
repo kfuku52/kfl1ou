@@ -16,6 +16,21 @@ Rcpp::NumericVector effective_sample_size_c(int N, int n, int pN, int root,
                                             Rcpp::IntegerVector des,
                                             Rcpp::IntegerVector anc,
                                             Rcpp::IntegerVector edge) {
+    if (N < 1 || n < 2 || pN < 1 || root < 1 || root > n + pN) {
+        Rcpp::stop("invalid tree dimensions supplied to effective_sample_size_c");
+    }
+    if (transb.size() != N || des.size() != N || anc.size() != N) {
+        Rcpp::stop("tree edge arrays have inconsistent lengths");
+    }
+    if (edge.size() < 1 || edge[edge.size() - 1] != N + 1) {
+        Rcpp::stop("cut edges must end with the root-edge sentinel");
+    }
+    for (R_xlen_t i = 0; i < edge.size(); ++i) {
+        if (edge[i] < 1 || edge[i] > N + 1 ||
+            (i > 0 && edge[i] <= edge[i - 1])) {
+            Rcpp::stop("cut edges must be strictly increasing valid indices");
+        }
+    }
     Rcpp::NumericVector output(edge.size());
     effectiveSampleSize(&N, &n, &pN, &root, &transa, transb.begin(), des.begin(),
                         anc.begin(), edge.begin(), output.begin());

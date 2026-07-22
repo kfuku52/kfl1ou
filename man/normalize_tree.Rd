@@ -17,4 +17,3 @@ normalized phylogenetic tree, of class phylo.
 \description{
 Normalizes all branch lengths including the root.edge if presents by the same factor, so that the distance from the root to all tips is equal to one.
 }
-

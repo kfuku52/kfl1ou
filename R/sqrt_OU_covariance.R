@@ -12,8 +12,11 @@
 #'@param sigma2 phylogenetic variance rate used to standardize observation-level error terms.
 #'@param sigma2_error scalar observation-level error variance to add to each tip.
 #'@param input_error optional vector of tip-specific observation error variances.
-#'@param check.order logical. If TRUE, the order will be checked to be in postorder traversal.
-#'@param check.ultrametric logical. If TRUE, the tree will be checked to ultrametric.
+#'@param check.order retained for backward compatibility. Trees are always
+#' reordered to postorder before the native traversal.
+#'@param check.ultrametric retained for backward compatibility. Ultrametricity
+#' is always enforced when \code{alpha > 0} because otherwise the OU
+#' transformation is invalid.
 #'
 #'@return 
 #' \item{sqrtInvSigma}{inverse square root of the phylogenetic covariance matrix.}
@@ -73,7 +76,20 @@
 sqrt_OU_covariance <- function(tree, alpha=0, root.model = c("OUfixedRoot", "OUrandomRoot"),
                                sigma2 = 1, sigma2_error = 0, input_error = NULL,
                                check.order=TRUE, check.ultrametric=TRUE){
-    if( ! is.binary(tree) ){
+    validate_l1ou_tree(tree, require.positive.edges=FALSE)
+    if(length(alpha) != 1L || !is.numeric(alpha) || !is.finite(alpha) || alpha < 0){
+        stop("alpha must be a single finite non-negative number.")
+    }
+    if(length(sigma2) != 1L || !is.numeric(sigma2) || !is.finite(sigma2) ||
+       sigma2 <= 0){
+        stop("sigma2 must be strictly positive.")
+    }
+    if(length(sigma2_error) != 1L || !is.numeric(sigma2_error) ||
+       !is.finite(sigma2_error)){
+        stop("sigma2_error must be a single finite number.")
+    }
+    child.count <- table(tree$edge[, 1L])
+    if(any(child.count != 2L)){
         tree         <- multi2di(tree, random=FALSE)
         check.order  <- TRUE 
     }
@@ -89,38 +105,38 @@ sqrt_OU_covariance <- function(tree, alpha=0, root.model = c("OUfixedRoot", "OUr
         if( is.null(names(input_error)) ){
             names(input_error) <- tree$tip.label
         } else {
+            if(anyNA(names(input_error)) || any(!nzchar(names(input_error))) ||
+               anyDuplicated(names(input_error))){
+                stop("input_error names must be non-missing, non-empty, and unique.")
+            }
             o <- match(tree$tip.label, names(input_error))
             if( any(is.na(o)) ){
                 stop("input_error names do not match the tree tip labels.")
             }
             input_error <- input_error[o]
         }
-        if( any(is.na(input_error)) ){
+        if(!is.numeric(input_error)){
+            stop("input_error must be numeric.")
+        }
+        if(anyNA(input_error)){
             stop("input_error cannot contain missing values.")
         }
-        if( any(input_error < 0) ){
-            stop("input_error must be non-negative.")
+        if(any(!is.finite(input_error)) || any(input_error < 0)){
+            stop("input_error must contain finite non-negative values.")
         }
     }
     if( (sigma2_error > 0 || !is.null(input_error)) && sigma2 <= 0 ){
         stop("sigma2 must be strictly positive when observation error is provided.")
     }
 
-    ##NOTE: the function assumes reordering does not change the order of the 
-    ##nodes and it just change the order of edges, so that column i in each 
-    ##matrix still corresponds to internal node 
-    ##NOTE:  in case the tree is not binary; the order will change and it is no longer postorder. 
-    if( check.order ){
-        tree <- reorder(tree, "post")
-    }
+    ## Reordering changes edge rows but preserves node numbers, which the
+    ## native traversal uses to associate columns with internal nodes.
+    tree <- reorder(tree, "postorder")
 
     if ( alpha > 0){
-        ##NOTE: this step requires that the tree be ultrametric tree. 
-        ##NOTE: If the tree is not ultrametric, the function returns a wrong result with no warning
-        if(check.ultrametric){
-            if(!is.ultrametric(tree)){
-                stop("alpha>0, the tree has to be ultrametric") 
-            }
+        ## This transformation is valid only for ultrametric trees.
+        if(!isTRUE(is.ultrametric(tree))){
+            stop("alpha>0, the tree has to be ultrametric")
         }
         tre <- transf.branch.lengths(tree, model=root.model, parameters=list(alpha=alpha), check.pruningwise=F)$tree
 	coe = 2*alpha 

@@ -24,14 +24,6 @@ inline double dot_ptr(const double* x, const std::vector<double>& y, int n) {
     return out;
 }
 
-inline double l2_norm(const std::vector<double>& x) {
-    double out = 0.0;
-    for (double value : x) {
-        out += value * value;
-    }
-    return std::sqrt(out);
-}
-
 inline double l2_norm_n(const std::vector<double>& x, int size) {
     double out = 0.0;
     for (int i = 0; i < size; ++i) {

@@ -4,10 +4,21 @@
 \alias{plot.l1ou}
 \title{Visualizes a shift configuration: tree and trait(s)}
 \usage{
-\method{plot}{l1ou}(x, palette = NA, edge.shift.ann = TRUE,
-  edge.shift.adj = c(0.5, -0.025), edge.label = c(), asterisk = TRUE,
-  edge.label.ann = FALSE, edge.label.adj = c(0.5, 1), edge.label.pos = NA,
-  edge.ann.cex = 1, plot.bar = TRUE, bar.axis = TRUE, ...)
+\method{plot}{l1ou}(
+  x,
+  palette = NA,
+  edge.shift.ann = TRUE,
+  edge.shift.adj = c(0.5, -0.025),
+  edge.label = c(),
+  asterisk = TRUE,
+  edge.label.ann = FALSE,
+  edge.label.adj = c(0.5, 1),
+  edge.label.pos = NA,
+  edge.ann.cex = 1,
+  plot.bar = TRUE,
+  bar.axis = TRUE,
+  ...
+)
 }
 \arguments{
 \item{x}{object of class l1ou returned by \pkg{kfl1ou}.}

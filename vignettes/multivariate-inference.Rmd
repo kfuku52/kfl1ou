@@ -1,0 +1,78 @@
+---
+title: "Correlated multivariate OU inference with kfl1ou"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Correlated multivariate OU inference with kfl1ou}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+This workflow separates three questions that should not be conflated:
+
+1. where the adaptive optimum may have shifted;
+2. whether evolutionary innovations are correlated among traits; and
+3. how much uncertainty is introduced by model and shift selection.
+
+Start by validating and, if desired, normalizing the data. The normalization
+factor is retained so rate parameters can be converted back to the original
+tree-time unit.
+
+```{r}
+library(kfl1ou)
+data(lizard.tree, lizard.traits)
+
+keep <- lizard.tree$tip.label[seq_len(30)]
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+dat <- adjust_data(tree, lizard.traits[keep, 1:3])
+```
+
+Fit a full evolutionary innovation covariance only when there are enough
+species and residual contrasts for the number of traits. A distinct alpha for
+each trait is more flexible but also less identifiable.
+
+```{r}
+fit <- estimate_shift_configuration(
+  dat$tree,
+  dat$Y,
+  max.nShifts = 2,
+  criterion = "BIC",
+  trait.covariance = "full",
+  alpha.structure = "diagonal",
+  likelihood.engine = "auto"
+)
+
+evolutionary_vcov(fit)
+fit$tip.trait.correlation
+original_time_parameters(fit)
+```
+
+Use parametric calibration for covariance comparison and repeat the complete
+shift search when uncertainty from shift selection is scientifically relevant.
+
+```{r}
+comparison <- compare_trait_covariance(
+  dat$tree, dat$Y, nboot = 200, seed = 1, nCores = 2
+)
+
+support <- l1ou_bootstrap_support(
+  fit, nItrs = 200, type = "parametric", seed = 2,
+  multicore = TRUE, nCores = 2
+)
+summarize_shift_uncertainty(support, dat$tree)
+
+confint(
+  fit, method = "parametric", selection = "full",
+  interval = "basic", nsim = 200, seed = 3
+)
+```
+
+Regularized covariance estimates can stabilize difficult fits, but their BIC
+values are sensitivity scores evaluated at penalized estimates. Report both
+regularized and unregularized results, optimizer boundaries, bootstrap failure
+rates, tree/root-model sensitivity, and the candidate configurations actually
+evaluated. Exact historical shift timing is not identifiable from extant-tip
+data alone.

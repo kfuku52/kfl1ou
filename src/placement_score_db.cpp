@@ -6,21 +6,29 @@
 
 // [[Rcpp::plugins(cpp11)]]
 
-typedef std::map<std::size_t, double> DataBase;
+typedef std::map<std::string, double> DataBase;
 typedef std::vector<double> DoubleVector;
 typedef std::tuple<double, std::string, std::string>  ScoreConfig;
 typedef std::vector<ScoreConfig> ScoreConfigVec;
 
 DataBase db;
-std::hash<std::string> myHash;
 ScoreConfigVec myConfigVec;
 
 
 // [[Rcpp::export]]
 void add_configuration_score_to_db(std::string str_key, double value, std::string mInfo){
-    auto key = myHash(str_key);
-    db[key]  = value;
-    myConfigVec.push_back( ScoreConfig(value, str_key, mInfo) );
+    db[str_key] = value;
+    auto existing = std::find_if(
+        myConfigVec.begin(), myConfigVec.end(),
+        [&str_key](const ScoreConfig& entry){
+            return std::get<1>(entry) == str_key;
+        }
+    );
+    if (existing == myConfigVec.end()) {
+        myConfigVec.push_back(ScoreConfig(value, str_key, mInfo));
+    } else {
+        *existing = ScoreConfig(value, str_key, mInfo);
+    }
 }
 
 
@@ -67,8 +75,7 @@ Rcpp::List get_score_of_configuration(std::string str_key){
     bool   valid = 0;
     double value = 0;
 
-    auto key = myHash(str_key);
-    auto itr = db.find(key);
+    auto itr = db.find(str_key);
     if(  itr != db.end() ){
         valid = 1;
         value = itr->second;
@@ -77,6 +84,5 @@ Rcpp::List get_score_of_configuration(std::string str_key){
                 Rcpp::Named("value") = value,
                 Rcpp::Named("valid") = valid ) );
 }
-
 
 

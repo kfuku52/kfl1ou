@@ -1,0 +1,161 @@
+audit_small_traits <- function(n=14L, p=2L, seed=901L){
+  set.seed(seed)
+  tree <- ape::reorder.phylo(ape::rcoal(n), "postorder")
+  Y <- matrix(rnorm(n * p), n, p,
+              dimnames=list(tree$tip.label, paste0("t", seq_len(p))))
+  list(tree=tree, Y=Y)
+}
+
+test_that("fixed alpha never borrows covariance curvature for Wald intervals", {
+  dat <- audit_small_traits()
+  fit <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.structure="diagonal",
+    alpha.lower=c(.35, 1.1), alpha.upper=c(.35, 1.1),
+    likelihood.engine="dense", optimizer.starts=1L
+  )
+  interval <- confint(
+    fit, parm=c("alpha:t1", "alpha:t2"), method="wald"
+  )
+  expect_true(all(is.na(interval)))
+  expect_length(fit$optimization$alpha.parameter.index, 0L)
+})
+
+test_that("warning options are restored after likelihood errors", {
+  dat <- audit_small_traits(n=8L, p=1L)
+  opt <- list(
+    measurement_error=FALSE, input_error=NULL,
+    shift.configuration=integer(), fixed.alpha=TRUE,
+    root.model="invalid-root", alpha.upper.bound=2
+  )
+  old <- getOption("warn")
+  on.exit(options(warn=old), add=TRUE)
+  options(warn=1)
+  expect_error(
+    kfl1ou:::phylolm_interface_CR(
+      dat$tree, dat$Y, conv.regimes=list(0L), alpha=.5,
+      fixed.alpha=TRUE, opt=opt
+    )
+  )
+  expect_equal(getOption("warn"), 1)
+})
+
+test_that("root polytomies are resolved safely", {
+  tree <- ape::stree(3L, type="star")
+  tree$edge.length <- rep(1, nrow(tree$edge))
+  result <- sqrt_OU_covariance(tree)
+  expected <- ape::vcv.phylo(tree)
+  dimnames(expected) <- NULL
+  expect_equal(
+    result$sqrtSigma %*% t(result$sqrtSigma), expected,
+    tolerance=1e-10
+  )
+})
+
+test_that("explicit engines and shrinkage semantics are stable", {
+  dat <- audit_small_traits(n=12L)
+  dense <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.lower=.6, alpha.upper=.6,
+    likelihood.engine="dense", optimizer.starts=1L,
+    covariance.regularization="shrinkage"
+  )
+  missing <- dat$Y
+  missing[1, 1] <- NA_real_
+  dense.missing <- fit_OU(
+    dat$tree, missing, integer(), criterion="BIC",
+    trait.covariance="full", alpha.lower=.6, alpha.upper=.6,
+    likelihood.engine="dense", optimizer.starts=1L,
+    covariance.regularization="shrinkage"
+  )
+  expect_equal(dense$likelihood.engine, "dense")
+  expect_equal(dense.missing$likelihood.engine, "dense")
+  expect_equal(dense$regularization.lambda,
+               dense.missing$regularization.lambda)
+  expect_false(dense$information.criterion.calibrated)
+})
+
+test_that("seeded simulation restores RNG and tree simulation matches shape", {
+  dat <- audit_small_traits(n=10L)
+  fit <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.lower=.7, alpha.upper=.7,
+    optimizer.starts=1L
+  )
+  set.seed(123)
+  before <- .Random.seed
+  simulations <- simulate(fit, nsim=3L, seed=99)
+  expect_identical(.Random.seed, before)
+  expect_length(simulations, 3L)
+  expect_equal(dim(simulations[[1L]]), dim(dat$Y))
+})
+
+test_that("normalization scale and original-time parameters are retained", {
+  dat <- audit_small_traits(n=8L, p=1L)
+  original.height <- max(ape::node.depth.edgelength(dat$tree)[seq_len(8L)])
+  adjusted <- adjust_data(dat$tree, dat$Y, quietly=TRUE)
+  expect_equal(adjusted$tree.scale, original.height)
+  fit <- fit_OU(adjusted$tree, adjusted$Y, integer(), criterion="BIC")
+  converted <- original_time_parameters(fit)
+  expect_equal(converted$tree.scale, original.height)
+  expect_equal(converted$alpha, as.numeric(fit$alpha) / original.height)
+})
+
+test_that("invalid data and duplicate labels fail at the public boundary", {
+  dat <- audit_small_traits(n=8L)
+  bad <- dat$Y
+  bad[1, 1] <- Inf
+  expect_error(adjust_data(dat$tree, bad), "infinite")
+  bad[1, 1] <- NaN
+  expect_error(adjust_data(dat$tree, bad), "NaN")
+  duplicate <- dat$tree
+  duplicate$tip.label[2] <- duplicate$tip.label[1]
+  expect_error(adjust_data(duplicate, dat$Y), "unique")
+
+  input.error <- matrix(.01, nrow(dat$Y), ncol(dat$Y),
+                        dimnames=dimnames(dat$Y))
+  input.error[1, 1] <- Inf
+  expect_error(
+    fit_OU(dat$tree, dat$Y, integer(), criterion="BIC",
+           input_error=input.error),
+    "finite variances"
+  )
+})
+
+test_that("malformed trees fail before native traversal", {
+  dat <- audit_small_traits(n=8L, p=1L)
+  malformed <- dat$tree
+  malformed$edge[2, 2] <- malformed$edge[1, 2]
+  expect_error(adjust_data(malformed, dat$Y), "edge matrix")
+})
+
+test_that("alpha profiles include the Brownian boundary", {
+  dat <- audit_small_traits(n=10L, p=1L)
+  fit <- fit_OU(dat$tree, dat$Y, integer(), criterion="BIC")
+  fixed <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    alpha.lower=.5, alpha.upper=.5
+  )
+  expect_equal(fixed$parameter.count, fit$parameter.count - 1L)
+  expect_equal(kfl1ou:::l1ou_alpha_parameter_names(fit), "alpha:t1")
+  profile <- profile_alpha_l1ou(fit, c(0, .5))
+  expect_equal(profile$shared, c(0, .5))
+  expect_true(is.finite(profile$logLik[[1L]]))
+})
+
+test_that("effective sample size rejects unsafe edge indices", {
+  tree <- reorder(ape::stree(4, type="balanced"), "pruningwise")
+  tree$edge.length <- rep(1, nrow(tree$edge))
+
+  expect_error(
+    kfl1ou:::effective.sample.size(tree, edges=c(1, 1)),
+    "unique"
+  )
+  expect_error(
+    kfl1ou:::effective.sample.size(tree, edges=nrow(tree$edge) + 1L),
+    "non-root"
+  )
+  expect_true(all(is.finite(
+    kfl1ou:::effective.sample.size(tree, edges=c(1L, 2L))
+  )))
+})

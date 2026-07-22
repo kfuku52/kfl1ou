@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <Rcpp.h>
 
 using namespace Rcpp;
@@ -46,6 +47,9 @@ void one_step(const int i1, const int i2, const int e1, const int e2,
         t3 = edgeList(e3,2);
     
     const double  u = t1+t2;
+    if (!std::isfinite(u) || u <= 0.0) {
+        Rcpp::stop("encountered sibling branches with non-positive total length");
+    }
     const double us = std::sqrt(u);
 
     D(_,counter) = (F(_,i1) - F(_,i2))/us;
@@ -69,8 +73,10 @@ void one_step(const int i1, const int i2, const int e1, const int e2,
 
 // [[Rcpp::export]]
 Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, double rootEdge){
-
-    //TODO assert( edgeList.ncol == 3);
+    if (edgeList.ncol() != 3 || nTips < 2 ||
+        edgeList.nrow() != 2 * (nTips - 1)) {
+        Rcpp::stop("edgeList must describe a rooted, strictly bifurcating tree");
+    }
 
     Rcpp::NumericMatrix F(nTips, 2*nTips-1);
     Rcpp::NumericMatrix G(nTips, 2*nTips-1);
@@ -82,11 +88,21 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
 
     Rcpp::NumericVector tips(nTips);
     for(int i=0; i<tips.size(); ++i)
-        tips[i] = i+1;
+        tips[i] = i;
 
     int counter = 0;
-    for(int i=0; i<edgeList.nrow() && tips.size() > 1; i+=2)
+    for(int i=0; i + 1 < edgeList.nrow() && tips.size() > 1; i+=2)
         one_step( edgeList(i,1), edgeList(i+1,1), i, i+1, counter++, nTips, edgeList, tips, F, G, D, B, rootEdge);
+
+    if (tips.size() != 1) {
+        Rcpp::stop("failed to reduce the tree to a single root state");
+    }
+    if (counter != nTips - 1) {
+        Rcpp::stop("unexpected number of independent tree contrasts");
+    }
+    if (!std::isfinite(rootEdge) || rootEdge <= 0.0) {
+        Rcpp::stop("the reduced root contrast has non-positive length");
+    }
     
     for(int i=0; i<F.nrow(); ++i){
         D(i,counter) = F(i,tips[0])/std::sqrt(rootEdge);
@@ -98,5 +114,3 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
     
     return( Rcpp::List::create( Rcpp::Named("sqrtInvSigma") = D, Rcpp::Named("sqrtSigma") = B) );
 }
-
-

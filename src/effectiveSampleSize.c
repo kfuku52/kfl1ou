@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <R.h>
 
-//TODO re-write this function in C++ using RCpp; using calloc/free/pointers is not a good programming style.
-//
+// The Rcpp entry point validates all dimensions and the root-edge sentinel
+// before calling this allocation-light pruning kernel.
 void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *transa, double *transb, int *des, int *anc, int *edge, double *output){
     int N = *Npo;     // number of edges, excluding root edge
     int n = *npo;     // number of tips
@@ -97,6 +97,5 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
     free(vec11);
     free(zero);
 }
-
 
 

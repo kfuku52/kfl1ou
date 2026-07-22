@@ -3,10 +3,10 @@
 #'
 #' Takes a given shift configuration previously detected from data along with shift magnitudes
 #' and OU parameters, to calculate bootstrap support for shift positions. 
-#' The non-parametric bootstrap procedure calculates phylogenetically-uncorrelated standardized residuals,
-#' one at each node. These residuals are sampled with replacement, then mapped back onto the tree
-#' to create bootstrap replicates. Each replicate is analyzed with
-#' \code{kfl1ou} and user-specified options.
+#' By default, parametric replicates are generated from the complete fitted OU
+#' model. The historical residual bootstrap calculates phylogenetically
+#' uncorrelated standardized residuals, samples them with replacement, and maps
+#' them back onto the tree. Every replicate repeats the configured shift search.
 #'
 #'@param model an object output by \code{\link{estimate_shift_configuration}}. 
 #'@param nItrs number of independent iterations (bootstrap replicates).
@@ -18,17 +18,20 @@
 #' BLAS/OpenMP threads limited to 1 when supported, so nested \code{kfl1ou} calls
 #' do not oversubscribe the machine.
 #'@param quietly logical. If FALSE, a summary of each iteration will be printed out.
+#'@param type bootstrap type. Parametric simulation is the default for inference;
+#' \code{"residual"} retains the historical residual-resampling procedure.
+#'@param seed optional seed. Sequential and forked runs use the same replicate
+#' seeds, and the caller's random-number state is restored on exit.
 #'
 #'
 #'@return A list with \code{detection.rate}, a vector of edge-wise detection
-#' proportions, and \code{all.shifts}, the shift configurations retained from
-#' successful bootstrap replicates.
+#' proportions; \code{all.shifts}, the successful shift configurations;
+#' attempted/successful/failed counts; and summarized failure messages.
 #'
 #'
-#'@details The results of sequential and parallel runs are not necessarily equal,
-#'         because different seeds might be used for different bootstrap
-#'         replicates. Fork-based parallel execution is used only on supported
-#'         platforms. To change options for the analysis of
+#'@details With a supplied \code{seed}, sequential and parallel runs use the
+#'         same replicate data and are reproducible. Fork-based parallel
+#'         execution is used only on supported platforms. To change options for the analysis of
 #'         each bootstrap replicate, like the information criterion or the
 #'         maximum allowed number of shifts, modify \code{model$l1ou.options}.
 #'         This component keeps its upstream name for backward compatibility.
@@ -37,7 +40,7 @@
 #'         For multivariate data, each trait is whitened using its observed
 #'         marginal covariance; simulated replicates retain the original
 #'         trait-specific missingness pattern.
-#'         When code{trait.covariance = "full"}, all observed trait-tip entries
+#'         When \code{trait.covariance = "full"}, all observed trait-tip entries
 #'         are whitened and simulated jointly so the fitted cross-trait
 #'         evolutionary covariance is retained.
 #'
@@ -75,31 +78,51 @@
 #'@seealso   \code{\link{estimate_shift_configuration}}
 #'
 #'@export
-l1ou_bootstrap_support <- function(model, nItrs=100, multicore=FALSE, nCores = 2, quietly=TRUE){
+l1ou_bootstrap_support <- function(model, nItrs=100, multicore=FALSE, nCores = 2,
+                                   quietly=TRUE,
+                                   type=c("parametric", "residual"), seed=NULL){
  
     if (!inherits(model, "l1ou"))  stop("object \"model\" is not of class \"l1ou\".")
+
+    multicore <- l1ou_logical_argument(multicore, "multicore")
+    quietly <- l1ou_logical_argument(quietly, "quietly")
 
     if(multicore && !l1ou_supports_multicore()){
         warning("fork-based parallel execution is unavailable; running sequentially.", immediate.=TRUE)
         multicore = FALSE
     }
 
-    tree = model$tree
-    if(ncol(model$Y)==1){
-        return(bootstrap_support_univariate(tree=tree, model=model, nItrs=nItrs, 
-                                            multicore=multicore, nCores=nCores, quietly=quietly))
-    }
-    if(ncol(model$Y)>1){
-        return(bootstrap_support_multivariate(tree=tree, model=model, nItrs=nItrs, 
-                                              multicore=multicore, nCores=nCores, quietly=quietly))
-    }
+    nItrs <- l1ou_integer_argument(nItrs, "nItrs", 1L)
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
+    type <- match.arg(type)
+    result <- with_l1ou_seed(seed, {
+        tree <- model$tree
+        if(type == "parametric"){
+            bootstrap_support_parametric(
+                tree, model, nItrs, multicore, nCores, quietly
+            )
+        } else if(ncol(model$Y) == 1L){
+            bootstrap_support_univariate(
+                tree, model, nItrs, multicore, nCores, quietly
+            )
+        } else{
+            bootstrap_support_multivariate(
+                tree, model, nItrs, multicore, nCores, quietly
+            )
+        }
+    })
+    result$type <- type
+    result$seed <- seed
+    result
 }
 
 is_failed_bootstrap_fit <- function(x){
     return(length(x) == 1L && isTRUE(is.na(x)))
 }
 
-finalize_bootstrap_results <- function(all.shift.configurations, detection.vec){
+finalize_bootstrap_results <- function(all.shift.configurations, detection.vec,
+                                       attempted=length(all.shift.configurations),
+                                       failure.messages=character()){
     valid.count <- 0L
     keep <- rep(TRUE, length(all.shift.configurations))
 
@@ -120,8 +143,45 @@ finalize_bootstrap_results <- function(all.shift.configurations, detection.vec){
 
     return(list(
         detection.rate = detection.vec / valid.count,
-        all.shifts = all.shift.configurations[keep]
+        all.shifts = all.shift.configurations[keep],
+        attempted = as.integer(attempted),
+        successful = as.integer(valid.count),
+        failed = as.integer(attempted - valid.count),
+        failure.messages = sort(table(failure.messages[nzchar(failure.messages)]),
+                                decreasing=TRUE)
     ))
+}
+
+bootstrap_support_parametric <- function(tree, model, nItrs, multicore=FALSE,
+                                         nCores=2L, quietly=TRUE){
+    simulations <- simulate(model, nsim=nItrs, preserve.missing=TRUE,
+                            engine="tree")
+    nested.opt <- make_nested_l1ou_options(model$l1ou.options)
+    one.replicate <- function(i){
+        tryCatch({
+            fit <- estimate_shift_configuration(
+                tree, simulations[[i]], l1ou.options=nested.opt
+            )
+            list(ok=TRUE, shifts=fit$shift.configuration, error="")
+        }, error=function(e){
+            list(ok=FALSE, shifts=NA, error=conditionMessage(e))
+        })
+    }
+    records <- if(multicore){
+        with_l1ou_thread_limit(1L, l1ou_mclapply(
+            seq_len(nItrs), one.replicate, mc.cores=nCores
+        ))
+    } else lapply(seq_len(nItrs), one.replicate)
+    shifts <- lapply(records, function(x) if(isTRUE(x$ok)) x$shifts else NA)
+    errors <- vapply(records, function(x) x$error, character(1))
+    if(!quietly){
+        message(sum(vapply(records, function(x) isTRUE(x$ok), logical(1))),
+                "/", nItrs, " parametric bootstrap refits succeeded.")
+    }
+    finalize_bootstrap_results(
+        shifts, rep(0, nrow(tree$edge)), attempted=nItrs,
+        failure.messages=errors
+    )
 }
 
 bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nCores=2, quietly=FALSE){
@@ -158,7 +218,7 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
             rownames(Ystar) <- rownames(Y)
 
             eM  <-  tryCatch({
-                estimate_shift_configuration(tree, Ystar, l1ou.options =model$l1ou.options)
+                estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
             }, error = function(e) {
                 if(!quietly)
                     message("l1OU error, return NA")
@@ -180,7 +240,9 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
         if(valid.count == 0L)
             stop("all bootstrap replicates failed.")
         set.seed(seed.vec[[nItrs+1]])
-        return(list( detection.rate=(detection.vec/valid.count), all.shifts=all.shift.configurations))
+        return(finalize_bootstrap_results(
+            all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs
+        ))
     }
 
 
@@ -209,7 +271,9 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
            }, mc.cores = nCores))
 
     set.seed(seed.vec[[nItrs+1]])
-    return(finalize_bootstrap_results(all.shift.configurations, detection.vec))
+    return(finalize_bootstrap_results(
+        all.shift.configurations, detection.vec, attempted=nItrs
+    ))
 }
 
 bootstrap_support_multivariate_full <- function(tree, model, nItrs,
@@ -269,7 +333,9 @@ bootstrap_support_multivariate_full <- function(tree, model, nItrs,
         lapply(seq_len(nItrs), one.replicate)
     }
     set.seed(seed.vec[[nItrs + 1L]])
-    finalize_bootstrap_results(all.shifts, rep(0, nrow(tree$edge)))
+    finalize_bootstrap_results(
+        all.shifts, rep(0, nrow(tree$edge)), attempted=nItrs
+    )
 }
 
 bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, nCores=2, quietly=FALSE){
@@ -354,7 +420,7 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
             Ystar <- simulate_bootstrap_data()
 
             eM  <-  tryCatch({
-                estimate_shift_configuration(tree, Ystar,  l1ou.options=model$l1ou.options)
+                estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
             }, error = function(e) {
                 if(!quietly)
                     message("l1OU error, return NA")
@@ -375,7 +441,9 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
         if(valid.count == 0L)
             stop("all bootstrap replicates failed.")
         set.seed(seed.vec[[nItrs+1]])
-        return(list( detection.rate=(detection.vec/valid.count), all.shifts=all.shift.configurations))
+        return(finalize_bootstrap_results(
+            all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs
+        ))
     }
 
     all.shift.configurations = with_l1ou_thread_limit(1L,
@@ -400,5 +468,7 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
         }, mc.cores = nCores))
 
     set.seed(seed.vec[[nItrs+1]]) ## To make sure after both mclapply and for-loop we have same seed for the reproducibility  
-    return(finalize_bootstrap_results(all.shift.configurations, detection.vec))
+    return(finalize_bootstrap_results(
+        all.shift.configurations, detection.vec, attempted=nItrs
+    ))
 }

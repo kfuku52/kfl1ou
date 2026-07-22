@@ -4,8 +4,15 @@
 \alias{l1ou_bootstrap_support}
 \title{Computes bootstrap support for shift positions}
 \usage{
-l1ou_bootstrap_support(model, nItrs = 100, multicore = FALSE, nCores = 2,
-  quietly = TRUE)
+l1ou_bootstrap_support(
+  model,
+  nItrs = 100,
+  multicore = FALSE,
+  nCores = 2,
+  quietly = TRUE,
+  type = c("parametric", "residual"),
+  seed = NULL
+)
 }
 \arguments{
 \item{model}{an object output by \code{\link{estimate_shift_configuration}}.}
@@ -22,35 +29,41 @@ BLAS/OpenMP threads limited to 1 when supported, so nested \code{kfl1ou} calls
 do not oversubscribe the machine.}
 
 \item{quietly}{logical. If FALSE, a summary of each iteration will be printed out.}
+
+\item{type}{bootstrap type. Parametric simulation is the default for inference;
+\code{"residual"} retains the historical residual-resampling procedure.}
+
+\item{seed}{optional seed. Sequential and forked runs use the same replicate
+seeds, and the caller's random-number state is restored on exit.}
 }
 \value{
 A list with \code{detection.rate}, a vector of edge-wise detection
-proportions, and \code{all.shifts}, the shift configurations retained from
-successful bootstrap replicates.
+proportions; \code{all.shifts}, the successful shift configurations;
+attempted/successful/failed counts; and summarized failure messages.
 }
 \description{
 Takes a given shift configuration previously detected from data along with shift magnitudes
 and OU parameters, to calculate bootstrap support for shift positions. 
-The non-parametric bootstrap procedure calculates phylogenetically-uncorrelated standardized residuals,
-one at each node. These residuals are sampled with replacement, then mapped back onto the tree
-to create bootstrap replicates. Each replicate is analyzed with
-\code{kfl1ou} and user-specified options.
+By default, parametric replicates are generated from the complete fitted OU
+model. The historical residual bootstrap calculates phylogenetically
+uncorrelated standardized residuals, samples them with replacement, and maps
+them back onto the tree. Every replicate repeats the configured shift search.
 }
 \details{
-The results of sequential and parallel runs are not necessarily equal,
-because different seeds might be used for different bootstrap replicates.
-Fork-based parallel execution is used only on supported platforms. To change options for the analysis of each bootstrap replicate,
-like the information criterion or the maximum allowed number of shifts,
-modify \code{model$l1ou.options}.
-This component keeps its upstream name for backward compatibility.
-Replicates that fail during model fitting are skipped; the function throws an
-error only if all bootstrap replicates fail.
-For multivariate data, each trait is whitened using its observed marginal
-covariance; simulated replicates retain the original trait-specific missingness
-pattern.
-When \code{trait.covariance = "full"}, all observed trait-tip entries are
-whitened and simulated jointly so the fitted cross-trait evolutionary
-covariance is retained.
+With a supplied \code{seed}, sequential and parallel runs use the
+        same replicate data and are reproducible. Fork-based parallel
+        execution is used only on supported platforms. To change options for the analysis of
+        each bootstrap replicate, like the information criterion or the
+        maximum allowed number of shifts, modify \code{model$l1ou.options}.
+        This component keeps its upstream name for backward compatibility.
+        Replicates that fail during model fitting are skipped; the function
+        throws an error only if all bootstrap replicates fail.
+        For multivariate data, each trait is whitened using its observed
+        marginal covariance; simulated replicates retain the original
+        trait-specific missingness pattern.
+        When \code{trait.covariance = "full"}, all observed trait-tip entries
+        are whitened and simulated jointly so the fitted cross-trait
+        evolutionary covariance is retained.
 }
 \examples{
 

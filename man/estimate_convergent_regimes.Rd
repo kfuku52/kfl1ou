@@ -4,8 +4,13 @@
 \alias{estimate_convergent_regimes}
 \title{Detects convergent regimes under an OU model}
 \usage{
-estimate_convergent_regimes(model, criterion = c("AICc", "pBIC", "BIC"),
-  method = c("backward", "rr"), fixed.alpha = FALSE, nCores = 1)
+estimate_convergent_regimes(
+  model,
+  criterion = c("AICc", "pBIC", "BIC"),
+  method = c("backward", "rr"),
+  fixed.alpha = FALSE,
+  nCores = 1
+)
 }
 \arguments{
 \item{model}{fitted object of class l1ou returned by \pkg{kfl1ou}.}
@@ -14,14 +19,14 @@ estimate_convergent_regimes(model, criterion = c("AICc", "pBIC", "BIC"),
 
 \item{method}{search method for finding convergent regimes. ``rr'' is based on
 the optionally installed \code{genlasso} package for regularized linear regression.
-Currenly, this method can only accept a single trait.
+Currently, this method can only accept a single trait.
 The default ``backward'' method is a heuristic similar to \code{surface_backward}
 in the \code{surface} package,
 using backward steps to repeatedly merge similar regimes into convergent regimes.
 Models fitted with \code{measurement_error} or \code{input_error} are
-currently supported only by \code{method = "backward"}. The same applies to
-joint models fitted with \code{trait.covariance = "full"}; their covariance
-matrix is re-estimated for every proposed convergent partition.}
+currently supported only by \code{method = "backward"}. The same applies
+to joint models fitted with \code{trait.covariance = "full"}; their
+covariance matrix is re-estimated for every proposed convergent partition.}
 
 \item{fixed.alpha}{indicates if the alpha parameters should be optimized during likelihood fitting.}
 
@@ -38,17 +43,20 @@ are convergent.
 }
 \details{
 \code{nCores} follows the same total-budget semantics as in
-\code{\link{estimate_shift_configuration}}. When process parallelism is used,
-worker processes run with BLAS/OpenMP threads limited to 1 when supported,
-and the previous thread settings are restored on exit.
-Models created by \pkg{kfl1ou} retain class \code{"l1ou"} for backward
-compatibility with upstream code.
+        \code{\link{estimate_shift_configuration}}. When process parallelism
+        is used, worker processes run with BLAS/OpenMP threads limited to 1
+        when supported, and the previous thread settings are restored on exit.
+        Models created by \pkg{kfl1ou} retain class \code{"l1ou"} for
+        backward compatibility with upstream code.
 
-The returned object is refitted under the selected equality constraints, and
-it preserves the root model used by the input fit. pBIC for convergent
-configurations is a heuristic extension because the original derivation
-assumes independent, unconstrained shifts. Multivariate fits share regime
-locations but do not estimate residual covariance between traits.
+        The returned object is refitted under the selected equality
+        constraints, and it preserves the root model used by the input fit.
+        pBIC for convergent configurations is a heuristic extension because
+        the original derivation assumes independent, unconstrained shifts.
+        Multivariate fits share regime locations. Diagonal-covariance fits
+        retain trait-specific marginal likelihoods, while models fitted with
+        \code{trait.covariance = "full"} re-estimate cross-trait evolutionary
+        covariance under every proposed convergent partition.
 }
 \examples{
 

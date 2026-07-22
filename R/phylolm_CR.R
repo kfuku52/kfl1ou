@@ -180,6 +180,7 @@ phylolm_CR <- function(formula, data=list(), phy,
 ################################################
 ################################################
 
+#' @noRd
 print.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
     cat("Call:\n")
     print(x$call)
@@ -199,6 +200,7 @@ print.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
     print(x$coefficients)
 }
 ################################################
+#' @noRd
 summary.phylolm <- function(object, ...) {
     se <- sqrt(diag(object$vcov))
     tval <- coef(object) / se
@@ -213,6 +215,7 @@ summary.phylolm <- function(object, ...) {
     res
 }
 ################################################
+#' @noRd
 print.summary.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
     cat("\nCall:\n")
     print(x$call)
@@ -245,36 +248,45 @@ print.summary.phylolm <- function(x, digits = max(3, getOption("digits") - 3), .
     cat("\n")
 }
 ################################################
+#' @noRd
 residuals.phylolm <-function(object,type=c("response"), ...){
     type <- match.arg(type)
     object$residuals	 
 }
 ################################################
+#' @noRd
 vcov.phylolm <- function(object, ...){
     object$vcov
 }
 ################################################
+#' @noRd
 logLik.phylolm <- function(object, ...){
     res = list(logLik = object$logLik, df = object$p)
     class(res) = "logLik.phylolm"
     res
 }
+#' @noRd
 print.logLik.phylolm <- function (x, ...) {
     cat("'log Lik.' ",x$logLik," (df=",x$df,")\n", sep = "")
 }
+#' @noRd
 AIC.logLik.phylolm <- function(object, k=2, ...) {
     return(k*object$df - 2*object$logLik)
 }
+#' @noRd
 AIC.phylolm <- function(object, k=2, ...) {
     return(AIC(logLik(object),k))
 }
+#' @noRd
 extractAIC.phylolm <- function(fit, scale, k=2, ...) {
     c(fit$p, - 2*fit$logLik + k * fit$p)
 }
+#' @noRd
 nobs.phylolm <- function(object, ...){
     return(object$n)
 }
 ################################################
+#' @noRd
 predict.phylolm <- function(object, newdata=NULL, ...){
     if (object$model=="trend")
         stop("Predicting for trend model has not been implemented.")
@@ -286,6 +298,7 @@ predict.phylolm <- function(object, newdata=NULL, ...){
     y
 }
 ################################################
+#' @noRd
 plot.phylolm <-function(x, ...){
     plot(x$y, fitted(x), xlab = "Observed value", ylab = "Fitted value", ...)
 }

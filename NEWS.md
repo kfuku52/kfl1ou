@@ -1,5 +1,28 @@
 # kfl1ou 2.2.0
 
+- Prevent Wald intervals from interpreting covariance parameters as fixed
+  adaptation rates; penalized Hessians are no longer exposed as ordinary
+  parameter covariance matrices.
+- Correct information-criterion parameter counts when alpha is fixed, and
+  support the exact alpha-zero Brownian boundary in fixed-alpha fits and
+  likelihood profiles.
+- Restore warning and random-number state on all error and seeded simulation
+  paths, and make parametric full-search shift bootstrap the inferential
+  default with explicit failure accounting.
+- Correct the native root-state traversal and safely support root polytomies.
+- Use a single shrinkage-penalty definition across dense, pruning, complete,
+  and incomplete fits, and honor explicit likelihood-engine requests.
+- Remove dense trait-by-tip covariance construction from pruning
+  initialization and add direct Gaussian tree simulation.
+- Validate numeric traits, finite values, unique labels and positive branch
+  lengths at public boundaries, including strict integer/logical controls and
+  known-error dimensions; retain normalized-tree time scales and provide
+  original-unit and half-life conversion helpers.
+- Separate coefficient `vcov()` semantics from evolutionary innovation
+  covariance through `evolutionary_vcov()`.
+- Add alpha likelihood profiles, clade-level bootstrap summaries, Monte Carlo
+  error for covariance comparisons, and safer refitted model averaging.
+
 - Generalize the correlated multivariate OU model to a diagonal drift matrix,
   allowing a separate adaptation rate for every trait together with a full
   evolutionary innovation covariance matrix.

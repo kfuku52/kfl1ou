@@ -4,7 +4,9 @@
 \name{lizard.traits}
 \alias{lizard.traits}
 \title{Morphospace of 100 Anolis lizards on Caribbean islands}
-\format{A matrix with 100 rows and 4 columns}
+\format{
+A matrix with 100 rows and 4 columns
+}
 \usage{
 data(lizard.traits)
 }
@@ -15,4 +17,3 @@ Morphospace of 100 Anolis lizards on Caribbean islands
 Mahler, D. Luke, et al. "Exceptional convergence on the macroevolutionary landscape in island lizard radiations." Science 341.6143 (2013): 292-295.
 }
 \keyword{datasets}
-

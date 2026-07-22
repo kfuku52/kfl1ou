@@ -430,7 +430,8 @@ dynamic_joint_input_measurement_error_gls_fit <- function(tree, Y, build_preds,
     vcov <- fit$vcov
     colnames(vcov) <- coefficient.names
     rownames(vcov) <- coefficient.names
-    p <- fit$d + 2L + ifelse(estimate_sigma2_error, 1L, 0L)
+    p <- fit$d + 1L + as.integer(optimize.alpha) +
+        ifelse(estimate_sigma2_error, 1L, 0L)
 
     list(
         coefficients = coefficients,
@@ -532,8 +533,9 @@ phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed
     }
 
     preds <- generate_prediction_vec(tr, shift.configuration, conv.regimes, alpha, ageMatrix=NULL)
-    prev.val <- options()$warn
-    options(warn = -1) # dangerous!
+    prev.val <- getOption("warn")
+    options(warn = -1)
+    on.exit(options(warn = prev.val), add = TRUE)
 
     if( is.null(opt$fixed.alpha) ) 
 	    opt$fixed.alpha  <- FALSE;
@@ -547,6 +549,10 @@ phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed
 			    starting.value = list(alpha=alpha),
 			    lower.bound = alpha, 
 			    upper.bound = alpha)
+	    if(!is.null(fit$p)){
+	        fit$p <- max(0L, as.integer(fit$p) - 1L)
+	        fit$aic <- 2 * fit$p - 2 * fit$logLik
+	    }
 
     }else{
 	    fit <-  phylolm_CR(Y~preds-1, 
@@ -762,6 +768,7 @@ fit_convergent_model <- function(tree, Y, shift.configuration, regimes, opt,
     names(named.shifts) <- as.character(states$shift.regime)
     model$Y <- Y
     model$tree <- tree
+    model$tree.scale <- if(is.null(opt$tree.scale)) 1 else opt$tree.scale
     model$shift.configuration <- named.shifts
     model$shift.values <- if(n.shifts > 0L) shift.values else numeric()
     model$shift.means <- if(n.shifts > 0L) shift.means else numeric()
@@ -776,6 +783,12 @@ fit_convergent_model <- function(tree, Y, shift.configuration, regimes, opt,
     model$score <- score
     model$cr.score <- score
     model$logLik <- log.likelihood
+    model$parameter.count <- sum(vapply(
+        trait.results, function(x) as.numeric(x$fit$p), numeric(1)
+    ))
+    model$information.parameter.count <- model$parameter.count + n.shifts
+    model$nobs <- sum(rowSums(!is.na(Y)) > 0L)
+    model$observed.entries <- sum(!is.na(Y))
     model$convergent.regimes <- regimes
     model$convergent <- TRUE
     model$l1ou.options$criterion <- opt$criterion
@@ -795,7 +808,9 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
     nShiftVals <- length( conv.regimes ) -1## conv.regimes has intercept as an optimum value
     nTips      <- length( tree$tip.label )
 
-    p <- nShifts + (nShiftVals + 3 + extra_error_df(opt))*ncol(Y)
+    alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
+    p <- nShifts +
+        (nShiftVals + 2 + alpha.df + extra_error_df(opt))*ncol(Y)
     N <- nTips*ncol(Y)
     df.1 <- 2*p + (2*p*(p+1))/(N-p-1) 
     if( p > N-2)  ##  for this criterion we should have p < N.
@@ -843,7 +858,9 @@ cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
 
     for( i in 1:nVariables ){
 
-        df.2 <- log(nTips)*(nShifts + 3 + extra_error_df(opt))
+        alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
+        df.2 <- log(nTips) *
+            (nShifts + 2 + alpha.df + extra_error_df(opt))
         r <- get_data(tree, Y, shift.configuration, opt, i)
         trait.regimes <- map_convergent_regimes_to_trait(
             conv.regimes,
@@ -913,7 +930,8 @@ cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
         varY  <- var(as.numeric(r$y))
         ld    <- as.numeric(determinant(fit2$vcov * (fit$n - fit$d)/(varY*fit$n),
                                         logarithm = TRUE)$modulus)
-        df.2  <- (2 + extra_error_df(opt))*log(nrow(r$y)) - ld
+        alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
+        df.2  <- (1 + alpha.df + extra_error_df(opt))*log(nrow(r$y)) - ld
         score <- score  -2*fit$logLik + df.2
     }
     return( score )
@@ -1040,7 +1058,7 @@ find_convergent_regimes  <-  function(tr, Y, alpha, criterion, regimes,
 
     rownames(out$beta) <- colnames(X)
 
-    ## removing the intercpet value from coefficients and adding it to a new vector.
+    ## Remove the intercept value from the coefficient matrix.
     spots         <- length( out$beta[,1] )
     out$intercept <- out$beta[    spots, ]
     out$beta      <- out$beta[   -spots, , drop=FALSE]
@@ -1061,17 +1079,16 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
     Y         <- as.matrix(model$Y)
     tr        <- model$tree
 
-    sc.prev <- sc  <- model$shift.configuration
+    sc <- model$shift.configuration
     min.regimes    <- as.list(c(0,sc))
     min.score      <- cmp_model_score_CR(tr, Y, regimes=min.regimes, alpha=model$alpha, opt=opt)
-    prev.min.score <- min.score
     ## elist represents the edgelist format of the regimes graph.
     ## At the beginning each regime forms a vertex with a self-loop. 
     elist.ref  <-  numeric()
     for(u in c(0,sc)){ elist.ref <- rbind( elist.ref, as.character(c(u,u)) ) }
     current.num.cc <- nrow(elist.ref)
 
-    for( iter in 1:(2*length(sc)) ){
+    for(iter in seq_len(2L * length(sc))){
 
         has.progress <- FALSE
         elist.min <- elist.ref
@@ -1079,15 +1096,13 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 
         run.list <- list()
 	list.idx <- 1
+        seen.partitions <- character()
 
         for( u in c(0, sc) ){ 
             for( v in c(0, sc) ){
 
                 ##NOTE: test if we can add (u, v)
                 if( u == v ){ next }
-                ##FIXME: The convergence of the immediate shifts after the root
-                ##to the background is pointless so don't check them.
-
                 ## add the edge (u,v) to the graph. 
                 elist <- as.matrix( rbind(elist.ref, as.character(c(u,v)) ) )
                 cc    <- connected_components_from_edgelist(elist)
@@ -1102,8 +1117,9 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
                 for( thelist in lapply(regimes, sort) ){
                     names(sc.tmp)[sc.tmp %in% thelist]  <-  thelist[[1]] 
                 }
-                if(identical(names(sc.tmp), names(sc.prev))){ next }
-                sc.prev <- sc.tmp
+                partition.key <- paste(names(sc.tmp), collapse="|")
+                if(partition.key %in% seen.partitions){ next }
+                seen.partitions <- c(seen.partitions, partition.key)
 
 		if(!opt$parallel.computing){
 			score   <-  cmp_model_score_CR(tr, Y, regimes, model$alpha, opt=opt)
@@ -1149,9 +1165,10 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
         elist.ref      <- elist.min
 
         ## break a CR if it increases the score
-        ##FIXME: we don't need to check the very last edge we added
         if( has.progress){
-            for( e.idx in 1:length(elist.ref[,1]) ){
+            ## Removing the newly added final edge recreates the previous,
+            ## already-worse partition, so only older graph edges need testing.
+            for(e.idx in seq_len(max(0L, nrow(elist.ref) - 1L))){
 
                 u <- elist.ref[e.idx, 1]
                 v <- elist.ref[e.idx, 2]
@@ -1178,7 +1195,6 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 
         #if no progress then terminate
         if( !has.progress ){ break }
-        prev.min.score <- min.score
     }
     
     return(fit_convergent_model(
@@ -1204,7 +1220,7 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'@param criterion information criterion for model selection (see Details in \code{\link{configuration_ic}}).
 #'@param method search method for finding convergent regimes. ``rr'' is based on
 #'  the optionally installed \code{genlasso} package for regularized linear regression.
-#'  Currenly, this method can only accept a single trait.
+#'  Currently, this method can only accept a single trait.
 #'  The default ``backward'' method is a heuristic similar to \code{surface_backward}
 #'  in the \code{surface} package,
 #'  using backward steps to repeatedly merge similar regimes into convergent regimes.
@@ -1230,8 +1246,10 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'         constraints, and it preserves the root model used by the input fit.
 #'         pBIC for convergent configurations is a heuristic extension because
 #'         the original derivation assumes independent, unconstrained shifts.
-#'         Multivariate fits share regime locations but do not estimate residual
-#'         covariance between traits.
+#'         Multivariate fits share regime locations. Diagonal-covariance fits
+#'         retain trait-specific marginal likelihoods, while models fitted with
+#'         \code{trait.covariance = "full"} re-estimate cross-trait evolutionary
+#'         covariance under every proposed convergent partition.
 #'
 #'@examples
 #' 
@@ -1255,6 +1273,14 @@ estimate_convergent_regimes  <-  function(model,
 					fixed.alpha=FALSE,
 					nCores=1
                                      ){
+    if(!inherits(model, "l1ou")){
+        stop("model must inherit from class \"l1ou\".")
+    }
+    if(length(fixed.alpha) != 1L || !is.logical(fixed.alpha) ||
+       is.na(fixed.alpha)){
+        stop("fixed.alpha must be TRUE or FALSE.")
+    }
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
     opt <- list()
     opt$method <- match.arg(method)
     opt$criterion <- match.arg(criterion)
@@ -1304,7 +1330,7 @@ estimate_convergent_regimes  <-  function(model,
         }
 
 
-        ## doing this for genlasso. FIXME: change the solver as it seems unstable.
+        ## Match the historical genlasso scaling used by the rr heuristic.
         Y   <-  32*model$Y/lnorm(model$Y,l=2)
         Y   <-  as.matrix(Y)
         tr  <-  model$tree

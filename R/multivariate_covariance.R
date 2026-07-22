@@ -55,14 +55,19 @@ normalize_multivariate_options <- function(opt, Y){
     if(is.null(opt$optimizer.starts)){
         opt$optimizer.starts <- 5L
     }
-    opt$optimizer.starts <- as.integer(opt$optimizer.starts[[1L]])
-    if(is.na(opt$optimizer.starts) || opt$optimizer.starts < 1L){
-        stop("optimizer.starts must be a positive integer.")
-    }
+    opt$optimizer.starts <- l1ou_integer_argument(
+        opt$optimizer.starts, "optimizer.starts", 1L
+    )
     if(is.null(opt$compute.hessian)){
         opt$compute.hessian <- TRUE
     }
-    opt$compute.hessian <- isTRUE(opt$compute.hessian)
+    opt$compute.hessian <- l1ou_logical_argument(
+        opt$compute.hessian, "compute.hessian"
+    )
+    if(is.null(opt$measurement_error)) opt$measurement_error <- FALSE
+    opt$measurement_error <- l1ou_logical_argument(
+        opt$measurement_error, "measurement_error"
+    )
 
     if(!is_full_trait_covariance(opt, Y)){
         opt$alpha.structure <- "diagonal"
@@ -81,13 +86,22 @@ sanitize_multivariate_alpha_arguments <- function(lower, upper, starting,
         warning("alpha.lower values must be non-negative; negative values were set to zero.")
         lower[!is.na(lower) & lower < 0] <- 0
     }
-    if(any(!is.na(upper) & upper <= 0)){
-        stop("all alpha.upper values must be strictly positive.")
+    if(any(!is.na(upper) & upper < 0)){
+        stop("alpha.upper values must be non-negative.")
+    }
+    zero.upper <- !is.na(upper) & upper == 0
+    if(any(zero.upper & (is.na(lower) | lower != 0))){
+        stop("alpha.upper can be zero only when alpha is fixed at zero.")
     }
     inverted <- !is.na(lower) & !is.na(upper) & upper < lower
     if(any(inverted)){
         warning("alpha.upper values below alpha.lower were set equal to alpha.lower.")
         upper[inverted] <- lower[inverted]
+    }
+    finite.bounds <- !is.na(lower) & !is.na(upper)
+    if(any(zero.upper) &&
+       !all(finite.bounds & abs(lower - upper) <= .Machine$double.eps^0.5)){
+        stop("zero alpha bounds are supported only when every alpha is fixed.")
     }
     list(lower=lower, upper=upper, starting=starting)
 }
@@ -174,22 +188,18 @@ multivariate_ou_dense_covariance <- function(tree, alpha, trait.covariance,
                 }
                 block <- trait.covariance[i, j] * shared.time
             } else{
-                for(a in seq_len(n)){
-                    for(b in seq_len(n)){
-                        shared <- shared.time[a, b]
-                        propagation <- exp(
-                            -alpha[[i]] * (tip.time[[a]] - shared) -
-                            alpha[[j]] * (tip.time[[b]] - shared)
-                        )
-                        ancestral.variance <- if(random.root){
-                            1
-                        } else{
-                            1 - exp(-rate * shared)
-                        }
-                        block[a, b] <- trait.covariance[i, j] / rate *
-                            propagation * ancestral.variance
-                    }
+                row.distance <- outer(tip.time, rep(1, n)) - shared.time
+                col.distance <- outer(rep(1, n), tip.time) - shared.time
+                propagation <- exp(
+                    -alpha[[i]] * row.distance - alpha[[j]] * col.distance
+                )
+                ancestral.variance <- if(random.root){
+                    matrix(1, n, n)
+                } else{
+                    -expm1(-rate * shared.time)
                 }
+                block <- trait.covariance[i, j] / rate * propagation *
+                    ancestral.variance
             }
             rows <- ((i - 1L) * n + 1L):(i * n)
             cols <- ((j - 1L) * n + 1L):(j * n)
@@ -221,6 +231,26 @@ multivariate_tip_trait_covariance <- function(tree, alpha, trait.covariance,
     }
     covariance <- trait.covariance * multiplier
     0.5 * (covariance + t(covariance))
+}
+
+multivariate_marginal_scale <- function(tree, alpha, root.model, n.traits){
+    alpha <- rep(as.numeric(alpha), length.out=n.traits)
+    diag(multivariate_tip_trait_covariance(
+        tree, alpha, diag(n.traits), root.model
+    ))
+}
+
+initial_trait_covariance <- function(Y, initial.sd){
+    p <- ncol(Y)
+    correlation <- suppressWarnings(stats::cor(
+        Y, use="pairwise.complete.obs"
+    ))
+    if(p == 1L) correlation <- matrix(1, 1L, 1L)
+    correlation[!is.finite(correlation)] <- 0
+    diag(correlation) <- 1
+    correlation <- regularize_positive_definite(correlation, 1e-6)
+    covariance <- correlation * tcrossprod(initial.sd)
+    regularize_positive_definite(covariance, 1e-8)
 }
 
 multivariate_observation_error_vector <- function(Y, opt, sigma2.error=NULL){
@@ -493,8 +523,10 @@ matrix_normal_ou_fit <- function(tree, Y, design.builder, opt,
         at.bound=at.bound,
         hessian=alpha.hessian,
         hessian.eigenvalues=alpha.hessian,
-        parameter.vcov=if(is.finite(alpha.hessian) && alpha.hessian > 0)
-            matrix(2 / alpha.hessian, 1L, 1L) else NULL
+        parameter.vcov=if(is.finite(alpha.hessian) && alpha.hessian > 0 &&
+                          identical(opt$covariance.regularization, "none"))
+            matrix(2 / alpha.hessian, 1L, 1L) else NULL,
+        alpha.parameter.index=if(bounds$fixed) integer() else 1L
     )
     fit$diagnostics <- list(
         converged=TRUE,
@@ -502,7 +534,18 @@ matrix_normal_ou_fit <- function(tree, Y, design.builder, opt,
         trait.covariance.condition=kappa(fit$trait.covariance),
         trait.covariance.min.eigenvalue=min(covariance.eigenvalues),
         hessian.positive.definite=is.finite(alpha.hessian) && alpha.hessian > 0,
+        hessian.type=if(identical(opt$covariance.regularization, "none"))
+            "likelihood" else "regularized-profile",
         regularization.lambda=fit$regularization.lambda,
+        information.criterion.calibrated=identical(
+            opt$covariance.regularization, "none"
+        ),
+        score.note=if(identical(opt$covariance.regularization, "none")) NULL else
+            paste0(
+                "BIC is evaluated at a regularized estimate and should be ",
+                "treated as a sensitivity score, not a calibrated marginal-",
+                "likelihood approximation."
+            ),
         likelihood.engine="matrix-normal"
     )
     fit
@@ -527,19 +570,17 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         }
     }
     initial.alpha <- bounds$start
-    unit.covariance <- multivariate_ou_dense_covariance(
-        tree, initial.alpha, diag(p), opt$root.model
+    marginal.scale <- pmax(
+        multivariate_marginal_scale(tree, initial.alpha, opt$root.model, p),
+        .Machine$double.eps
     )
-    marginal.scale <- vapply(seq_len(p), function(j){
-        rows <- ((j - 1L) * n + 1L):(j * n)
-        max(mean(diag(unit.covariance[rows, rows, drop=FALSE])),
-            .Machine$double.eps)
-    }, numeric(1))
     marginal.variance <- vapply(seq_len(p), function(j){
         value <- stats::var(Y[, j], na.rm=TRUE) / marginal.scale[[j]]
         max(value, 1e-8)
     }, numeric(1))
     initial.sd <- sqrt(marginal.variance)
+    initial.covariance <- initial_trait_covariance(Y, initial.sd)
+    initial.L <- t(chol(initial.covariance))
 
     decode <- function(parameters){
         index <- 1L
@@ -600,13 +641,13 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         lower <- c(lower, log(bounds$lower))
         upper <- c(upper, log(bounds$upper))
     }
-    parameters <- c(parameters, log(initial.sd))
+    parameters <- c(parameters, log(diag(initial.L)))
     lower <- c(lower, log(initial.sd) - 12)
     upper <- c(upper, log(initial.sd) + 12)
     if(p > 1L){
         count <- p * (p - 1L) / 2L
-        off.bound <- 100 * max(initial.sd)
-        parameters <- c(parameters, rep(0, count))
+        off.bound <- 10 * max(initial.sd)
+        parameters <- c(parameters, initial.L[lower.tri(initial.L)])
         lower <- c(lower, rep(-off.bound, count))
         upper <- c(upper, rep(off.bound, count))
     }
@@ -633,9 +674,9 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             candidate <- parameters
             finite.bounds <- is.finite(lower) & is.finite(upper)
             phase <- (seq_along(candidate) * 0.61803398875 + fraction) %% 1
-            candidate[finite.bounds] <-
-                lower[finite.bounds] + phase[finite.bounds] *
-                (upper[finite.bounds] - lower[finite.bounds])
+            local.span <- pmin(upper - lower, 4 * pmax(abs(parameters), 1))
+            candidate[finite.bounds] <- parameters[finite.bounds] +
+                (phase[finite.bounds] - 0.5) * local.span[finite.bounds]
             candidate[!finite.bounds] <- candidate[!finite.bounds] +
                 (-1)^start.index * 0.2 * start.index
             starting.points[[start.index]] <- pmin(pmax(candidate, lower), upper)
@@ -712,7 +753,11 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             hessian.eigenvalues <- eigen(hessian, symmetric=TRUE,
                                          only.values=TRUE)$values
             if(all(hessian.eigenvalues > 1e-8)){
-                parameter.vcov <- tryCatch(2 * solve(hessian), error=function(e) NULL)
+                if(identical(opt$covariance.regularization, "none")){
+                    parameter.vcov <- tryCatch(
+                        2 * solve(hessian), error=function(e) NULL
+                    )
+                }
             }
         }
     }
@@ -726,13 +771,18 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             objective=values,
             convergence=vapply(optimization.runs, function(x) x$convergence,
                                integer(1)),
+            message=vapply(optimization.runs, function(x){
+                if(is.null(x$message)) "" else as.character(x$message[[1L]])
+            }, character(1)),
             stringsAsFactors=FALSE
         ),
         message=optimized$message,
         at.bound=at.bound,
         hessian=hessian,
         hessian.eigenvalues=hessian.eigenvalues,
-        parameter.vcov=parameter.vcov
+        parameter.vcov=parameter.vcov,
+        alpha.parameter.index=if(bounds$fixed) integer() else
+            seq_len(bounds$n.alpha)
     )
     fit$diagnostics <- list(
         converged=identical(as.integer(optimized$convergence), 0L),
@@ -741,6 +791,7 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         trait.covariance.min.eigenvalue=min(covariance.eigenvalues),
         hessian.positive.definite=length(hessian.eigenvalues) > 0L &&
             all(hessian.eigenvalues > 1e-8),
+        hessian.type=if(shrinkage.lambda > 0) "penalized" else "likelihood",
         regularization.lambda=fit$regularization.lambda,
         likelihood.engine="dense"
     )
@@ -792,13 +843,15 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
         ))
     }
 
-    complete.separable <- !identical(opt$likelihood.engine, "pruning") &&
-        identical(opt$alpha.structure, "shared") &&
+    complete.separable <- identical(opt$alpha.structure, "shared") &&
         !anyNA(Y) && !isTRUE(opt$measurement_error) && is.null(opt$input_error)
+    use.matrix.normal <- identical(opt$likelihood.engine, "auto") &&
+        complete.separable &&
+        identical(opt$covariance.regularization, "none")
     use.pruning <- identical(opt$likelihood.engine, "pruning") ||
-        (identical(opt$likelihood.engine, "auto") && !complete.separable &&
+        (identical(opt$likelihood.engine, "auto") && !use.matrix.normal &&
          length(Y) >= 250L)
-    fit <- if(complete.separable){
+    fit <- if(use.matrix.normal){
         matrix_normal_ou_fit(tree, Y, design.builder, opt, fixed.alpha)
     } else if(use.pruning){
         pruning_multivariate_ou_fit(
@@ -884,6 +937,7 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
     model <- list(
         Y=Y,
         tree=tree,
+        tree.scale=if(is.null(opt$tree.scale)) 1 else opt$tree.scale,
         shift.configuration=shift.configuration,
         shift.values=shift.values,
         shift.means=shift.means,
@@ -898,12 +952,21 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
         tip.trait.correlation=fit$tip.trait.correlation,
         covariance.regularization=opt$covariance.regularization,
         regularization.lambda=fit$regularization.lambda,
+        information.criterion.calibrated=identical(
+            opt$covariance.regularization, "none"
+        ),
+        score.note=if(identical(opt$covariance.regularization, "none")) NULL else
+            paste0(
+                "BIC is evaluated at a regularized estimate and should be ",
+                "treated as a sensitivity score."
+            ),
         optimization=fit$optimization,
         diagnostics=fit$diagnostics,
         likelihood.engine=fit$diagnostics$likelihood.engine,
         parameter.count=fit$p,
         information.parameter.count=fit$p + length(shift.configuration),
-        nobs=fit$n,
+        nobs=fit$sample.size,
+        observed.entries=fit$n,
         intercept=intercept,
         mu=mu,
         residuals=residuals,
@@ -981,6 +1044,7 @@ fit_full_covariance_convergent_model <- function(tree, Y, shift.configuration,
     names(sigma2.error) <- trait.names
     model$Y <- Y
     model$tree <- tree
+    model$tree.scale <- if(is.null(opt$tree.scale)) 1 else opt$tree.scale
     model$shift.configuration <- named.shifts
     model$shift.values <- shift.values
     model$shift.means <- shift.means
@@ -995,12 +1059,21 @@ fit_full_covariance_convergent_model <- function(tree, Y, shift.configuration,
     model$tip.trait.correlation <- fit$tip.trait.correlation
     model$covariance.regularization <- opt$covariance.regularization
     model$regularization.lambda <- fit$regularization.lambda
+    model$information.criterion.calibrated <- identical(
+        opt$covariance.regularization, "none"
+    )
+    model$score.note <- if(model$information.criterion.calibrated) NULL else
+        paste0(
+            "BIC is evaluated at a regularized estimate and should be treated ",
+            "as a sensitivity score."
+        )
     model$optimization <- fit$optimization
     model$diagnostics <- fit$diagnostics
     model$likelihood.engine <- fit$diagnostics$likelihood.engine
     model$parameter.count <- fit$p
     model$information.parameter.count <- fit$p + length(shift.configuration)
-    model$nobs <- fit$n
+    model$nobs <- fit$sample.size
+    model$observed.entries <- fit$n
     model$intercept <- regime.optima[1L, ]
     model$mu <- mu
     model$residuals <- residuals

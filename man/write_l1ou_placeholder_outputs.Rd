@@ -33,7 +33,7 @@ as \code{l1ou_tree.tsv}.}
 }
 \value{
 Invisibly returns a list containing placeholder tables, file paths,
-and the optional \code{reason}.
+ and the optional \code{reason}.
 }
 \description{
 This helper writes placeholder TSV and PDF outputs for workflows that expect
@@ -49,4 +49,5 @@ Y <- as.matrix(lizard.traits[keep, 1, drop = FALSE])
 Y[] <- 1
 out.dir <- tempdir()
 write_l1ou_placeholder_outputs(tree, Y, dir = out.dir)
+
 }

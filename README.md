@@ -110,6 +110,7 @@ fit_correlated$trait.covariance
 fit_correlated$trait.correlation
 fit_correlated$tip.trait.correlation
 fit_correlated$joint.logLik
+evolutionary_vcov(fit_correlated)
 ```
 
 By default this mode fits the separable covariance `Omega %x% C(alpha)`, where
@@ -133,9 +134,11 @@ The diagonal-alpha model uses a full innovation covariance and the exact
 cross-trait covariance induced by the trait-specific OU rates. Both dense and
 Gaussian tree-pruning likelihood engines support trait-specific missing
 entries, known observation variances, estimated measurement-error variances,
-and fixed or stationary roots. `likelihood.engine = "auto"` retains the fast
-matrix-normal profile when it applies and selects pruning for larger
-non-separable problems.
+and fixed or stationary roots. `likelihood.engine = "auto"` retains the
+matrix-normal profile for complete, unregularized shared-alpha data and selects
+pruning for larger non-separable problems. Explicit `"dense"` and `"pruning"`
+requests are honored. Pruning initialization and tree-based simulation do not
+construct the full trait-by-tip covariance matrix.
 
 `trait.covariance` and `trait.correlation` describe instantaneous evolutionary
 innovations. When alpha differs among traits, `tip.trait.covariance` and
@@ -149,16 +152,25 @@ For many traits or few residual contrasts, use
 covariance requires `criterion = "BIC"`: the package deliberately
 rejects pBIC, pBICess, mBIC, and AICc because their penalties have not been
 derived for this joint model. The historical `trait.covariance = "diagonal"`
-mode remains the default and retains trait-specific alpha estimates.
+mode remains the default and retains trait-specific alpha estimates. Shrinkage
+has the same correlation-penalty interpretation for dense and pruning engines,
+including incomplete data. BIC evaluated at a regularized estimate is reported
+as a sensitivity score rather than a calibrated marginal-likelihood
+approximation.
 
 Numerical and inferential checks are available directly from fitted objects:
 
 ```r
 diagnose_l1ou(fit_general)
-confint(fit_general, method = "parametric", nsim = 200)
-compare_trait_covariance(tree, Y, nboot = 200)
+confint(
+  fit_general, method = "parametric", selection = "full",
+  nsim = 200, seed = 1
+)
+compare_trait_covariance(tree, Y, nboot = 200, seed = 2)
 
-support <- l1ou_bootstrap_support(fit_correlated, nItrs = 200)
+support <- l1ou_bootstrap_support(
+  fit_correlated, nItrs = 200, type = "parametric", seed = 3
+)
 summarize_shift_uncertainty(support, tree)
 averaged <- model_average_l1ou(fit_correlated, delta.max = 10)
 ```
@@ -175,11 +187,18 @@ averaged <- model_average_l1ou(fit_correlated, delta.max = 10)
   outside the implemented model.
 - OU optima and adaptation rates can be weakly identified even with many tips.
   Treat estimates at parameter bounds as sensitivity warnings and compare
-  biologically plausible bounds and root models.
+  biologically plausible bounds and root models. `profile_alpha_l1ou()` and the
+  `alpha_to_half_life()` helpers make these checks easier to report.
 - pBIC for unconstrained shifts follows the derivation in Khabbazian et al.
   (2016). Its use for convergent equality constraints remains heuristic; report
   sensitivity to AICc/BIC and bootstrap support rather than treating one
   criterion as calibrated certainty.
+- `adjust_data(normalize = TRUE)` stores the original tree-height factor.
+  `original_time_parameters()` converts alpha and evolutionary variance rates
+  back to the original branch-length time unit.
+- `vcov()` follows the R convention of coefficient sampling covariance and may
+  return an explicitly unavailable matrix. Use `evolutionary_vcov()` for the
+  fitted evolutionary innovation covariance.
 
 Convergent-regime fits are refitted under their equality constraints. Returned
 coefficients, fitted values, residuals, optima, likelihoods, and variance

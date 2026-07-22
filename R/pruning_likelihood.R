@@ -26,8 +26,18 @@ pruning_spd_components <- function(covariance){
     covariance <- 0.5 * (covariance + t(covariance))
     factor <- tryCatch(chol(covariance), error=function(e) NULL)
     if(is.null(factor)){
-        covariance <- regularize_positive_definite(covariance, 1e-12)
-        factor <- chol(covariance)
+        scale <- max(abs(diag(covariance)), 1)
+        jitter <- scale * 1e-12
+        for(attempt in seq_len(5L)){
+            candidate <- covariance
+            diag(candidate) <- diag(candidate) + jitter
+            factor <- tryCatch(chol(candidate), error=function(e) NULL)
+            if(!is.null(factor)) break
+            jitter <- jitter * 10
+        }
+        if(is.null(factor) || jitter > scale * 1e-8){
+            stop("covariance is not positive definite within numerical tolerance.")
+        }
     }
     list(
         inverse=chol2inv(factor),
@@ -176,18 +186,16 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
     }
     q <- design.columns[[1L]]
 
-    unit.covariance <- multivariate_ou_dense_covariance(
-        tree, initial.alpha, diag(p), opt$root.model
+    marginal.scale <- pmax(
+        multivariate_marginal_scale(tree, initial.alpha, opt$root.model, p),
+        .Machine$double.eps
     )
-    marginal.scale <- vapply(seq_len(p), function(j){
-        rows <- ((j - 1L) * n + 1L):(j * n)
-        max(mean(diag(unit.covariance[rows, rows, drop=FALSE])),
-            .Machine$double.eps)
-    }, numeric(1))
     marginal.variance <- vapply(seq_len(p), function(j){
         max(stats::var(Y[, j], na.rm=TRUE) / marginal.scale[[j]], 1e-8)
     }, numeric(1))
     initial.sd <- sqrt(marginal.variance)
+    initial.covariance <- initial_trait_covariance(Y, initial.sd)
+    initial.L <- t(chol(initial.covariance))
     initial.coefficients <- matrix(0, q, p)
     for(j in seq_len(p)){
         keep <- !is.na(Y[, j])
@@ -280,13 +288,13 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         lower <- c(lower, log(bounds$lower))
         upper <- c(upper, log(bounds$upper))
     }
-    parameters <- c(parameters, log(initial.sd))
+    parameters <- c(parameters, log(diag(initial.L)))
     lower <- c(lower, log(initial.sd) - 12)
     upper <- c(upper, log(initial.sd) + 12)
     if(p > 1L){
         count <- p * (p - 1L) / 2L
-        off.bound <- 100 * max(initial.sd)
-        parameters <- c(parameters, rep(0, count))
+        off.bound <- 10 * max(initial.sd)
+        parameters <- c(parameters, initial.L[lower.tri(initial.L)])
         lower <- c(lower, rep(-off.bound, count))
         upper <- c(upper, rep(off.bound, count))
     }
@@ -317,8 +325,15 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             fraction <- (start.index - 1L) / opt$optimizer.starts
             varied <- seq_len(process.parameter.count)
             phase <- (varied * 0.61803398875 + fraction) %% 1
-            candidate[varied] <- lower[varied] + phase *
-                (upper[varied] - lower[varied])
+            local.span <- pmin(
+                upper[varied] - lower[varied],
+                4 * pmax(abs(parameters[varied]), 1)
+            )
+            candidate[varied] <- parameters[varied] +
+                (phase - 0.5) * local.span
+            candidate[varied] <- pmin(
+                pmax(candidate[varied], lower[varied]), upper[varied]
+            )
             starting.points[[start.index]] <- candidate
         }
     }
@@ -378,8 +393,11 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
                 hessian, symmetric=TRUE, only.values=TRUE
             )$values
             if(all(hessian.eigenvalues > 1e-8)){
-                parameter.vcov <- tryCatch(2 * solve(hessian),
-                                           error=function(e) NULL)
+                if(identical(opt$covariance.regularization, "none")){
+                    parameter.vcov <- tryCatch(
+                        2 * solve(hessian), error=function(e) NULL
+                    )
+                }
             }
         }
     } else if(isTRUE(opt$compute.hessian)){
@@ -393,13 +411,18 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         runs=data.frame(
             start=seq_along(optimization.runs), objective=values,
             convergence=vapply(optimization.runs, function(x) x$convergence,
-                               integer(1)), stringsAsFactors=FALSE
+                               integer(1)),
+            message=vapply(optimization.runs, function(x){
+                if(is.null(x$message)) "" else as.character(x$message[[1L]])
+            }, character(1)), stringsAsFactors=FALSE
         ),
         message=optimized$message,
         at.bound=at.bound,
         hessian=hessian,
         hessian.eigenvalues=hessian.eigenvalues,
-        parameter.vcov=parameter.vcov
+        parameter.vcov=parameter.vcov,
+        alpha.parameter.index=if(bounds$fixed) integer() else
+            seq_len(bounds$n.alpha)
     )
     fit$diagnostics <- list(
         converged=identical(as.integer(optimized$convergence), 0L),
@@ -408,7 +431,10 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         trait.covariance.min.eigenvalue=min(covariance.eigenvalues),
         hessian.positive.definite=length(hessian.eigenvalues) > 0L &&
             all(hessian.eigenvalues > 1e-8),
+        hessian.type=if(shrinkage.lambda > 0) "penalized" else "likelihood",
         hessian.skipped=hessian.skipped,
+        hessian.reason=if(hessian.skipped)
+            "parameter dimension exceeds the 100-parameter safety limit" else NULL,
         regularization.lambda=fit$regularization.lambda,
         likelihood.engine="pruning"
     )

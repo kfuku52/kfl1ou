@@ -4,17 +4,27 @@
 \alias{fit_OU}
 \title{Fits an OU model based on a given configuration}
 \usage{
-fit_OU(tree, Y, shift.configuration, criterion = c("pBIC", "pBICess", "mBIC",
-  "BIC", "AICc"), root.model = c("OUfixedRoot", "OUrandomRoot"),
-  cr.regimes = NULL, alpha.starting.value = NA,
-  alpha.upper = alpha_upper_bound(tree), alpha.lower = NA,
-  measurement_error = FALSE, input_error = NULL,
+fit_OU(
+  tree,
+  Y,
+  shift.configuration,
+  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"),
+  root.model = c("OUfixedRoot", "OUrandomRoot"),
+  cr.regimes = NULL,
+  alpha.starting.value = NA,
+  alpha.upper = alpha_upper_bound(tree),
+  alpha.lower = NA,
+  measurement_error = FALSE,
+  input_error = NULL,
   trait.covariance = c("diagonal", "full"),
   alpha.structure = c("shared", "diagonal"),
   covariance.regularization = c("none", "shrinkage"),
   regularization.lambda = NA,
   likelihood.engine = c("auto", "dense", "pruning"),
-  optimizer.starts = 5, compute.hessian = TRUE, l1ou.options = NA)
+  optimizer.starts = 5,
+  compute.hessian = TRUE,
+  l1ou.options = NA
+)
 }
 \arguments{
 \item{tree}{ultrametric tree of class phylo, with branch lengths, and edges in postorder.}
@@ -28,7 +38,7 @@ fit_OU(tree, Y, shift.configuration, criterion = c("pBIC", "pBICess", "mBIC",
 \item{root.model}{model for the ancestral state at the root.}
 
 \item{cr.regimes}{optional list of convergent regimes. Each element contains
-the background regime (\code{0}) or a set of shift edges that should share the
+the background regime (`0`) or a set of shift edges that should share the
 same optimum.}
 
 \item{alpha.starting.value}{optional starting value for the optimization of the phylogenetic adaptation rate.}
@@ -37,19 +47,29 @@ same optimum.}
 
 \item{alpha.lower}{optional lower bound for the phylogenetic adaptation rate.}
 
-\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
+\item{measurement_error}{logical. If TRUE, estimates an observation-level
+measurement error variance for each trait through \code{kfl1ou}'s bundled
+likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
+\item{input_error}{optional vector or matrix of known observation error
+variances. When combined with \code{measurement_error = TRUE},
+\code{kfl1ou} treats these as known tip-specific variances and estimates an
+additional shared measurement-error variance per trait.}
 
-\item{trait.covariance}{residual covariance model for multivariate traits; see
-\code{\link{estimate_shift_configuration}}. Full covariance requires BIC.}
+\item{trait.covariance}{residual covariance model for multivariate traits;
+see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.}
 
-\item{alpha.structure}{Full-covariance alpha structure.}
-\item{covariance.regularization}{Optional covariance shrinkage.}
-\item{regularization.lambda}{Shrinkage intensity, or \code{NA}.}
-\item{likelihood.engine}{Dense, pruning, or automatic engine.}
-\item{optimizer.starts}{Number of optimizer starts.}
-\item{compute.hessian}{Whether to calculate a numerical Hessian.}
+\item{alpha.structure}{full-covariance adaptation-rate structure.}
+
+\item{covariance.regularization}{optional covariance shrinkage.}
+
+\item{regularization.lambda}{shrinkage intensity in [0,1], or \code{NA}.}
+
+\item{likelihood.engine}{dense, pruning, or automatic likelihood engine.}
+
+\item{optimizer.starts}{number of deterministic optimization starts.}
+
+\item{compute.hessian}{logical; calculate a numerical Hessian when practical.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }
@@ -65,12 +85,6 @@ BIC gives the usual Bayesian information criterion, here penalizing each shift a
 mBIC is the modified BIC proposed by Ho and Ané (2014).
 pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
 pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
-
-When \code{cr.regimes} is supplied, the model is refitted under the equality
-constraints. Returned fitted values, residuals, optima, likelihoods, and
-variance parameters all correspond to that constrained model. pBIC for such
-convergent constraints is a heuristic extension of the unconstrained pBIC
-derivation; compare it with AICc/BIC and bootstrap support.
 }
 \examples{
 

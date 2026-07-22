@@ -4,21 +4,34 @@
 \alias{estimate_shift_configuration}
 \title{Detects evolutionary shifts under an OU model}
 \usage{
-estimate_shift_configuration(tree, Y,
-  max.nShifts = NULL, criterion = c("pBIC",
-  "pBICess", "mBIC", "BIC", "AICc"), root.model = c("OUfixedRoot",
-  "OUrandomRoot"), candid.edges = NA, quietly = TRUE,
-  alpha.starting.value = NA, alpha.upper = alpha_upper_bound(tree),
-  alpha.lower = NA, lars.alg = c("lasso", "stepwise"), nCores = 1,
-  rescale = TRUE, edge.length.threshold = .Machine$double.eps,
-  grp.delta = 1/16, grp.seq.ub = 5, measurement_error = FALSE,
-  input_error = NULL, trait.covariance = c("diagonal", "full"),
+estimate_shift_configuration(
+  tree,
+  Y,
+  max.nShifts = NULL,
+  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"),
+  root.model = c("OUfixedRoot", "OUrandomRoot"),
+  candid.edges = NA,
+  quietly = TRUE,
+  alpha.starting.value = NA,
+  alpha.upper = alpha_upper_bound(tree),
+  alpha.lower = NA,
+  lars.alg = c("lasso", "stepwise"),
+  nCores = 1,
+  rescale = TRUE,
+  edge.length.threshold = .Machine$double.eps,
+  grp.delta = 1/16,
+  grp.seq.ub = 5,
+  measurement_error = FALSE,
+  input_error = NULL,
+  trait.covariance = c("diagonal", "full"),
   alpha.structure = c("shared", "diagonal"),
   covariance.regularization = c("none", "shrinkage"),
   regularization.lambda = NA,
   likelihood.engine = c("auto", "dense", "pruning"),
-  optimizer.starts = 5, compute.hessian = TRUE,
-  l1ou.options = NA)
+  optimizer.starts = 5,
+  compute.hessian = TRUE,
+  l1ou.options = NA
+)
 }
 \arguments{
 \item{tree}{ultrametric tree of class phylo with branch lengths, and edges in postorder.}
@@ -27,7 +40,8 @@ estimate_shift_configuration(tree, Y,
 missing entries, provided every tip has at least one observed trait. The row
 names must be in the same order as the tip labels.}
 
-\item{max.nShifts}{upper bound for the number of shifts. If \code{NULL} or \code{"auto"}, it is set to half the number of tree edges.}
+\item{max.nShifts}{upper bound for the number of shifts. If \code{NULL} or
+\code{"auto"}, it is set to half the number of tree edges.}
 
 \item{criterion}{information criterion for model selection (see Details in \code{\link{configuration_ic}}).}
 
@@ -43,7 +57,8 @@ names must be in the same order as the tip labels.}
 
 \item{alpha.lower}{optional lower bound for the phylogenetic adaptation rate.}
 
-\item{lars.alg}{sparse-path algorithm used in the univariate case. The option name is kept for backward compatibility.}
+\item{lars.alg}{sparse-path algorithm used in the univariate case. The
+option name is kept for backward compatibility.}
 
 \item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 then it runs sequentially. Otherwise, when fork-based parallelism is
@@ -59,26 +74,36 @@ overall computation respects this budget when possible.}
 
 \item{grp.seq.ub}{(used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).}
 
-\item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
+\item{measurement_error}{logical. If TRUE, estimates an observation-level
+measurement error variance for each trait through \code{kfl1ou}'s bundled
+likelihood solver.}
 
-\item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
+\item{input_error}{optional vector or matrix of known observation error
+variances. When combined with \code{measurement_error = TRUE},
+\code{kfl1ou} treats these as known tip-specific variances and estimates an
+additional shared measurement-error variance per trait.}
 
 \item{trait.covariance}{residual covariance model for multivariate traits.
-\code{"diagonal"} retains the original trait-by-trait likelihood. \code{"full"}
-fits a joint multivariate OU likelihood with a positive-definite evolutionary
-trait covariance matrix and currently requires \code{criterion = "BIC"}.}
+\code{"diagonal"} retains the original trait-by-trait likelihood and allows
+a separate alpha for every trait. \code{"full"} fits a joint multivariate OU
+likelihood and an unrestricted positive-definite evolutionary covariance
+matrix among traits. The full model currently uses \code{criterion = "BIC"}.}
 
-\item{alpha.structure}{For full covariance, one shared alpha or one alpha per trait.}
+\item{alpha.structure}{for full covariance, \code{"shared"} estimates one
+adaptation rate; \code{"diagonal"} estimates one rate per trait.}
 
-\item{covariance.regularization}{Optional shrinkage of the full covariance toward a diagonal target.}
+\item{covariance.regularization}{\code{"shrinkage"} regularizes the full
+covariance toward a diagonal target.}
 
-\item{regularization.lambda}{Shrinkage intensity in [0,1], or \code{NA} for automatic selection.}
+\item{regularization.lambda}{fixed shrinkage intensity in [0,1], or \code{NA}
+for automatic selection.}
 
-\item{likelihood.engine}{Dense, exact Gaussian pruning, or automatic likelihood engine.}
+\item{likelihood.engine}{\code{"dense"}, exact Gaussian tree \code{"pruning"},
+or automatic engine selection.}
 
-\item{optimizer.starts}{Number of deterministic optimization starts.}
+\item{optimizer.starts}{number of deterministic optimization starts.}
 
-\item{compute.hessian}{Whether to calculate a numerical Hessian when practical.}
+\item{compute.hessian}{logical; calculate a numerical Hessian when practical.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }
@@ -91,14 +116,24 @@ trait covariance matrix and currently requires \code{criterion = "BIC"}.}
 \item{nShifts}{estimated number of shifts.}
 \item{optima}{optimum values of the trait at tips. If the data are multivariate, this is a matrix where each row corresponds to a tip.}
 \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
-\item{alpha}{maximum likelihood estimate(s) of the adaptation rate \eqn{\alpha}{alpha}. Full trait covariance uses either a shared estimate (repeated for trait alignment) or one estimate per trait according to \code{alpha.structure}.}
-\item{sigma2}{maximum likelihood estimate(s) of the marginal evolutionary variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
-\item{sigma2_error}{maximum likelihood estimate(s) of the observation-level measurement error variance, one per trait.}
-\item{trait.covariance}{for full multivariate fits, the estimated positive-definite evolutionary variance-covariance matrix.}
-\item{trait.correlation}{for full multivariate fits, the corresponding evolutionary correlation matrix.}
-\item{tip.trait.covariance}{for full multivariate fits, the marginal evolutionary residual covariance among traits at an ultrametric tip. This differs from the innovation covariance when adaptation rates differ.}
-\item{tip.trait.correlation}{the corresponding marginal residual correlation among traits at a tip.}
-\item{joint.logLik}{for full multivariate fits, the maximized joint log likelihood.}
+\item{alpha}{maximum likelihood estimate(s) of the adaptation rate
+\eqn{\alpha}{alpha}. Full trait covariance uses a shared value or one value
+per trait according to \code{alpha.structure}.}
+\item{sigma2}{maximum likelihood estimate(s) of the marginal evolutionary
+variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
+\item{sigma2_error}{maximum likelihood estimate(s) of the observation-level
+measurement error variance, one per trait.}
+\item{trait.covariance}{for full multivariate fits, the estimated
+positive-definite evolutionary variance-covariance matrix \eqn{\Omega}.}
+\item{trait.correlation}{for full multivariate fits, the correlation matrix
+corresponding to \code{trait.covariance}.}
+\item{tip.trait.covariance}{for full multivariate fits, the marginal
+evolutionary residual covariance among traits at an ultrametric tip. This
+differs from the innovation covariance when adaptation rates differ.}
+\item{tip.trait.correlation}{the corresponding marginal residual correlation
+among traits at a tip.}
+\item{joint.logLik}{for full multivariate fits, the maximized joint log
+likelihood. It cannot be decomposed into independent per-trait likelihoods.}
 \item{mu}{fitted values, i.e. estimated trait means.}
 \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 \item{score}{information criterion value of the estimated shift configuration.}

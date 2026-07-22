@@ -4,9 +4,16 @@
 \alias{sqrt_OU_covariance}
 \title{(inverse) square root of the phylogenetic covariance}
 \usage{
-sqrt_OU_covariance(tree, alpha = 0, root.model = c("OUfixedRoot",
-  "OUrandomRoot"), sigma2 = 1, sigma2_error = 0, input_error = NULL,
-  check.order = TRUE, check.ultrametric = TRUE)
+sqrt_OU_covariance(
+  tree,
+  alpha = 0,
+  root.model = c("OUfixedRoot", "OUrandomRoot"),
+  sigma2 = 1,
+  sigma2_error = 0,
+  input_error = NULL,
+  check.order = TRUE,
+  check.ultrametric = TRUE
+)
 }
 \arguments{
 \item{tree}{tree of class phylo with branch lengths. If alpha>0, i.e. under the OU model, the tree has to be ultrametric.}
@@ -21,9 +28,12 @@ sqrt_OU_covariance(tree, alpha = 0, root.model = c("OUfixedRoot",
 
 \item{input_error}{optional vector of tip-specific observation error variances.}
 
-\item{check.order}{logical. If TRUE, the order will be checked to be in postorder traversal.}
+\item{check.order}{retained for backward compatibility. Trees are always
+reordered to postorder before the native traversal.}
 
-\item{check.ultrametric}{logical. If TRUE, the tree will be checked to ultrametric.}
+\item{check.ultrametric}{retained for backward compatibility. Ultrametricity
+is always enforced when \code{alpha > 0} because otherwise the OU
+transformation is invalid.}
 }
 \value{
 \item{sqrtInvSigma}{inverse square root of the phylogenetic covariance matrix.}

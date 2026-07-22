@@ -32,4 +32,3 @@ optimum.values <- convert_shifts2regions(lizard.tree, sc, sv) + root.value
 
 
 }
-

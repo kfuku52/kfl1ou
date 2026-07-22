@@ -18,7 +18,7 @@ adjust_data(
 )
 }
 \arguments{
-\item{tree}{tree of class phylo with branch lengths.}
+\item{tree}{ultrametric tree of class phylo with branch lengths.}
 
 \item{Y}{trait vector/matrix.}
 
@@ -49,6 +49,8 @@ invariant traits.}
 \value{
 \item{tree}{tree of class phylo, with the same topology as the input \code{tree} but adjusted edge order.}
 \item{Y}{trait vector/matrix with adjusted row names and row order.}
+\item{tree.scale}{factor by which original branch lengths were divided when
+normalization was requested; equal to one otherwise.}
 \item{removed.tips}{tip labels dropped because all trait values were missing.}
 \item{removed.traits}{trait names dropped because they were invariant.}
 }

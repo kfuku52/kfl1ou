@@ -63,8 +63,8 @@
 #' \item{optima}{optimum values of the trait at tips. If the data are multivariate, this is a matrix where each row corresponds to a tip.}
 #' \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
 #' \item{alpha}{maximum likelihood estimate(s) of the adaptation rate
-#' \eqn{\alpha}{alpha}. Full trait covariance uses one shared estimate, repeated
-#' for convenient alignment with the trait columns.}
+#' \eqn{\alpha}{alpha}. Full trait covariance uses a shared value or one value
+#' per trait according to \code{alpha.structure}.}
 #' \item{sigma2}{maximum likelihood estimate(s) of the marginal evolutionary
 #' variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
 #' \item{sigma2_error}{maximum likelihood estimate(s) of the observation-level
@@ -73,6 +73,11 @@
 #' positive-definite evolutionary variance-covariance matrix \eqn{\Omega}.}
 #' \item{trait.correlation}{for full multivariate fits, the correlation matrix
 #' corresponding to \code{trait.covariance}.}
+#' \item{tip.trait.covariance}{for full multivariate fits, the marginal
+#' evolutionary residual covariance among traits at an ultrametric tip. This
+#' differs from the innovation covariance when adaptation rates differ.}
+#' \item{tip.trait.correlation}{the corresponding marginal residual correlation
+#' among traits at a tip.}
 #' \item{joint.logLik}{for full multivariate fits, the maximized joint log
 #' likelihood. It cannot be decomposed into independent per-trait likelihoods.}
 #' \item{mu}{fitted values, i.e. estimated trait means.}
@@ -84,12 +89,12 @@
 #'@details
 #'For information criteria: see \code{\link{configuration_ic}}.
 #'
-#'With \code{trait.covariance = "full"}, multivariate fits use
-#'\eqn{\Omega \otimes C(\alpha)} as their phylogenetic covariance, where
-#'\eqn{\Omega} is an estimated trait covariance matrix and \eqn{C(\alpha)} is
-#'the OU covariance among tips. This model requires a common adaptation rate
-#'across traits. The default \code{"diagonal"} mode retains separate adaptation
-#'rates and the historical block-diagonal likelihood.
+#'With \code{trait.covariance = "full"}, \code{alpha.structure = "shared"}
+#'uses the separable covariance \eqn{\Omega \otimes C(\alpha)}.
+#'\code{alpha.structure = "diagonal"} instead fits a diagonal drift matrix and
+#'a full innovation covariance, allowing trait-specific adaptation rates.
+#'The default \code{"diagonal"} trait-covariance mode retains the historical
+#'block-diagonal likelihood.
 #'Shift positions should be interpreted as phylogenetically consistent trait
 #'clusters rather than exact historical shift times. OU optima and adaptation
 #'rates can remain weakly identified from tip data alone; sensitivity to alpha
@@ -171,15 +176,34 @@ estimate_shift_configuration <- function(tree, Y,
            l1ou.options           = NA
      ){
 
-    if (!inherits(tree, "phylo"))  stop("object \"tree\" is not of class \"phylo\".")
-    if (is.null(tree$edge.length)) stop("the tree has no branch lengths.")
-    if (is.null(tree$tip.label))   stop("the tree has no tip labels.")	
+    validate_l1ou_tree(tree, require.positive.edges=TRUE)
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
+    quietly <- l1ou_logical_argument(quietly, "quietly")
+    rescale <- l1ou_logical_argument(rescale, "rescale")
+    measurement_error <- l1ou_logical_argument(
+        measurement_error, "measurement_error"
+    )
+    compute.hessian <- l1ou_logical_argument(compute.hessian, "compute.hessian")
+    if(length(edge.length.threshold) != 1L ||
+       !is.numeric(edge.length.threshold) || !is.finite(edge.length.threshold) ||
+       edge.length.threshold < 0){
+        stop("edge.length.threshold must be one finite non-negative number.")
+    }
+    if(!all(is.na(candid.edges))){
+        if(!is.numeric(candid.edges) || anyNA(candid.edges) ||
+           any(!is.finite(candid.edges)) ||
+           any(candid.edges != as.integer(candid.edges)) ||
+           any(candid.edges < 1L | candid.edges > Nedge(tree))){
+            stop("candid.edges must contain valid integer edge indices or NA.")
+        }
+        candid.edges <- unique(as.integer(candid.edges))
+    }
     if(!is.ultrametric(tree))      stop("the input tree is not ultrametric.")
 
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
         stop("the tree is not in postorder, use adjust_data function to reorder the tree!")
 
-    Y <- as.matrix(Y)
+    Y <- as_l1ou_trait_matrix(Y)
     effective.quietly <- quietly
     if(is.list(l1ou.options) && !is.null(l1ou.options$quietly)){
         effective.quietly <- isTRUE(l1ou.options$quietly)
@@ -321,6 +345,7 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$likelihood.engine <- match.arg(likelihood.engine)
         l1ou.options$optimizer.starts <- optimizer.starts
         l1ou.options$compute.hessian <- compute.hessian
+        l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
         ## each tree in tree.list represents a trait where the tips corresponding
         ## to NA values in the trail have been dropped.
         l1ou.options$multivariate.missing <- multivariate.missing
@@ -337,6 +362,9 @@ estimate_shift_configuration <- function(tree, Y,
         }
         l1ou.options$max.nShifts <- normalize_max_n_shifts(l1ou.options$max.nShifts, tree)
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
+    }
+    if(is.null(l1ou.options$tree.scale)){
+        l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
     }
     l1ou.options$trait.covariance <- validate_trait_covariance_mode(
         l1ou.options$trait.covariance, Y, l1ou.options$criterion
@@ -864,7 +892,7 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008). 
+#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
 #'
 #'When \code{cr.regimes} is supplied, the model is refitted under the equality
 #'constraints. Returned fitted values, residuals, optima, likelihoods, and
@@ -923,11 +951,11 @@ configuration_ic <- function(tree, Y, shift.configuration,
                      l1ou.options = NA
                    ){
 
-    if (!inherits(tree, "phylo"))  stop("object \"tree\" is not of class \"phylo\".")
+    validate_l1ou_tree(tree, require.positive.edges=TRUE)
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
         stop("the input phylogenetic tree is not in postorder. Use adjust_data function.")
 
-    Y  = as.matrix(Y)
+    Y <- as_l1ou_trait_matrix(Y)
     if(!identical(rownames(Y), tree$tip.label)) stop("rownames of Y and tree$tip.label are not identical.")
 
 
@@ -953,6 +981,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$likelihood.engine <- match.arg(likelihood.engine)
         opt$optimizer.starts <- optimizer.starts
         opt$compute.hessian <- compute.hessian
+        opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
     if( is.null(opt$measurement_error) ){
         opt$measurement_error <- FALSE
@@ -963,6 +992,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
     if( is.null(opt$trait.covariance) ){
         opt$trait.covariance <- "diagonal"
     }
+    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
        identical(opt$alpha.structure, "diagonal")){
         alpha.bounds <- sanitize_multivariate_alpha_arguments(
@@ -997,7 +1027,6 @@ configuration_ic <- function(tree, Y, shift.configuration,
                         For instance,\n", s.c, "\n is an alternative configuration with fewer shifts."))
 
         if( fit.OU.model ){
-            ##TODO: convergent evolution.
             eModel = fit_OU_model(tree, Y, shift.configuration, opt)
             return(eModel)
         }
@@ -1045,7 +1074,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008). 
+#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
 #' 
 #'@examples
 #' 
@@ -1102,11 +1131,11 @@ fit_OU <- function(tree, Y, shift.configuration,
                      l1ou.options = NA
                    ){
 
-    if (!inherits(tree, "phylo"))  stop("object \"tree\" is not of class \"phylo\".")
+    validate_l1ou_tree(tree, require.positive.edges=TRUE)
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
         stop("the input phylogenetic tree is not in postorder. Use adjust_data function.")
 
-    Y  = as.matrix(Y)
+    Y <- as_l1ou_trait_matrix(Y)
     if(!identical(rownames(Y), tree$tip.label)) stop("rownames of Y and tree$tip.label are not identical.")
 
     opt = list()
@@ -1131,6 +1160,7 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$likelihood.engine <- match.arg(likelihood.engine)
         opt$optimizer.starts <- optimizer.starts
         opt$compute.hessian <- compute.hessian
+        opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
     if( is.null(opt$measurement_error) ){
         opt$measurement_error <- FALSE
@@ -1141,6 +1171,7 @@ fit_OU <- function(tree, Y, shift.configuration,
     if( is.null(opt$trait.covariance) ){
         opt$trait.covariance <- "diagonal"
     }
+    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
        identical(opt$alpha.structure, "diagonal")){
         alpha.bounds <- sanitize_multivariate_alpha_arguments(
@@ -1323,9 +1354,13 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
 
+    continuous.parameter.count <- sum(vapply(
+        trait.results, function(x) as.numeric(x$fit$p), numeric(1)
+    ))
     model = list(
                  Y                   = Y, 
                  tree                = tree,
+                 tree.scale          = if(is.null(opt$tree.scale)) 1 else opt$tree.scale,
                  shift.configuration = shift.configuration, 
                  shift.values       = shift.values,
                  shift.means        = shift.means, 
@@ -1339,14 +1374,11 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
                  residuals           = resi,
                  score               = score,
                  logLik              = logLik,
-                 parameter.count     = ncol(Y) *
-                     (length(shift.configuration) + 3L +
-                      as.integer(isTRUE(opt$measurement_error))),
-                 information.parameter.count = ncol(Y) *
-                     (length(shift.configuration) + 3L +
-                      as.integer(isTRUE(opt$measurement_error))) +
+                 parameter.count     = continuous.parameter.count,
+                 information.parameter.count = continuous.parameter.count +
                      length(shift.configuration),
-                 nobs                = sum(!is.na(Y)),
+                 nobs                = sum(rowSums(!is.na(Y)) > 0L),
+                 observed.entries    = sum(!is.na(Y)),
                  l1ou.options        = model.opt) 
 
     class(model) <- "l1ou"
@@ -1355,7 +1387,6 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
 
 cmp_model_score <-function(tree, Y, shift.configuration, opt){
 
-    ##TODO: optimize it.
     shift.configuration <- correct_unidentifiability(tree, shift.configuration, opt)
 
     if(opt$use.saved.scores){ ##if it's been already computed
@@ -1440,6 +1471,10 @@ normalize_input_error <- function(tree, Y, input_error){
     }
 
     if( !is.null(rownames(err.mat)) ){
+        if(anyNA(rownames(err.mat)) || any(!nzchar(rownames(err.mat))) ||
+           anyDuplicated(rownames(err.mat))){
+            stop("input_error row names must be non-missing, non-empty, and unique.")
+        }
         o <- match(tree$tip.label, rownames(err.mat))
         if( any(is.na(o)) ){
             stop("input_error row names do not match tree tip labels.")
@@ -1451,6 +1486,10 @@ normalize_input_error <- function(tree, Y, input_error){
 
     if( ncol(err.mat) > 1 && !all(is.null(colnames(Y))) ){
         if( !is.null(colnames(err.mat)) ){
+            if(anyNA(colnames(err.mat)) || any(!nzchar(colnames(err.mat))) ||
+               anyDuplicated(colnames(err.mat))){
+                stop("input_error column names must be non-missing, non-empty, and unique.")
+            }
             o <- match(colnames(Y), colnames(err.mat))
             if( any(is.na(o)) ){
                 stop("input_error column names do not match the trait names.")
@@ -1461,6 +1500,12 @@ normalize_input_error <- function(tree, Y, input_error){
         }
     }
 
+    if(!is.numeric(err.mat)){
+        stop("input_error must contain numeric variances.")
+    }
+    if(any(is.nan(err.mat)) || any(is.infinite(err.mat))){
+        stop("input_error must contain finite variances or NA only where Y is missing.")
+    }
     if( any(err.mat < 0, na.rm=TRUE) ){
         stop("input_error must be non-negative.")
     }
@@ -1476,8 +1521,9 @@ sanitize_alpha_bounds <- function(alpha.lower, alpha.upper){
     lower <- ifelse(is.null(alpha.lower), NA_real_, as.numeric(alpha.lower[[1]]))
     upper <- ifelse(is.null(alpha.upper), NA_real_, as.numeric(alpha.upper[[1]]))
 
-    if(!is.na(upper) && upper <= 0){
-        stop("alpha.upper must be strictly positive.\n")
+    exact.bm <- !is.na(lower) && !is.na(upper) && lower == 0 && upper == 0
+    if(!is.na(upper) && upper <= 0 && !exact.bm){
+        stop("alpha.upper must be positive unless alpha is fixed at zero.\n")
     }
     if(!is.na(lower) && lower < 0){
         warning("alpha.lower must be greater than zero. I set it to zero.\n")
@@ -1506,11 +1552,7 @@ normalize_max_n_shifts <- function(max.nShifts, tree){
         stop('max.nShifts should be a single non-negative number, NULL, or "auto".')
     }
 
-    if( !is.numeric(max.nShifts) || length(max.nShifts) != 1L || is.na(max.nShifts) ){
-        stop('max.nShifts should be a single non-negative number, NULL, or "auto".')
-    }
-
-    return(as.integer(floor(max.nShifts)))
+    return(l1ou_integer_argument(max.nShifts, "max.nShifts", 0L))
 }
 
 get_trait_input_error <- function(opt, idx, tree=NULL, available=NULL, input_error=opt$input_error){
@@ -1699,8 +1741,9 @@ estimate_whitening_fit <- function(tree, Y, alpha=0, est.alpha=FALSE, opt, input
         )
     }
 
-    prev.val <- options()$warn
+    prev.val <- getOption("warn")
     options(warn = -1)
+    on.exit(options(warn = prev.val), add = TRUE)
     if( est.alpha ){
         fit.args <- list(formula = yy ~ 1, phy = prep$tree, model = "BM",
                          measurement_error = opt$measurement_error)
@@ -1889,8 +1932,13 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
             alpha.lower <- ifelse(is.na(alpha.lower.raw), 0, alpha.lower.raw)
         }
 
-        if( is.na(alpha.upper) || alpha.upper <= 0 ){
-            stop("input_error fallback requires a strictly positive alpha.upper bound.")
+        exact.bm <- !is.na(alpha.lower) && !is.na(alpha.upper) &&
+            alpha.lower == 0 && alpha.upper == 0
+        if( is.na(alpha.upper) || (alpha.upper <= 0 && !exact.bm) ){
+            stop(paste0(
+                "the OU fallback requires a positive alpha.upper unless ",
+                "alpha is fixed at zero."
+            ))
         }
 
         optimize.alpha <- !isTRUE(all.equal(alpha.lower, alpha.upper, tolerance = tol))
@@ -2049,7 +2097,7 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
     vcov <- fit$vcov
     colnames(vcov) <- coefficient_names
     rownames(vcov) <- coefficient_names
-    p <- d + 1L + ifelse(model == "BM", 0L, 1L) +
+    p <- d + 1L + ifelse(model == "BM", 0L, as.integer(optimize.alpha)) +
         ifelse(estimate_sigma2_error, 1L, 0L)
 
     list(
@@ -2392,7 +2440,8 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
     }
     upper <- opt$alpha.upper.bound
 
-    if(lower == upper){
+    alpha.fixed <- isTRUE(all.equal(lower, upper, tolerance=tol))
+    if(alpha.fixed){
         if(lower <= 0){
             stop("fast OU fit requires a strictly positive fixed alpha.")
         }
@@ -2437,8 +2486,8 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         optpar = alpha.hat,
         sigma2_error = 0,
         logLik = -fit$n2llh/2,
-        p = 2 + d,
-        aic = 2 * (2 + d) + fit$n2llh,
+        p = 1 + d + as.integer(!alpha.fixed),
+        aic = 2 * (1 + d + as.integer(!alpha.fixed)) + fit$n2llh,
         vcov = vcov,
         fitted.values = fitted.values,
         residuals = y - fitted.values,
@@ -2737,6 +2786,21 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
 
 
     preds = cbind(1, Z[ ,shift.configuration])
+    fixed.bm.boundary <- isFALSE(opt$measurement_error) &&
+        is.null(input_error) && identical(opt$root.model, "OUfixedRoot") &&
+        !is.na(opt$alpha.lower.bound) && !is.na(opt$alpha.upper.bound) &&
+        opt$alpha.lower.bound == 0 && opt$alpha.upper.bound == 0
+    if(fixed.bm.boundary){
+        zero.error <- stats::setNames(
+            numeric(length(tree$tip.label)), tree$tip.label
+        )
+        return(dense_known_input_error_gls_fit(
+            tree, Y, preds, model=opt$root.model,
+            lower.bound=0, upper.bound=0, starting.value=0,
+            quietly=opt$quietly, input_error=zero.error,
+            coefficient_names=paste0("preds", seq_len(ncol(preds)))
+        ))
+    }
     if( can_use_dense_joint_input_error_fit(opt$measurement_error, input_error) ){
         fit <- try(
             dense_joint_input_measurement_error_gls_fit(
@@ -2790,8 +2854,9 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
         }
     }
 
-    prev.val <-options()$warn 
+    prev.val <- getOption("warn")
     options(warn = -1)
+    on.exit(options(warn = prev.val), add = TRUE)
     if( is.na(opt$alpha.lower.bound) & is.na(opt$alpha.starting.value) ){
         fit.args <- list(formula = Y~preds-1, phy=tree, model=opt$root.model,
                          upper.bound  = opt$alpha.upper.bound,
@@ -2821,6 +2886,14 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
                             want to change alpha.upper/alpha.lower!") )
         }
         return(NA)
+    }
+    fixed.alpha <- !is.na(opt$alpha.lower.bound) &&
+        !is.na(opt$alpha.upper.bound) &&
+        isTRUE(all.equal(opt$alpha.lower.bound, opt$alpha.upper.bound,
+                         tolerance=1e-10))
+    if(fixed.alpha && !is.null(fit$p)){
+        fit$p <- max(0L, as.integer(fit$p) - 1L)
+        if(!is.null(fit$logLik)) fit$aic <- 2 * fit$p - 2 * fit$logLik
     }
     return(fit)
 }
