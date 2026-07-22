@@ -80,3 +80,48 @@ direct_joint_error_intercept_fit <- function(tree, Y, alpha, input_error,
     logLik = -objective(opt$par) / 2
   )
 }
+
+direct_known_error_intercept_fit <- function(tree, Y, alpha, input_error,
+                                             root.model = "OUfixedRoot") {
+  y <- as.numeric(as.matrix(Y)[, 1])
+  X <- matrix(1, nrow = length(y), ncol = 1)
+  re <- kfl1ou:::sqrt_OU_covariance(
+    tree,
+    alpha = alpha,
+    root.model = root.model,
+    sigma2 = 1,
+    check.order = FALSE,
+    check.ultrametric = FALSE
+  )
+  base_cov <- tcrossprod(re$sqrtSigma)
+  tip_error <- input_error[tree$tip.label]
+
+  objective <- function(log_sigma2) {
+    Sigma <- exp(log_sigma2) * base_cov
+    diag(Sigma) <- diag(Sigma) + tip_error
+    chol_sigma <- chol(Sigma)
+    Xt <- forwardsolve(t(chol_sigma), X)
+    yt <- drop(forwardsolve(t(chol_sigma), matrix(y, ncol = 1)))
+    beta <- drop(solve(crossprod(Xt), crossprod(Xt, yt)))
+    rss <- sum((yt - drop(Xt %*% beta))^2)
+    length(y) * log(2 * pi) + 2 * sum(log(diag(chol_sigma))) + rss
+  }
+
+  opt <- stats::optimize(
+    objective,
+    interval = c(log(.Machine$double.eps), log(max(stats::var(y) * 100, 1)))
+  )
+  sigma2 <- exp(opt$minimum)
+  Sigma <- sigma2 * base_cov
+  diag(Sigma) <- diag(Sigma) + tip_error
+  chol_sigma <- chol(Sigma)
+  Xt <- forwardsolve(t(chol_sigma), X)
+  yt <- drop(forwardsolve(t(chol_sigma), matrix(y, ncol = 1)))
+  beta <- drop(solve(crossprod(Xt), crossprod(Xt, yt)))
+
+  list(
+    coefficients = beta,
+    sigma2 = sigma2,
+    logLik = -objective(opt$minimum) / 2
+  )
+}

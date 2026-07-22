@@ -19,7 +19,9 @@ The default ``backward'' method is a heuristic similar to \code{surface_backward
 in the \code{surface} package,
 using backward steps to repeatedly merge similar regimes into convergent regimes.
 Models fitted with \code{measurement_error} or \code{input_error} are
-currently supported only by \code{method = "backward"}.}
+currently supported only by \code{method = "backward"}. The same applies to
+joint models fitted with \code{trait.covariance = "full"}; their covariance
+matrix is re-estimated for every proposed convergent partition.}
 
 \item{fixed.alpha}{indicates if the alpha parameters should be optimized during likelihood fitting.}
 
@@ -41,6 +43,12 @@ worker processes run with BLAS/OpenMP threads limited to 1 when supported,
 and the previous thread settings are restored on exit.
 Models created by \pkg{kfl1ou} retain class \code{"l1ou"} for backward
 compatibility with upstream code.
+
+The returned object is refitted under the selected equality constraints, and
+it preserves the root model used by the input fit. pBIC for convergent
+configurations is a heuristic extension because the original derivation
+assumes independent, unconstrained shifts. Multivariate fits share regime
+locations but do not estimate residual covariance between traits.
 }
 \examples{
 

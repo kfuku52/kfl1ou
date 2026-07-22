@@ -55,12 +55,12 @@ write_l1ou_placeholder_outputs <- function(tree, Y, dir = ".", prefix = "l1ou",
     leaf.file <- file.path(dir, paste0(prefix, "_leaf.tsv"))
     plot.file <- file.path(dir, paste0(prefix, "_plot.pdf"))
 
-    write.table(tree.table, file = tree.file, sep = "\t", quote = FALSE,
-                row.names = FALSE)
-    write.table(regime.table, file = regime.file, sep = "\t", quote = FALSE,
-                row.names = FALSE)
-    write.table(leaf.table, file = leaf.file, sep = "\t", quote = FALSE,
-                row.names = FALSE)
+    utils::write.table(tree.table, file = tree.file, sep = "\t", quote = FALSE,
+                       row.names = FALSE)
+    utils::write.table(regime.table, file = regime.file, sep = "\t", quote = FALSE,
+                       row.names = FALSE)
+    utils::write.table(leaf.table, file = leaf.file, sep = "\t", quote = FALSE,
+                       row.names = FALSE)
 
     grDevices::pdf(plot.file, height = plot.height, width = plot.width)
     on.exit(grDevices::dev.off(), add = TRUE)

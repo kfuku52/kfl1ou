@@ -2,18 +2,20 @@
 #'
 #' Returns a new tree and new data matrix, where the tree edges are in
 #' postorder, the data row names match the order of the tree tip labels, and
-#' common pathological inputs are sanitized.
+#' common pathological inputs are validated. Tree repair is opt-in.
 #'
 #'@param tree ultrametric tree of class phylo with branch lengths.
 #'@param Y trait vector/matrix.
 #'@param normalize logical. If TRUE, normalizes branch lengths to a unit tree height.
 #'@param quietly logical. If FALSE, changes in tree/trait are printed.
 #'@param repair.tree logical. If TRUE, repairs non-positive branch lengths and
-#' nearly ultrametric trees before normalization.
+#' nearly ultrametric trees before normalization. The default is FALSE so branch
+#' lengths are never changed silently.
 #'@param min.edge.length positive numeric lower bound used when repairing short
 #' or non-positive branch lengths.
-#'@param ultrametric.tolerance numeric vector of relative change thresholds used
-#' when attempting automatic ultrametric repair.
+#'@param ultrametric.tolerance maximum accepted relative total branch-length
+#' change during automatic ultrametric repair. Multiple thresholds are accepted
+#' for backward compatibility; a repair must satisfy at least one.
 #'@param drop.all.missing logical. If TRUE, tips with no observed trait values
 #' are dropped together with their tree tips.
 #'@param drop.invariant logical. If TRUE, invariant traits are removed before
@@ -37,9 +39,9 @@
 #' lizard <- adjust_data(lizard.tree, subset(lizard.traits, select=1))
 #'@export
 adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
-                        repair.tree = TRUE,
+                        repair.tree = FALSE,
                         min.edge.length = 1e-8,
-                        ultrametric.tolerance = c(0.01, 0.05, 0.1, 1, Inf),
+                        ultrametric.tolerance = 0.01,
                         drop.all.missing = TRUE,
                         drop.invariant = TRUE,
                         invariant.tolerance = 0){
@@ -121,6 +123,8 @@ adjust_data <- function(tree, Y, normalize = TRUE, quietly=FALSE,
             min.edge.length = min.edge.length,
             quietly = quietly
         )
+    } else if( !isTRUE(is.ultrametric(tree)) ){
+        stop("the input tree is not ultrametric; set repair.tree = TRUE to request bounded automatic repair.")
     }
 
     if( !identical(tree$edge, reorder(tree, "postorder")$edge)){
@@ -182,7 +186,7 @@ sanitize_tree_edge_lengths <- function(tree, min.edge.length = 1e-8, quietly = F
 }
 
 repair_ultrametric_tree <- function(tree,
-                                    tolerances = c(0.01, 0.05, 0.1, 1, Inf),
+                                    tolerances = 0.01,
                                     min.edge.length = 1e-8,
                                     quietly = FALSE){
     if( isTRUE(is.ultrametric(tree)) ){
@@ -226,9 +230,14 @@ repair_ultrametric_tree <- function(tree,
             min.edge.length = min.edge.length,
             quietly = TRUE
         )
-        if( isTRUE(is.ultrametric(trial)) ){
+        sum.adjustment <- sum(abs(trial$edge.length - original$edge.length))
+        total.length <- max(sum(abs(original$edge.length)), .Machine$double.eps)
+        rel.change <- sum.adjustment / total.length
+        accepted <- tolerances[is.infinite(tolerances) | rel.change <= tolerances]
+        if( length(accepted) > 0 && isTRUE(is.ultrametric(trial)) ){
             if(!quietly){
-                cat("repaired a non-ultrametric tree with chronos fallback.\n")
+                cat("repaired a non-ultrametric tree with chronos fallback",
+                    "(relative edge-length change =", signif(rel.change, 4), ").\n")
             }
             return(trial)
         }
@@ -835,13 +844,14 @@ correct_unidentifiability <- function(tree, shift.configuration, opt){
 
 alpha_upper_bound <- function(tree){
     nTips       = length(tree$tip.label)
-    eLenSorted  = sort(tree$edge.length[which(tree$edge[,2] < nTips)])
-    eLenSorted  = eLenSorted[is.finite(eLenSorted) & (eLenSorted > 0)]
-    if( !length(eLenSorted) ){
+    external.lengths <- tree$edge.length[tree$edge[,2] <= nTips]
+    external.lengths <- external.lengths[
+        is.finite(external.lengths) & external.lengths > 0
+    ]
+    if( !length(external.lengths) ){
         return(Inf)
     }
-    topMinLen   = min(length(eLenSorted), max(5L, ceiling(length(eLenSorted) * 0.05)))
-    return( log(2)/stats::median(eLenSorted[seq_len(topMinLen)]) )
+    return(log(2) / min(external.lengths))
 }
 
 
@@ -1340,12 +1350,29 @@ summary.l1ou <- function(object, nTop.scores=5, ...){
         tmp.mat = rbind(tmp.mat, model$sigma2_error)
         rownames(tmp.mat)[nrow(tmp.mat)] = "measurement error variance (sigma2_error)"
     }
-    tmp.mat = rbind(tmp.mat, model$logLik)
-    rownames(tmp.mat)[nrow(tmp.mat)] = "logLik"
     if(!all(is.null(colnames(model$Y)))){
         colnames(tmp.mat) = colnames(model$Y)
     }
     print(tmp.mat)
+    if(is_full_trait_covariance(model$l1ou.options, model$Y)){
+        cat("joint logLik: ", model$joint.logLik, "\n", sep="")
+        cat("evolutionary trait covariance (Omega):\n")
+        print(model$trait.covariance)
+        cat("evolutionary trait correlation:\n")
+        print(model$trait.correlation)
+        if(!is.null(model$tip.trait.covariance) &&
+           identical(model$l1ou.options$alpha.structure, "diagonal")){
+            cat("marginal residual covariance among traits at the tips:\n")
+            print(model$tip.trait.covariance)
+            cat("marginal residual correlation among traits at the tips:\n")
+            print(model$tip.trait.correlation)
+        }
+    } else{
+        loglik.mat <- matrix(model$logLik, nrow=1L)
+        colnames(loglik.mat) <- colnames(tmp.mat)
+        rownames(loglik.mat) <- "logLik"
+        print(loglik.mat)
+    }
     cat("\n")
 
     #cat("\n")
@@ -1417,12 +1444,22 @@ print.l1ou <- function(x, ...){
         tmp.mat <- rbind(tmp.mat, model$sigma2_error)
         rownames(tmp.mat)[nrow(tmp.mat)] <- "measurement error variance (sigma2_error)"
     }
-    tmp.mat <- rbind(tmp.mat, model$logLik)
-    rownames(tmp.mat)[nrow(tmp.mat)] <- "logLik"
     if(!all(is.null(colnames(model$Y)))){
         colnames(tmp.mat) <- colnames(model$Y)
     }
     print(tmp.mat)
+    if(is_full_trait_covariance(model$l1ou.options, model$Y)){
+        cat("joint logLik: ", model$joint.logLik, "\n", sep="")
+        cat("evolutionary trait covariance (Omega):\n")
+        print(model$trait.covariance)
+        cat("evolutionary trait correlation:\n")
+        print(model$trait.correlation)
+    } else{
+        loglik.mat <- matrix(model$logLik, nrow=1L)
+        colnames(loglik.mat) <- colnames(tmp.mat)
+        rownames(loglik.mat) <- "logLik"
+        print(loglik.mat)
+    }
     cat("\n")
 }
 

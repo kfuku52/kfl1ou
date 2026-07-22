@@ -8,6 +8,7 @@ test_that("adjust_data repairs short-edge non-ultrametric trees", {
       Y,
       normalize = FALSE,
       quietly = FALSE,
+      repair.tree = TRUE,
       min.edge.length = 1e-3
     )
   )
@@ -73,11 +74,28 @@ test_that("adjust_data lets univariate inputs with missing tips proceed", {
   expect_s3_class(fit, "l1ou")
 })
 
-test_that("alpha_upper_bound ignores isolated tiny external branches", {
+test_that("alpha_upper_bound uses every external branch", {
   tree <- ape::read.tree(
     text = "((A:1e-12,B:1e-12):0.999999999999,((C:0.5,D:0.5):0.25,(E:0.5,F:0.5):0.25):0.25);"
   )
 
   expect_true(isTRUE(ape::is.ultrametric(tree)))
-  expect_equal(kfl1ou:::alpha_upper_bound(tree), log(2) / 0.5, tolerance = 1e-12)
+  expect_equal(kfl1ou:::alpha_upper_bound(tree), log(2) / 1e-12, tolerance = 1e-12)
+})
+
+test_that("adjust_data does not silently repair trees by default", {
+  tree <- ape::read.tree(text = "((A:1,B:1):1,(C:1,D:1.5):1);")
+  Y <- matrix(seq_len(4), ncol = 1, dimnames = list(tree$tip.label, "trait"))
+
+  expect_error(
+    adjust_data(tree, Y, normalize = FALSE, quietly = TRUE),
+    "not ultrametric"
+  )
+  expect_error(
+    adjust_data(
+      tree, Y, normalize = FALSE, quietly = TRUE,
+      repair.tree = TRUE, ultrametric.tolerance = 0.01
+    ),
+    "automatic repair failed"
+  )
 })

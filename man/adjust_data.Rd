@@ -9,9 +9,9 @@ adjust_data(
   Y,
   normalize = TRUE,
   quietly = FALSE,
-  repair.tree = TRUE,
+  repair.tree = FALSE,
   min.edge.length = 1e-08,
-  ultrametric.tolerance = c(0.01, 0.05, 0.1, 1, Inf),
+  ultrametric.tolerance = 0.01,
   drop.all.missing = TRUE,
   drop.invariant = TRUE,
   invariant.tolerance = 0
@@ -27,13 +27,15 @@ adjust_data(
 \item{quietly}{logical. If FALSE, changes in tree/trait are printed.}
 
 \item{repair.tree}{logical. If TRUE, repairs non-positive branch lengths and
-nearly ultrametric trees before normalization.}
+nearly ultrametric trees before normalization. The default is FALSE so branch
+lengths are never changed silently.}
 
 \item{min.edge.length}{positive numeric lower bound used when repairing short
 or non-positive branch lengths.}
 
-\item{ultrametric.tolerance}{numeric vector of relative change thresholds used
-when attempting automatic ultrametric repair.}
+\item{ultrametric.tolerance}{maximum accepted relative total branch-length
+change during automatic ultrametric repair. Multiple thresholds are accepted
+for backward compatibility; a repair must satisfy at least one.}
 
 \item{drop.all.missing}{logical. If TRUE, tips with no observed trait values
 are dropped together with their tree tips.}
@@ -53,7 +55,7 @@ invariant traits.}
 \description{
 Returns a new tree and new data matrix, where the tree edges are in
 postorder, the data row names match the order of the tree tip labels, and
-common pathological inputs are sanitized.
+common pathological inputs are validated. Tree repair is opt-in.
 }
 \examples{
 data(lizard.tree, lizard.traits)

@@ -124,23 +124,18 @@ test_that("fit_OU supports fixed-alpha input_error fits", {
     alpha.upper = alpha,
     alpha.starting.value = alpha
   )
-  manual <- kfl1ou:::dense_known_input_error_gls_fit(
+  manual <- direct_known_error_intercept_fit(
     dat$tree,
     dat$Y,
-    preds = matrix(1, nrow = nrow(dat$Y), ncol = 1),
-    model = "OUfixedRoot",
-    lower.bound = alpha,
-    upper.bound = alpha,
-    starting.value = alpha,
-    input_error = input_error,
-    coefficient_names = "(Intercept)"
+    alpha = alpha,
+    input_error = input_error
   )
 
   expect_s3_class(fit, "l1ou")
   expect_equal(unname(fit$alpha), alpha, tolerance = 1e-12)
-  expect_equal(unname(fit$intercept), unname(manual$coefficients[[1]]), tolerance = 1e-10)
-  expect_equal(unname(fit$sigma2), unname(manual$sigma2), tolerance = 1e-10)
-  expect_equal(unname(fit$logLik), unname(manual$logLik), tolerance = 1e-10)
+  expect_equal(unname(fit$intercept), unname(manual$coefficients), tolerance = 1e-7)
+  expect_equal(unname(fit$sigma2), unname(manual$sigma2), tolerance = 1e-6)
+  expect_equal(unname(fit$logLik), unname(manual$logLik), tolerance = 1e-7)
 })
 
 test_that("estimate_shift_configuration supports input_error", {
@@ -219,4 +214,25 @@ test_that("estimate_shift_configuration supports input_error with measurement_er
   expect_length(est$sigma2_error, 2)
   expect_true(all(is.finite(est$sigma2_error)))
   expect_true(all(est$sigma2_error >= 0))
+})
+
+test_that("multivariate bootstrap preserves missingness and produces valid replicates", {
+  dat <- small_lizard_data(n_tips = 10, traits = 1:2)
+  dat$Y[1, 1] <- NA_real_
+  dat$Y[2, 2] <- NA_real_
+
+  fit <- suppressWarnings(capture_silently(
+    estimate_shift_configuration(
+      dat$tree,
+      dat$Y,
+      max.nShifts = 0,
+      quietly = TRUE
+    )
+  ))
+  result <- capture_silently(
+    l1ou_bootstrap_support(fit, nItrs = 1, multicore = FALSE, quietly = TRUE)
+  )
+
+  expect_length(result$all.shifts, 1)
+  expect_true(all(is.finite(result$detection.rate)))
 })

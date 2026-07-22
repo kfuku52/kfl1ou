@@ -8,7 +8,13 @@ configuration_ic(tree, Y, shift.configuration, criterion = c("pBIC",
   "pBICess", "mBIC", "BIC", "AICc"), root.model = c("OUfixedRoot",
   "OUrandomRoot"), alpha.starting.value = NA,
   alpha.upper = alpha_upper_bound(tree), alpha.lower = NA,
-  measurement_error = FALSE, input_error = NULL, fit.OU.model = FALSE,
+  measurement_error = FALSE, input_error = NULL,
+  trait.covariance = c("diagonal", "full"),
+  alpha.structure = c("shared", "diagonal"),
+  covariance.regularization = c("none", "shrinkage"),
+  regularization.lambda = NA,
+  likelihood.engine = c("auto", "dense", "pruning"),
+  optimizer.starts = 5, compute.hessian = TRUE, fit.OU.model = FALSE,
   l1ou.options = NA)
 }
 \arguments{
@@ -31,6 +37,16 @@ configuration_ic(tree, Y, shift.configuration, criterion = c("pBIC",
 \item{measurement_error}{logical. If TRUE, estimates an observation-level measurement error variance for each trait through \code{kfl1ou}'s bundled likelihood solver.}
 
 \item{input_error}{optional vector or matrix of known observation error variances. When combined with \code{measurement_error = TRUE}, \code{kfl1ou} treats these as known tip-specific variances and estimates an additional shared measurement-error variance per trait.}
+
+\item{trait.covariance}{residual covariance model for multivariate traits; see
+\code{\link{estimate_shift_configuration}}. Full covariance requires BIC.}
+
+\item{alpha.structure}{Full-covariance alpha structure.}
+\item{covariance.regularization}{Optional covariance shrinkage.}
+\item{regularization.lambda}{Shrinkage intensity, or \code{NA}.}
+\item{likelihood.engine}{Dense, pruning, or automatic engine.}
+\item{optimizer.starts}{Number of optimizer starts.}
+\item{compute.hessian}{Whether to calculate a numerical Hessian.}
 
 \item{fit.OU.model}{logical. If TRUE, it returns an object of class l1ou with all the parameters estimated.}
 

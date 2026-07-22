@@ -28,12 +28,30 @@ From within R:
 install.packages(c("ape", "Rcpp"))
 ```
 
-Now in the shell, after cloning your fork and replacing the asterisks with the correct version number:
+Now in the shell, after cloning the repository:
 ```shell
 git clone https://github.com/kfuku52/kfl1ou.git
 R CMD build kfl1ou
-R -e 'install.packages("kfl1ou_*.**.tar.gz")'
+R CMD INSTALL kfl1ou_*.tar.gz
 ```
+
+### Data preparation and tree repair
+
+`adjust_data()` reorders and validates data but does not alter branch lengths by
+default. If a nearly ultrametric tree needs repair, request it explicitly and
+set the maximum acceptable relative branch-length change:
+
+```r
+prepared <- adjust_data(
+  tree,
+  Y,
+  repair.tree = TRUE,
+  ultrametric.tolerance = 0.01
+)
+```
+
+Repair fails instead of silently exceeding the supplied tolerance. Review any
+reported branch-length change before interpreting fitted shift locations.
 
 ### Observation error handling
 
@@ -73,3 +91,96 @@ fit_joint <- estimate_shift_configuration(
 ```
 
 For multivariate data, `input_error` can be a matrix with one column per trait.
+
+### Correlated multivariate OU model
+
+Set `trait.covariance = "full"` to estimate evolutionary covariance among
+traits instead of fitting a block-diagonal trait likelihood:
+
+```r
+fit_correlated <- estimate_shift_configuration(
+  tree,
+  Y,
+  max.nShifts = 2,
+  criterion = "BIC",
+  trait.covariance = "full"
+)
+
+fit_correlated$trait.covariance
+fit_correlated$trait.correlation
+fit_correlated$tip.trait.correlation
+fit_correlated$joint.logLik
+```
+
+By default this mode fits the separable covariance `Omega %x% C(alpha)`, where
+`Omega` is a positive-definite evolutionary innovation covariance matrix and
+`C(alpha)` is the OU covariance among tips. To estimate a distinct adaptation
+rate for every trait while retaining correlated innovations, use:
+
+```r
+fit_general <- fit_OU(
+  tree,
+  Y,
+  shift.configuration = integer(),
+  criterion = "BIC",
+  trait.covariance = "full",
+  alpha.structure = "diagonal",
+  likelihood.engine = "auto"
+)
+```
+
+The diagonal-alpha model uses a full innovation covariance and the exact
+cross-trait covariance induced by the trait-specific OU rates. Both dense and
+Gaussian tree-pruning likelihood engines support trait-specific missing
+entries, known observation variances, estimated measurement-error variances,
+and fixed or stationary roots. `likelihood.engine = "auto"` retains the fast
+matrix-normal profile when it applies and selects pruning for larger
+non-separable problems.
+
+`trait.covariance` and `trait.correlation` describe instantaneous evolutionary
+innovations. When alpha differs among traits, `tip.trait.covariance` and
+`tip.trait.correlation` report the induced marginal residual association at an
+ultrametric tip; the distinction is important because the two correlations are
+then not generally equal.
+
+For many traits or few residual contrasts, use
+`covariance.regularization = "shrinkage"`; an explicit
+`regularization.lambda` can be supplied or selected automatically. Full
+covariance requires `criterion = "BIC"`: the package deliberately
+rejects pBIC, pBICess, mBIC, and AICc because their penalties have not been
+derived for this joint model. The historical `trait.covariance = "diagonal"`
+mode remains the default and retains trait-specific alpha estimates.
+
+Numerical and inferential checks are available directly from fitted objects:
+
+```r
+diagnose_l1ou(fit_general)
+confint(fit_general, method = "parametric", nsim = 200)
+compare_trait_covariance(tree, Y, nboot = 200)
+
+support <- l1ou_bootstrap_support(fit_correlated, nItrs = 200)
+summarize_shift_uncertainty(support, tree)
+averaged <- model_average_l1ou(fit_correlated, delta.max = 10)
+```
+
+### Interpretation and statistical limitations
+
+- Shift configurations describe phylogenetically consistent clusters. Tip-only
+  data generally cannot identify the exact number, branch position, or timing of
+  historical shifts without additional information such as fossils.
+- In the default diagonal covariance mode, multivariate fits treat trait
+  residuals as independent. Full covariance with `alpha.structure =
+  "diagonal"` handles correlated innovations and trait-specific OU rates. A
+  fully non-diagonal drift matrix (directional coupling among traits) is still
+  outside the implemented model.
+- OU optima and adaptation rates can be weakly identified even with many tips.
+  Treat estimates at parameter bounds as sensitivity warnings and compare
+  biologically plausible bounds and root models.
+- pBIC for unconstrained shifts follows the derivation in Khabbazian et al.
+  (2016). Its use for convergent equality constraints remains heuristic; report
+  sensitivity to AICc/BIC and bootstrap support rather than treating one
+  criterion as calibrated certainty.
+
+Convergent-regime fits are refitted under their equality constraints. Returned
+coefficients, fitted values, residuals, optima, likelihoods, and variance
+parameters therefore all correspond to the constrained model.

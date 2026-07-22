@@ -7,7 +7,9 @@
 #'Instantaneous shifts in the optimal trait value affect the traits over time.
 #'
 #'@param tree ultrametric tree of class phylo with branch lengths, and edges in postorder.
-#'@param Y trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.
+#'@param Y trait vector/matrix. Multivariate matrices may contain trait-specific
+#' missing entries, provided every tip has at least one observed trait. The row
+#' names must be in the same order as the tip labels.
 #'@param max.nShifts upper bound for the number of shifts. If \code{NULL} or
 #' \code{"auto"}, it is set to half the number of tree edges.
 #'@param criterion information criterion for model selection (see Details in \code{\link{configuration_ic}}).
@@ -35,6 +37,21 @@
 #' variances. When combined with \code{measurement_error = TRUE},
 #' \code{kfl1ou} treats these as known tip-specific variances and estimates an
 #' additional shared measurement-error variance per trait.
+#'@param trait.covariance residual covariance model for multivariate traits.
+#' \code{"diagonal"} retains the original trait-by-trait likelihood and allows
+#' a separate alpha for every trait. \code{"full"} fits a joint multivariate OU
+#' likelihood and an unrestricted positive-definite evolutionary covariance
+#' matrix among traits. The full model currently uses \code{criterion = "BIC"}.
+#'@param alpha.structure for full covariance, \code{"shared"} estimates one
+#' adaptation rate; \code{"diagonal"} estimates one rate per trait.
+#'@param covariance.regularization \code{"shrinkage"} regularizes the full
+#' covariance toward a diagonal target.
+#'@param regularization.lambda fixed shrinkage intensity in [0,1], or \code{NA}
+#' for automatic selection.
+#'@param likelihood.engine \code{"dense"}, exact Gaussian tree \code{"pruning"},
+#' or automatic engine selection.
+#'@param optimizer.starts number of deterministic optimization starts.
+#'@param compute.hessian logical; calculate a numerical Hessian when practical.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'@return 
 #' \item{Y}{input trait vector/matrix.}
@@ -45,10 +62,19 @@
 #' \item{nShifts}{estimated number of shifts.}
 #' \item{optima}{optimum values of the trait at tips. If the data are multivariate, this is a matrix where each row corresponds to a tip.}
 #' \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
-#' \item{alpha}{maximum likelihood estimate(s) of the adaptation rate \eqn{\alpha}{alpha}, one per trait.}
-#' \item{sigma2}{maximum likelihood estimate(s) of the variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
+#' \item{alpha}{maximum likelihood estimate(s) of the adaptation rate
+#' \eqn{\alpha}{alpha}. Full trait covariance uses one shared estimate, repeated
+#' for convenient alignment with the trait columns.}
+#' \item{sigma2}{maximum likelihood estimate(s) of the marginal evolutionary
+#' variance rate \eqn{\sigma^2}{sigma^2}, one per trait.}
 #' \item{sigma2_error}{maximum likelihood estimate(s) of the observation-level
 #' measurement error variance, one per trait.}
+#' \item{trait.covariance}{for full multivariate fits, the estimated
+#' positive-definite evolutionary variance-covariance matrix \eqn{\Omega}.}
+#' \item{trait.correlation}{for full multivariate fits, the correlation matrix
+#' corresponding to \code{trait.covariance}.}
+#' \item{joint.logLik}{for full multivariate fits, the maximized joint log
+#' likelihood. It cannot be decomposed into independent per-trait likelihoods.}
 #' \item{mu}{fitted values, i.e. estimated trait means.}
 #' \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 #' \item{score}{information criterion value of the estimated shift configuration.}
@@ -57,6 +83,17 @@
 #'
 #'@details
 #'For information criteria: see \code{\link{configuration_ic}}.
+#'
+#'With \code{trait.covariance = "full"}, multivariate fits use
+#'\eqn{\Omega \otimes C(\alpha)} as their phylogenetic covariance, where
+#'\eqn{\Omega} is an estimated trait covariance matrix and \eqn{C(\alpha)} is
+#'the OU covariance among tips. This model requires a common adaptation rate
+#'across traits. The default \code{"diagonal"} mode retains separate adaptation
+#'rates and the historical block-diagonal likelihood.
+#'Shift positions should be interpreted as phylogenetically consistent trait
+#'clusters rather than exact historical shift times. OU optima and adaptation
+#'rates can remain weakly identified from tip data alone; sensitivity to alpha
+#'bounds, root models, criteria, and bootstrap resampling should be reported.
 #'
 #'\code{nCores} is treated as the total CPU budget for \code{kfl1ou}, not only
 #'as the number of forked worker processes. When \code{nCores > 1} and
@@ -124,6 +161,13 @@ estimate_shift_configuration <- function(tree, Y,
            grp.seq.ub             = 5,
            measurement_error      = FALSE,
            input_error            = NULL,
+           trait.covariance       = c("diagonal", "full"),
+           alpha.structure        = c("shared", "diagonal"),
+           covariance.regularization = c("none", "shrinkage"),
+           regularization.lambda  = NA,
+           likelihood.engine      = c("auto", "dense", "pruning"),
+           optimizer.starts       = 5,
+           compute.hessian        = TRUE,
            l1ou.options           = NA
      ){
 
@@ -136,6 +180,10 @@ estimate_shift_configuration <- function(tree, Y,
         stop("the tree is not in postorder, use adjust_data function to reorder the tree!")
 
     Y <- as.matrix(Y)
+    effective.quietly <- quietly
+    if(is.list(l1ou.options) && !is.null(l1ou.options$quietly)){
+        effective.quietly <- isTRUE(l1ou.options$quietly)
+    }
 
     multivariate.missing <- FALSE
     if( any(is.na(Y)) ){
@@ -145,8 +193,10 @@ estimate_shift_configuration <- function(tree, Y,
         }else{
             ## the trait matrix can have some missing values as long as
             ## all the tips have at least one value.
-            warning("some of the entries of the trait matrix (Y) are
-                    missing.\n", immediate.=TRUE)
+            if(!effective.quietly){
+                warning("some of the entries of the trait matrix (Y) are
+                        missing.\n", immediate.=TRUE)
+            }
             if( length( which(rowSums(!is.na(Y))==0) ) != 0 ){
                 stop("the trait matrix has a row with all missing values. you
                      may use drop.tip to drop corresponding tips from the tree.\n")
@@ -206,9 +256,21 @@ estimate_shift_configuration <- function(tree, Y,
         max.nShifts  <- 0 
     }
 
-    alpha.bounds <- sanitize_alpha_bounds(alpha.lower, alpha.upper)
-    alpha.lower <- alpha.bounds$lower
-    alpha.upper <- alpha.bounds$upper
+    requested.full.diagonal <- all(is.na(l1ou.options)) &&
+        identical(match.arg(trait.covariance), "full") &&
+        identical(match.arg(alpha.structure), "diagonal")
+    if(requested.full.diagonal){
+        alpha.bounds <- sanitize_multivariate_alpha_arguments(
+            alpha.lower, alpha.upper, alpha.starting.value, ncol(Y)
+        )
+        alpha.lower <- alpha.bounds$lower
+        alpha.upper <- alpha.bounds$upper
+        alpha.starting.value <- alpha.bounds$starting
+    } else{
+        alpha.bounds <- sanitize_alpha_bounds(alpha.lower, alpha.upper)
+        alpha.lower <- alpha.bounds$lower
+        alpha.upper <- alpha.bounds$upper
+    }
 
     stopifnot( nCores > 0 )
     parallel.computing <- FALSE
@@ -251,6 +313,14 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$grplasso.backend <- "cpp"
         l1ou.options$measurement_error <- measurement_error
         l1ou.options$input_error       <- normalize_input_error(tree, Y, input_error)
+        l1ou.options$trait.covariance  <- match.arg(trait.covariance)
+        l1ou.options$alpha.structure <- match.arg(alpha.structure)
+        l1ou.options$covariance.regularization <-
+            match.arg(covariance.regularization)
+        l1ou.options$regularization.lambda <- regularization.lambda
+        l1ou.options$likelihood.engine <- match.arg(likelihood.engine)
+        l1ou.options$optimizer.starts <- optimizer.starts
+        l1ou.options$compute.hessian <- compute.hessian
         ## each tree in tree.list represents a trait where the tips corresponding
         ## to NA values in the trail have been dropped.
         l1ou.options$multivariate.missing <- multivariate.missing
@@ -262,9 +332,16 @@ estimate_shift_configuration <- function(tree, Y,
         if( is.null(l1ou.options$measurement_error) ){
             l1ou.options$measurement_error <- FALSE
         }
+        if( is.null(l1ou.options$trait.covariance) ){
+            l1ou.options$trait.covariance <- "diagonal"
+        }
         l1ou.options$max.nShifts <- normalize_max_n_shifts(l1ou.options$max.nShifts, tree)
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
     }
+    l1ou.options$trait.covariance <- validate_trait_covariance_mode(
+        l1ou.options$trait.covariance, Y, l1ou.options$criterion
+    )
+    l1ou.options <- normalize_multivariate_options(l1ou.options, Y)
     check_input_error_support(l1ou.options$measurement_error, l1ou.options$input_error)
     l1ou.options <- initialize_design_cache(tree, l1ou.options)
     l1ou.options <- initialize_fast_phylolm_cache(tree, l1ou.options)
@@ -318,7 +395,8 @@ estimate_shift_configuration <- function(tree, Y,
         eModel$.candidate.configurations <- NULL
 
         if (l1ou.options$use.saved.scores) { erase_configuration_score_db() }
-        if ( ! all( eModel$alpha < (alpha.upper - .Machine$double.eps)  ) )
+        if ( !isTRUE(l1ou.options$quietly) &&
+             !all(eModel$alpha < (alpha.upper - .Machine$double.eps)) )
 		        warning('estimated alpha is too close to its upper bound. You may want to increase alpha.upper.\n')
 
         return(eModel)
@@ -422,74 +500,86 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     }
     keep.edge.cols <- setdiff(seq_len(nEdges), base.to.be.removed)
 
-    apprX <- NULL
-    if(est.alpha){
-        apprX <- cached_weighted_design_matrix(opt$Z, opt$edge.age, type="apprX")
-    }
-    whitening.blocks <- l1ou_trait_apply(
-        seq_len(ncol(Ymv)),
-        function(i){
-        trait.input.error <- get_trait_input_error(opt, i, tree=tree, input_error=input.error.mv)
-
-        if ( est.alpha == TRUE ){
-            X   = apprX
-            whitening.fit <- estimate_whitening_fit(tree, Ymv[,i,drop=FALSE], alpha=0,
-                                                    est.alpha=TRUE, opt=opt,
-                                                    input_error=trait.input.error)
-            RE  = sqrt_OU_covariance(tree, root.model = "OUfixedRoot",
-                                     alpha = 0,
-                                     sigma2 = whitening.fit$sigma2,
-                                     sigma2_error = whitening.fit$sigma2_error,
-                                     input_error = trait.input.error,
-                                     check.order=F, check.ultrametric=F)
-        } else {
-            X   = cached_weighted_design_matrix(opt$Z, opt$edge.age,
-                                                type="orgX", alpha=alpha[[i]])
-            whitening.fit <- estimate_whitening_fit(tree, Ymv[,i,drop=FALSE], alpha=alpha[[i]],
-                                                    est.alpha=FALSE, opt=opt,
-                                                    input_error=trait.input.error)
-            RE  = sqrt_OU_covariance(tree,  root.model = opt$root.model,   
-                                     alpha = alpha[[i]],
-                                     sigma2 = whitening.fit$sigma2,
-                                     sigma2_error = whitening.fit$sigma2_error,
-                                     input_error = trait.input.error,
-                                     check.order=F, check.ultrametric=F)
+    if(is_full_trait_covariance(opt, Ymv)){
+        sparse.opt <- opt
+        sparse.opt$input_error <- input.error.mv
+        full.inputs <- full_covariance_sparse_inputs(
+            tree, Ymv, alpha=alpha, est.alpha=est.alpha, opt=sparse.opt
+        )
+        keep.col.idx <- unlist(lapply(seq_len(nVariables), function(i) {
+            keep.edge.cols + (i - 1L) * nEdges
+        }), use.names=FALSE)
+        grpY <- full.inputs$y
+        grpX <- full.inputs$X[, keep.col.idx, drop=FALSE]
+        grpIdx <- rep(keep.edge.cols, nVariables)
+    } else{
+        apprX <- NULL
+        if(est.alpha){
+            apprX <- cached_weighted_design_matrix(opt$Z, opt$edge.age, type="apprX")
         }
-        Cinvh   = t(RE$sqrtInvSigma) #\Sigma^{-1/2}
+        whitening.blocks <- l1ou_trait_apply(
+            seq_len(ncol(Ymv)),
+            function(i){
+            trait.input.error <- get_trait_input_error(opt, i, tree=tree, input_error=input.error.mv)
 
-        y.ava <- !is.na(Ymv[,i])
-        yy <- Ymv[, i]
-        yy[y.ava] <- as.matrix(Cinvh[y.ava, y.ava] %*% Ymv[y.ava, i])
+            if ( est.alpha == TRUE ){
+                X   = apprX
+                whitening.fit <- estimate_whitening_fit(tree, Ymv[,i,drop=FALSE], alpha=0,
+                                                        est.alpha=TRUE, opt=opt,
+                                                        input_error=trait.input.error)
+                covariance.alpha <- 0
+                covariance.root.model <- "OUfixedRoot"
+            } else {
+                X   = cached_weighted_design_matrix(opt$Z, opt$edge.age,
+                                                    type="orgX", alpha=alpha[[i]])
+                whitening.fit <- estimate_whitening_fit(tree, Ymv[,i,drop=FALSE], alpha=alpha[[i]],
+                                                        est.alpha=FALSE, opt=opt,
+                                                        input_error=trait.input.error)
+                covariance.alpha <- alpha[[i]]
+                covariance.root.model <- opt$root.model
+            }
 
-        ##X     = cbin(Cinvh%*%X,1)
-        ##grpX  = adiag(grpX, X)  
-	XX      = Cinvh%*%X
-	#NOTE: refer to whitening note above.
-	XX      = XX[-nrow(XX), keep.edge.cols, drop=FALSE]
-        yy      = yy[-length(yy)]
-        row.keep = !is.na(yy)
+            observed <- !is.na(Ymv[, i])
+            Sigma.obs <- observed_trait_covariance(
+                tree,
+                alpha = covariance.alpha,
+                root.model = covariance.root.model,
+                sigma2 = whitening.fit$sigma2,
+                sigma2_error = whitening.fit$sigma2_error,
+                input_error = trait.input.error,
+                observed = observed
+            )
+            whitened <- whiten_gls_without_intercept(
+                y = Ymv[observed, i],
+                X = X[observed, , drop=FALSE],
+                Sigma = Sigma.obs
+            )
 
-	list(YY=yy[row.keep], XX=XX[row.keep, , drop=FALSE])
-    },
-        opt=opt,
-        allow.parallel = ncol(Ymv) > 1L
-    )
-    active.traits <- which(vapply(whitening.blocks, function(block) {
-        nrow(block$XX) > 0 && ncol(block$XX) > 0
-    }, logical(1)))
-    if(length(active.traits) == 0){
-        stop("no observed multivariate trait entries remain after whitening.")
+            list(
+                YY=whitened$y,
+                XX=whitened$X[, keep.edge.cols, drop=FALSE]
+            )
+        },
+            opt=opt,
+            allow.parallel = ncol(Ymv) > 1L
+        )
+        active.traits <- which(vapply(whitening.blocks, function(block) {
+            nrow(block$XX) > 0 && ncol(block$XX) > 0
+        }, logical(1)))
+        if(length(active.traits) == 0){
+            stop("no observed multivariate trait entries remain after whitening.")
+        }
+        grpY.blocks <- lapply(whitening.blocks[active.traits], `[[`, "YY")
+        grpX.blocks <- lapply(whitening.blocks[active.traits], `[[`, "XX")
+        grpX = block_diag_matrix(grpX.blocks)
+        grpY   = unlist(grpY.blocks, use.names=FALSE)
+        grpIdx = rep(keep.edge.cols, length(active.traits))
+        keep.col.idx <- unlist(lapply(active.traits, function(i) {
+            keep.edge.cols + (i - 1L) * nEdges
+        }), use.names=FALSE)
     }
-    grpY.blocks <- lapply(whitening.blocks[active.traits], `[[`, "YY")
-    grpX.blocks <- lapply(whitening.blocks[active.traits], `[[`, "XX")
-    grpX = block_diag_matrix(grpX.blocks)
 
     np     = ncol(grpX)
-    grpY   = unlist(grpY.blocks, use.names=FALSE)
-    grpIdx = rep(keep.edge.cols, length(active.traits))
-    keep.col.idx <- unlist(lapply(active.traits, function(i) {
-        keep.edge.cols + (i - 1L) * nEdges
-    }), use.names=FALSE)
     ##grpIdx = rep(c(1:(ncol(X)-1),NA), ncol(Ymv))[-to.be.removed]
 
 
@@ -631,7 +721,7 @@ collect_candidate_configurations <- function(tree, Y, sol.path, opt){
         shift.configuration = correct_unidentifiability(tree, shift.configuration, opt)
         shift.configuration = unname(shift.configuration)
 
-        if ( length(shift.configuration) > opt$max.nShifts ){break}
+        if ( length(shift.configuration) > opt$max.nShifts ){next}
         if ( have.prev.configuration &&
              length(shift.configuration) == length(prev.shift.configuration) &&
              setequal(shift.configuration, prev.shift.configuration) ){next}
@@ -756,6 +846,14 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #' variances. When combined with \code{measurement_error = TRUE},
 #' \code{kfl1ou} treats these as known tip-specific variances and estimates an
 #' additional shared measurement-error variance per trait.
+#'@param trait.covariance residual covariance model for multivariate traits;
+#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.
+#'@param alpha.structure full-covariance adaptation-rate structure.
+#'@param covariance.regularization optional covariance shrinkage.
+#'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
+#'@param likelihood.engine dense, pruning, or automatic likelihood engine.
+#'@param optimizer.starts number of deterministic optimization starts.
+#'@param compute.hessian logical; calculate a numerical Hessian when practical.
 #'@param fit.OU.model logical. If TRUE, it returns an object of class l1ou with all the parameters estimated.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'
@@ -767,6 +865,12 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
 #'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008). 
+#'
+#'When \code{cr.regimes} is supplied, the model is refitted under the equality
+#'constraints. Returned fitted values, residuals, optima, likelihoods, and
+#'variance parameters all correspond to that constrained model. pBIC for such
+#'convergent constraints is a heuristic extension of the unconstrained pBIC
+#'derivation; compare it with AICc/BIC and bootstrap support.
 #' 
 #'@examples
 #' 
@@ -808,6 +912,13 @@ configuration_ic <- function(tree, Y, shift.configuration,
                      alpha.lower  = NA,
                      measurement_error = FALSE,
                      input_error = NULL,
+                     trait.covariance = c("diagonal", "full"),
+                     alpha.structure = c("shared", "diagonal"),
+                     covariance.regularization = c("none", "shrinkage"),
+                     regularization.lambda = NA,
+                     likelihood.engine = c("auto", "dense", "pruning"),
+                     optimizer.starts = 5,
+                     compute.hessian = TRUE,
                      fit.OU.model = FALSE, 
                      l1ou.options = NA
                    ){
@@ -835,6 +946,13 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
         opt$input_error          <- normalize_input_error(tree, Y, input_error)
+        opt$trait.covariance     <- match.arg(trait.covariance)
+        opt$alpha.structure      <- match.arg(alpha.structure)
+        opt$covariance.regularization <- match.arg(covariance.regularization)
+        opt$regularization.lambda <- regularization.lambda
+        opt$likelihood.engine <- match.arg(likelihood.engine)
+        opt$optimizer.starts <- optimizer.starts
+        opt$compute.hessian <- compute.hessian
     }
     if( is.null(opt$measurement_error) ){
         opt$measurement_error <- FALSE
@@ -842,10 +960,30 @@ configuration_ic <- function(tree, Y, shift.configuration,
     if( is.null(opt$quietly) ){
         opt$quietly <- TRUE
     }
-    alpha.bounds <- sanitize_alpha_bounds(opt$alpha.lower.bound, opt$alpha.upper.bound)
-    opt$alpha.lower.bound <- alpha.bounds$lower
-    opt$alpha.upper.bound <- alpha.bounds$upper
+    if( is.null(opt$trait.covariance) ){
+        opt$trait.covariance <- "diagonal"
+    }
+    if(identical(opt$trait.covariance, "full") &&
+       identical(opt$alpha.structure, "diagonal")){
+        alpha.bounds <- sanitize_multivariate_alpha_arguments(
+            opt$alpha.lower.bound, opt$alpha.upper.bound,
+            opt$alpha.starting.value, ncol(Y)
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+        opt$alpha.starting.value <- alpha.bounds$starting
+    } else{
+        alpha.bounds <- sanitize_alpha_bounds(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+    }
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
+    opt$trait.covariance <- validate_trait_covariance_mode(
+        opt$trait.covariance, Y, opt$criterion
+    )
+    opt <- normalize_multivariate_options(opt, Y)
     check_input_error_support(opt$measurement_error, opt$input_error)
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
@@ -890,6 +1028,14 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #' variances. When combined with \code{measurement_error = TRUE},
 #' \code{kfl1ou} treats these as known tip-specific variances and estimates an
 #' additional shared measurement-error variance per trait.
+#'@param trait.covariance residual covariance model for multivariate traits;
+#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.
+#'@param alpha.structure full-covariance adaptation-rate structure.
+#'@param covariance.regularization optional covariance shrinkage.
+#'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
+#'@param likelihood.engine dense, pruning, or automatic likelihood engine.
+#'@param optimizer.starts number of deterministic optimization starts.
+#'@param compute.hessian logical; calculate a numerical Hessian when practical.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'
 #'@return an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
@@ -946,6 +1092,13 @@ fit_OU <- function(tree, Y, shift.configuration,
                      alpha.lower  = NA,
                      measurement_error = FALSE,
                      input_error = NULL,
+                     trait.covariance = c("diagonal", "full"),
+                     alpha.structure = c("shared", "diagonal"),
+                     covariance.regularization = c("none", "shrinkage"),
+                     regularization.lambda = NA,
+                     likelihood.engine = c("auto", "dense", "pruning"),
+                     optimizer.starts = 5,
+                     compute.hessian = TRUE,
                      l1ou.options = NA
                    ){
 
@@ -971,6 +1124,13 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
         opt$input_error          <- normalize_input_error(tree, Y, input_error)
+        opt$trait.covariance     <- match.arg(trait.covariance)
+        opt$alpha.structure      <- match.arg(alpha.structure)
+        opt$covariance.regularization <- match.arg(covariance.regularization)
+        opt$regularization.lambda <- regularization.lambda
+        opt$likelihood.engine <- match.arg(likelihood.engine)
+        opt$optimizer.starts <- optimizer.starts
+        opt$compute.hessian <- compute.hessian
     }
     if( is.null(opt$measurement_error) ){
         opt$measurement_error <- FALSE
@@ -978,10 +1138,30 @@ fit_OU <- function(tree, Y, shift.configuration,
     if( is.null(opt$quietly) ){
         opt$quietly <- TRUE
     }
-    alpha.bounds <- sanitize_alpha_bounds(opt$alpha.lower.bound, opt$alpha.upper.bound)
-    opt$alpha.lower.bound <- alpha.bounds$lower
-    opt$alpha.upper.bound <- alpha.bounds$upper
+    if( is.null(opt$trait.covariance) ){
+        opt$trait.covariance <- "diagonal"
+    }
+    if(identical(opt$trait.covariance, "full") &&
+       identical(opt$alpha.structure, "diagonal")){
+        alpha.bounds <- sanitize_multivariate_alpha_arguments(
+            opt$alpha.lower.bound, opt$alpha.upper.bound,
+            opt$alpha.starting.value, ncol(Y)
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+        opt$alpha.starting.value <- alpha.bounds$starting
+    } else{
+        alpha.bounds <- sanitize_alpha_bounds(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+    }
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
+    opt$trait.covariance <- validate_trait_covariance_mode(
+        opt$trait.covariance, Y, opt$criterion
+    )
+    opt <- normalize_multivariate_options(opt, Y)
     check_input_error_support(opt$measurement_error, opt$input_error)
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
@@ -1008,14 +1188,17 @@ fit_OU <- function(tree, Y, shift.configuration,
             opt$shift.configuration <- shift.configuration
             cr.score <- cmp_model_score_CR(tree, Y, regimes=cr.regimes,
                                alpha=eModel$alpha, opt=opt)
-            eModel$cr.score <- cr.score
-            for(idx in 1:length(cr.regimes)){
-                if( 0 %in% cr.regimes[[idx]] ){
-                    names(eModel$shift.configuration)[which(eModel$shift.configuration %in% cr.regimes[[idx]])] <- 0
-                }else{
-                    names(eModel$shift.configuration)[which(eModel$shift.configuration %in% cr.regimes[[idx]])] <- idx
-                }
-            }
+            unconstrained.score <- eModel$score
+            eModel <- fit_convergent_model(
+                tree,
+                Y,
+                shift.configuration = shift.configuration,
+                regimes = cr.regimes,
+                opt = opt,
+                score = cr.score,
+                base.model = eModel
+            )
+            eModel$unconstrained.score <- unconstrained.score
          }
          return(eModel)
     }))
@@ -1024,6 +1207,23 @@ fit_OU <- function(tree, Y, shift.configuration,
 fit_OU_model <- function(tree, Y, shift.configuration, opt){
 
     Y      = as.matrix(Y)
+    if(is_full_trait_covariance(opt, Y)){
+        model <- fit_full_covariance_l1ou_model(
+            tree, Y, shift.configuration, opt
+        )
+        if(isTRUE(opt$use.saved.scores)){
+            add_configuration_score_to_list(
+                shift.configuration,
+                model$score,
+                paste0(
+                    "joint logLik=", signif(model$joint.logLik, 10),
+                    "; trait covariance=",
+                    paste(signif(as.vector(model$trait.covariance), 6), collapse=" ")
+                )
+            )
+        }
+        return(model)
+    }
     nEdges = Nedge(tree)
     nTips  = length(tree$tip.label)
     trait.names <- colnames(Y)
@@ -1139,6 +1339,14 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
                  residuals           = resi,
                  score               = score,
                  logLik              = logLik,
+                 parameter.count     = ncol(Y) *
+                     (length(shift.configuration) + 3L +
+                      as.integer(isTRUE(opt$measurement_error))),
+                 information.parameter.count = ncol(Y) *
+                     (length(shift.configuration) + 3L +
+                      as.integer(isTRUE(opt$measurement_error))) +
+                     length(shift.configuration),
+                 nobs                = sum(!is.na(Y)),
                  l1ou.options        = model.opt) 
 
     class(model) <- "l1ou"
@@ -1156,6 +1364,22 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
     }
 
     Y  <- as.matrix(Y)
+    if(is_full_trait_covariance(opt, Y)){
+        fit <- fit_multivariate_ou_likelihood(
+            tree, Y, shift.configuration, opt
+        )
+        score <- multivariate_full_information_score(
+            fit, length(shift.configuration), opt$criterion
+        )
+        if(isTRUE(opt$use.saved.scores)){
+            add_configuration_score_to_list(
+                shift.configuration,
+                score,
+                paste0("joint logLik=", signif(fit$logLik, 10))
+            )
+        }
+        return(score)
+    }
     ic <- opt$criterion
 
     res <- NA
@@ -1357,6 +1581,82 @@ prepare_trait_phylolm_data <- function(tree, Y, input_error=NULL){
     return(list(tree=tree, Y=Y, input_error=input_error))
 }
 
+observed_trait_covariance <- function(tree, alpha, root.model, sigma2,
+                                      sigma2_error=0, input_error=NULL,
+                                      observed=rep(TRUE, length(tree$tip.label))){
+
+    observed <- as.logical(observed)
+    if(length(observed) != length(tree$tip.label) || any(is.na(observed))){
+        stop("observed must contain one non-missing logical value per tree tip.")
+    }
+    if(sum(observed) < 2L){
+        stop("at least two observed tips are required to construct a trait covariance.")
+    }
+
+    re <- sqrt_OU_covariance(
+        tree,
+        alpha = alpha,
+        root.model = root.model,
+        sigma2 = 1,
+        check.order = FALSE,
+        check.ultrametric = FALSE
+    )
+    Sigma <- as.numeric(sigma2[[1]]) * tcrossprod(re$sqrtSigma)
+    Sigma <- Sigma[observed, observed, drop=FALSE]
+
+    if(is.null(sigma2_error) || length(sigma2_error) == 0L){
+        sigma2_error <- 0
+    }
+    observation.variance <- rep(as.numeric(sigma2_error[[1]]), sum(observed))
+    if(!is.null(input_error)){
+        if(is.null(names(input_error))){
+            if(length(input_error) != length(tree$tip.label)){
+                stop("input_error must contain one value per tree tip.")
+            }
+            names(input_error) <- tree$tip.label
+        }
+        matched.error <- input_error[tree$tip.label]
+        matched.error <- matched.error[observed]
+        if(any(!is.finite(matched.error)) || any(matched.error < 0)){
+            stop("input_error must be finite and non-negative for observed tips.")
+        }
+        observation.variance <- observation.variance + matched.error
+    }
+    diag(Sigma) <- diag(Sigma) + observation.variance
+    0.5 * (Sigma + t(Sigma))
+}
+
+whiten_gls_without_intercept <- function(y, X, Sigma){
+
+    y <- as.numeric(y)
+    X <- as.matrix(X)
+    if(length(y) != nrow(X) || nrow(Sigma) != length(y) || ncol(Sigma) != length(y)){
+        stop("y, X, and Sigma have incompatible dimensions.")
+    }
+    if(length(y) < 2L){
+        stop("at least two observations are required for GLS whitening.")
+    }
+
+    chol.Sigma <- chol(0.5 * (Sigma + t(Sigma)))
+    whitened.y <- drop(forwardsolve(t(chol.Sigma), matrix(y, ncol=1)))
+    whitened.X <- forwardsolve(t(chol.Sigma), X)
+    whitened.intercept <- drop(
+        forwardsolve(t(chol.Sigma), matrix(1, nrow=length(y), ncol=1))
+    )
+
+    intercept.qr <- qr(matrix(whitened.intercept, ncol=1))
+    orthogonal.basis <- qr.Q(intercept.qr, complete=TRUE)[, -1, drop=FALSE]
+    inverse.sqrt <- forwardsolve(t(chol.Sigma), diag(length(y)))
+    transform <- crossprod(orthogonal.basis, inverse.sqrt)
+
+    list(
+        y = drop(crossprod(orthogonal.basis, whitened.y)),
+        X = crossprod(orthogonal.basis, whitened.X),
+        covariance = Sigma,
+        transform = transform
+    )
+}
+
 estimate_whitening_fit <- function(tree, Y, alpha=0, est.alpha=FALSE, opt, input_error=NULL){
 
     if( !isTRUE(opt$measurement_error) && is.null(input_error) ){
@@ -1472,157 +1772,18 @@ dense_known_input_error_gls_fit <- function(tree, Y, preds, model,
                                             quietly=TRUE,
                                             input_error,
                                             coefficient_names=NULL){
-
-    Y <- as.matrix(Y)
-    preds <- as.matrix(preds)
-    y <- as.numeric(Y[, 1])
-    n <- length(y)
-    d <- ncol(preds)
-
-    if( n <= d ){
-        stop("not enough taxa remain to fit the model with the requested input_error.")
-    }
-
-    phy <- reorder(tree, "pruningwise")
-    mean.tip.height <- mean(pruningwise.distFromRoot(phy)[seq_len(n)])
-
-    fit_for_alpha <- function(alpha){
-
-        root.model <- ifelse(model == "BM", "OUfixedRoot", model)
-        re <- sqrt_OU_covariance(
-            tree,
-            alpha = ifelse(model == "BM", 0, alpha),
-            root.model = root.model,
-            sigma2 = 1,
-            input_error = input_error,
-            check.order = FALSE,
-            check.ultrametric = FALSE
-        )
-        Linv <- t(re$sqrtInvSigma)
-        Xt <- Linv %*% preds
-        yt <- drop(Linv %*% y)
-
-        XX <- crossprod(Xt)
-        Xy <- crossprod(Xt, yt)
-
-        inv.solve <- tryCatch({
-            chol.XX <- chol(XX)
-            list(
-                invXX = chol2inv(chol.XX),
-                betahat = drop(backsolve(chol.XX, forwardsolve(t(chol.XX), Xy)))
-            )
-        }, error = function(e) {
-            invXX <- tryCatch(solve(XX), error = function(e2) NULL)
-            if( is.null(invXX) ){
-                return(NULL)
-            }
-            list(invXX = invXX, betahat = drop(invXX %*% Xy))
-        })
-
-        if( is.null(inv.solve) ){
-            return(list(n2llh = .Machine$double.xmax))
-        }
-
-        fitted.values <- drop(preds %*% inv.solve$betahat)
-        residuals <- y - fitted.values
-        sigma2hat <- sum((yt - drop(Xt %*% inv.solve$betahat))^2) / n
-        if( !is.finite(sigma2hat) || sigma2hat <= 0 ){
-            return(list(n2llh = .Machine$double.xmax))
-        }
-
-        logdet <- 2 * as.numeric(determinant(re$sqrtSigma, logarithm = TRUE)$modulus)
-        n2llh <- as.numeric(n * log(2 * pi) + n + n * log(sigma2hat) + logdet)
-        vcov <- sigma2hat * inv.solve$invXX * n/(n - d)
-
-        list(
-            n2llh = n2llh,
-            betahat = inv.solve$betahat,
-            sigma2hat = sigma2hat,
-            vcov = vcov,
-            fitted.values = fitted.values,
-            residuals = residuals
-        )
-    }
-
-    tol <- 1e-10
-    if( model == "BM" ){
-        alpha.hat <- NULL
-        fit <- fit_for_alpha(0)
-        p <- d + 1L
-    } else{
-        lower.bound <- ifelse(is.null(lower.bound), NA_real_, as.numeric(lower.bound[[1]]))
-        upper.bound <- ifelse(is.null(upper.bound), NA_real_, as.numeric(upper.bound[[1]]))
-        starting.value <- ifelse(is.null(starting.value), NA_real_, as.numeric(starting.value[[1]]))
-
-        if( is.na(lower.bound) && is.na(starting.value) ){
-            lower.opt <- 1e-07 / mean.tip.height
-        } else{
-            lower.opt <- ifelse(is.na(lower.bound), 0, lower.bound)
-        }
-
-        if( is.na(upper.bound) || upper.bound <= 0 ){
-            stop("input_error fallback requires a strictly positive alpha.upper bound.")
-        }
-
-        if( lower.opt == upper.bound ){
-            alpha.hat <- lower.opt
-        } else if( lower.opt > 0 ){
-            opt.res <- optimize(
-                function(logalpha) fit_for_alpha(exp(logalpha))$n2llh,
-                interval = c(log(lower.opt), log(upper.bound)),
-                tol = 1e-6
-            )
-            alpha.hat <- as.numeric(exp(opt.res$minimum))
-        } else{
-            opt.res <- optimize(
-                function(alpha) fit_for_alpha(alpha)$n2llh,
-                interval = c(0, upper.bound),
-                tol = 1e-6
-            )
-            alpha.hat <- as.numeric(opt.res$minimum)
-        }
-
-        if( !quietly &&
-            (isTRUE(all.equal(alpha.hat, lower.opt, tolerance = tol)) ||
-             isTRUE(all.equal(alpha.hat, upper.bound, tolerance = tol))) ){
-            warning(paste("the estimation of alpha matches the upper/lower bound for this parameter.\n                          You may change the bounds using options \"upper.bound\" and \"lower.bound\".\n"))
-        }
-
-        fit <- fit_for_alpha(alpha.hat)
-        p <- d + 2L
-    }
-
-    if( !is.finite(fit$n2llh) || fit$n2llh >= .Machine$double.xmax ){
-        stop("failed to fit the OU model with the supplied input_error.")
-    }
-
-    if( is.null(coefficient_names) ){
-        coefficient_names <- paste0("preds", seq_len(d))
-    }
-
-    coefficients <- fit$betahat
-    names(coefficients) <- coefficient_names
-    vcov <- fit$vcov
-    colnames(vcov) <- coefficient_names
-    rownames(vcov) <- coefficient_names
-
-    list(
-        coefficients = coefficients,
-        sigma2 = fit$sigma2hat,
-        optpar = alpha.hat,
-        sigma2_error = 0,
-        logLik = -fit$n2llh/2,
-        p = p,
-        aic = 2 * p + fit$n2llh,
-        vcov = vcov,
-        fitted.values = fit$fitted.values,
-        residuals = fit$residuals,
-        mean.tip.height = mean.tip.height,
-        y = y,
-        X = preds,
-        n = n,
-        d = d,
-        model = model
+    dense_joint_input_measurement_error_gls_fit(
+        tree = tree,
+        Y = Y,
+        preds = preds,
+        model = model,
+        lower.bound = lower.bound,
+        upper.bound = upper.bound,
+        starting.value = starting.value,
+        quietly = quietly,
+        input_error = input_error,
+        coefficient_names = coefficient_names,
+        estimate_sigma2_error = FALSE
     )
 }
 
@@ -1632,7 +1793,8 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
                                                         starting.value=NA_real_,
                                                         quietly=TRUE,
                                                         input_error,
-                                                        coefficient_names=NULL){
+                                                        coefficient_names=NULL,
+                                                        estimate_sigma2_error=TRUE){
 
     Y <- as.matrix(Y)
     preds <- as.matrix(preds)
@@ -1770,28 +1932,12 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
         Sigma
     }
 
-    baseline <- try(
-        dense_known_input_error_gls_fit(
-            tree,
-            Y,
-            preds,
-            model = model,
-            lower.bound = lower.bound,
-            upper.bound = upper.bound,
-            starting.value = starting.value,
-            quietly = quietly,
-            input_error = input_error,
-            coefficient_names = coefficient_names
-        ),
-        silent = TRUE
-    )
-
-    sigma2.start <- if( inherits(baseline, "try-error") ){
-        max(stats::var(y), 1e-08)
+    sigma2.start <- max(stats::var(y), 1e-08)
+    sigma2_error.start <- if( estimate_sigma2_error ){
+        max(stats::median(input_error, na.rm=TRUE) * 0.25, 0)
     } else{
-        max(as.numeric(baseline$sigma2), 1e-08)
+        0
     }
-    sigma2_error.start <- max(median(input_error, na.rm=TRUE) * 0.25, 0)
 
     decode_parameters <- function(par){
 
@@ -1808,8 +1954,12 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
 
         idx <- idx + 1L
         sigma2 <- exp(par[[idx]])
-        idx <- idx + 1L
-        sigma2_error <- par[[idx]]
+        if( estimate_sigma2_error ){
+            idx <- idx + 1L
+            sigma2_error <- par[[idx]]
+        } else{
+            sigma2_error <- 0
+        }
 
         list(alpha = alpha, sigma2 = sigma2, sigma2_error = sigma2_error)
     }
@@ -1853,9 +2003,14 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
         }
     }
 
-    par <- c(par, log(sigma2.start), sigma2_error.start)
-    lower <- c(lower, log(.Machine$double.eps), 0)
-    upper <- c(upper, Inf, Inf)
+    par <- c(par, log(sigma2.start))
+    lower <- c(lower, log(.Machine$double.eps))
+    upper <- c(upper, Inf)
+    if( estimate_sigma2_error ){
+        par <- c(par, sigma2_error.start)
+        lower <- c(lower, 0)
+        upper <- c(upper, Inf)
+    }
 
     opt.res <- optim(
         par,
@@ -1872,7 +2027,11 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
     fit <- fit_for_parameters(prm$alpha, prm$sigma2, prm$sigma2_error)
 
     if( !is.finite(fit$n2llh) || fit$n2llh >= objective.ceiling ){
-        stop("failed to fit the OU model with the supplied input_error and measurement_error.")
+        stop(if( estimate_sigma2_error ){
+            "failed to fit the OU model with the supplied input_error and measurement_error."
+        } else{
+            "failed to fit the OU model with the supplied input_error."
+        })
     }
 
     if( !quietly && model != "BM" && optimize.alpha &&
@@ -1890,7 +2049,8 @@ dense_joint_input_measurement_error_gls_fit <- function(tree, Y, preds, model,
     vcov <- fit$vcov
     colnames(vcov) <- coefficient_names
     rownames(vcov) <- coefficient_names
-    p <- d + 1L + ifelse(model == "BM", 0L, 1L) + 1L
+    p <- d + 1L + ifelse(model == "BM", 0L, 1L) +
+        ifelse(estimate_sigma2_error, 1L, 0L)
 
     list(
         coefficients = coefficients,
@@ -2593,7 +2753,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
             ),
             silent = opt$quietly
         )
-        if(class(fit) != "try-error"){
+        if(!inherits(fit, "try-error")){
             return(fit)
         }
     }
@@ -2613,7 +2773,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
             ),
             silent = opt$quietly
         )
-        if(class(fit) != "try-error"){
+        if(!inherits(fit, "try-error")){
             return(fit)
         }
     }
@@ -2625,7 +2785,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
         !is.null(prepared.tree) ){
         fit <- try(fast_phylolm_ou_fit(prepared.tree, Y, preds, opt),
                    silent = opt$quietly)
-        if(class(fit) != "try-error"){
+        if(!inherits(fit, "try-error")){
             return(fit)
         }
     }
@@ -2654,7 +2814,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
     fit <- try(do.call(phylolm, fit.args), silent = opt$quietly)
     options(warn = prev.val )
 
-    if(class(fit) == "try-error"){ 
+    if(inherits(fit, "try-error")){
         if(!opt$quietly){
             warning( paste0( "the OU likelihood solver returned an error with a shift configuration
                             of size ", length(shift.configuration), ". You may
@@ -2718,9 +2878,14 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     }
     sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd[refine.idx], tol = 1e-6, backend = backend)
 
-    for (dfm in df.missing) {
-        warning(paste0("There are no solutions with ", dfm, " number of shifts  
-                in the solution path of grplasso. You may want to change grp.delta and grp.seq"))
+    if(!isTRUE(opt$quietly)){
+        for (dfm in df.missing) {
+            warning(paste0(
+                "There are no solutions with ", dfm, " number of shifts ",
+                "in the solution path of grplasso. ",
+                "You may want to change grp.delta and grp.seq"
+            ))
+        }
     }
     return(sol);
 }
@@ -2811,7 +2976,7 @@ grplasso_refine_base_seq <- function(base.seq, df.vec, max.nShifts, min.delta){
     }
 
     if(max(df.search) <= max.nShifts){
-        extension.step <- if(length(steps) > 0) tail(steps, 1) else max(min.delta * 2, 1)
+        extension.step <- if(length(steps) > 0) utils::tail(steps, 1) else max(min.delta * 2, 1)
         if(extension.step > min.delta){
             new.points <- c(new.points, base.seq[[length(base.seq)]] + extension.step)
         }

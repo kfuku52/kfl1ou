@@ -53,7 +53,8 @@
 #'                                          check.order=FALSE, check.ultrametric=FALSE)
 #'  covInverseSqrtf  <- t(REf$sqrtInvSigma)
 #'  covSqrtf   <- REf$sqrtSigma
-#' # `covInverseSqrtf` represents the transpose of square root of  the inverse matrix of covariance for FixedRoot model.
+#' # `covInverseSqrtf` is the transposed square root of the inverse
+#' # covariance matrix for the fixed-root model.
 #' # `covSqrtf` represents the square root of the covariance matrix for FixedRoot model.
 #'  Y  <- rTraitCont(eModel$tree, "OU", theta=theta,
 #'                                      alpha=eModel$alpha,

@@ -52,6 +52,6 @@ test_that("rr convergent-regime search still rejects observation-error fits", {
 
   expect_error(
     estimate_convergent_regimes(fit, criterion = "AICc", method = "rr"),
-    "does not yet support measurement_error or input_error"
+    "does not yet support measurement_error"
   )
 })

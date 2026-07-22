@@ -34,6 +34,12 @@
 #'         This component keeps its upstream name for backward compatibility.
 #'         Replicates that fail during model fitting are skipped; the function
 #'         throws an error only if all bootstrap replicates fail.
+#'         For multivariate data, each trait is whitened using its observed
+#'         marginal covariance; simulated replicates retain the original
+#'         trait-specific missingness pattern.
+#'         When code{trait.covariance = "full"}, all observed trait-tip entries
+#'         are whitened and simulated jointly so the fitted cross-trait
+#'         evolutionary covariance is retained.
 #'
 #'
 #'@examples
@@ -55,7 +61,10 @@
 #' e.l <- round(result$detection.rate*100, digits=1)
 #' # to avoid annotating edges with support at or below 10%
 #' e.l <- ifelse(e.l>10, paste0(e.l,"%"), NA)
-#' plot(eModel, edge.label=e.l, edge.ann.cex=0.7, edge.label.ann=TRUE, cex=0.5, label.offset=0.02, edge.width=e.w)
+#' plot(
+#'   eModel, edge.label=e.l, edge.ann.cex=0.7, edge.label.ann=TRUE,
+#'   cex=0.5, label.offset=0.02, edge.width=e.w
+#' )
 #'
 #'
 #' Y <- lizard.traits[keep, 1:2]
@@ -159,7 +168,8 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
             valid.count <- valid.count + 1
 
             detection.vec[eM$shift.configuration] = detection.vec[eM$shift.configuration] + 1
-            all.shift.configurations[[length(all.shift.configurations) + 1L]] <- eM$shift.configuration
+            all.shift.configurations[length(all.shift.configurations) + 1L] <-
+                list(eM$shift.configuration)
 
             if(quietly==FALSE){
                 print(paste0("iteration ", itr, ":", length(eM$shift.configuration),":", 
@@ -202,27 +212,132 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
     return(finalize_bootstrap_results(all.shift.configurations, detection.vec))
 }
 
+bootstrap_support_multivariate_full <- function(tree, model, nItrs,
+                                                multicore=FALSE, nCores=2,
+                                                quietly=FALSE){
+    Y <- as.matrix(model$Y)
+    observed <- !is.na(as.vector(Y))
+    covariance <- multivariate_ou_observed_covariance(
+        tree,
+        Y,
+        alpha=model$alpha,
+        trait.covariance=model$trait.covariance,
+        opt=model$l1ou.options,
+        sigma2.error=model$sigma2_error
+    )
+    covariance.sqrt <- t(chol(covariance))
+    residual <- as.vector(model$residuals)[observed]
+    standardized <- drop(forwardsolve(
+        covariance.sqrt, matrix(residual, ncol=1L)
+    ))
+    standardized <- standardized - mean(standardized)
+    mean.vector <- as.vector(model$mu)[observed]
+    seed.vec <- sample(.Machine$integer.max, nItrs + 1L, replace=TRUE)
+    nested.opt <- make_nested_l1ou_options(model$l1ou.options)
+
+    one.replicate <- function(itr){
+        set.seed(seed.vec[[itr]])
+        sampled <- sample(standardized, replace=TRUE)
+        simulated <- mean.vector + drop(covariance.sqrt %*% sampled)
+        Ystar <- matrix(NA_real_, nrow=nrow(Y), ncol=ncol(Y), dimnames=dimnames(Y))
+        Ystar[observed] <- simulated
+        tryCatch({
+            fit <- estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
+            if(!quietly){
+                print(paste0(
+                    "iteration ", itr, ":", length(fit$shift.configuration), ":",
+                    paste0(fit$shift.configuration, collapse=" ")
+                ))
+            }
+            fit$shift.configuration
+        }, error=function(e){
+            if(!quietly){
+                message("l1OU error, return NA: ", conditionMessage(e))
+            }
+            NA
+        })
+    }
+
+    if(!quietly){
+        print("iteration #:nShifts:shift configurations")
+    }
+    all.shifts <- if(multicore){
+        with_l1ou_thread_limit(1L,
+            l1ou_mclapply(seq_len(nItrs), one.replicate, mc.cores=nCores)
+        )
+    } else{
+        lapply(seq_len(nItrs), one.replicate)
+    }
+    set.seed(seed.vec[[nItrs + 1L]])
+    finalize_bootstrap_results(all.shifts, rep(0, nrow(tree$edge)))
+}
+
 bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, nCores=2, quietly=FALSE){
 
     Y = as.matrix(model$Y)
     stopifnot( length(model$alpha) == ncol(Y) )
+    if(is_full_trait_covariance(model$l1ou.options, Y)){
+        return(bootstrap_support_multivariate_full(
+            tree, model, nItrs, multicore, nCores, quietly
+        ))
+    }
 
     seed.vec <- sample(.Machine$integer.max, nItrs+1, replace=TRUE)
 
-    YY        = Y
-    C.Hlist   = list()
-    for( idx in 1:ncol(Y) ){
+    bootstrap.traits <- vector("list", ncol(Y))
+    for( idx in seq_len(ncol(Y)) ){
+        observed <- !is.na(Y[, idx])
         input.error <- get_trait_input_error(model$l1ou.options, idx, tree=tree)
-        RE    = sqrt_OU_covariance(tree, alpha = model$alpha[[idx]], 
-                                   root.model = model$l1ou.options$root.model,
-                                   sigma2 = model$sigma2[[idx]],
-                                   sigma2_error = model$sigma2_error[[idx]],
-                                   input_error = input.error,
-                                   check.order=F, check.ultrametric=F) 
-        C.IH  = t(RE$sqrtInvSigma) 
-        C.Hlist[[idx]] = RE$sqrtSigma
-        YY[, idx]      = C.IH%*%(Y[, idx] - model$mu[ ,idx])
+        Sigma.obs <- observed_trait_covariance(
+            tree,
+            alpha = model$alpha[[idx]],
+            root.model = model$l1ou.options$root.model,
+            sigma2 = model$sigma2[[idx]],
+            sigma2_error = model$sigma2_error[[idx]],
+            input_error = input.error,
+            observed = observed
+        )
+        covariance.sqrt <- t(chol(Sigma.obs))
+        standardized <- drop(
+            forwardsolve(
+                covariance.sqrt,
+                matrix(Y[observed, idx] - model$mu[observed, idx], ncol=1)
+            )
+        )
+        standardized <- standardized - mean(standardized)
+        bootstrap.traits[[idx]] <- list(
+            observed = observed,
+            covariance.sqrt = covariance.sqrt,
+            standardized = standardized
+        )
+    }
 
+    common.missingness <- all(vapply(bootstrap.traits[-1], function(x) {
+        identical(x$observed, bootstrap.traits[[1]]$observed)
+    }, logical(1)))
+
+    simulate_bootstrap_data <- function(){
+        Ystar <- matrix(NA_real_, nrow=nrow(Y), ncol=ncol(Y), dimnames=dimnames(Y))
+        common.index <- NULL
+        if(common.missingness){
+            common.index <- sample(
+                seq_along(bootstrap.traits[[1]]$standardized),
+                replace=TRUE
+            )
+        }
+        for(idx in seq_len(ncol(Y))){
+            trait <- bootstrap.traits[[idx]]
+            sampled.index <- if(is.null(common.index)){
+                sample(seq_along(trait$standardized), replace=TRUE)
+            } else{
+                common.index
+            }
+            simulated.residual <- trait$covariance.sqrt %*%
+                trait$standardized[sampled.index]
+            Ystar[trait$observed, idx] <-
+                model$mu[trait$observed, idx] + drop(simulated.residual)
+        }
+        Ystar
     }
     if(quietly==FALSE)
         print(paste0("iteration #:nShifts:shift configuraitons"))
@@ -236,13 +351,7 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
         for(itr in 1:nItrs){
 
             set.seed(seed.vec[[itr]])
-            Ystar   = YY
-            idx.vec = sample(1:nrow(YY), replace = TRUE)
-            for( idx in 1:ncol(YY) ){
-                YYstar        = YY[idx.vec, idx]
-                Ystar[, idx]  = (C.Hlist[[idx]] %*% YYstar) + model$mu[, idx] 
-            }
-            rownames(Ystar) <- rownames(Y)
+            Ystar <- simulate_bootstrap_data()
 
             eM  <-  tryCatch({
                 estimate_shift_configuration(tree, Ystar,  l1ou.options=model$l1ou.options)
@@ -260,7 +369,8 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
 
             valid.count  <- valid.count + 1
             detection.vec[eM$shift.configuration] = detection.vec[eM$shift.configuration] + 1
-            all.shift.configurations[[length(all.shift.configurations) + 1L]] <- eM$shift.configuration
+            all.shift.configurations[length(all.shift.configurations) + 1L] <-
+                list(eM$shift.configuration)
         }
         if(valid.count == 0L)
             stop("all bootstrap replicates failed.")
@@ -270,13 +380,8 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
 
     all.shift.configurations = with_l1ou_thread_limit(1L,
         l1ou_mclapply(X=1:nItrs, FUN=function(itr){
-                     Ystar   = YY
                      set.seed(seed.vec[[itr]])
-                     idx.vec = sample(1:nrow(YY), replace = TRUE)
-                     for( idx in 1:ncol(YY) ){
-                         YYstar        = YY[idx.vec, idx]
-                         Ystar[, idx]  = (C.Hlist[[idx]] %*% YYstar) + model$mu[, idx] 
-                     }
+                     Ystar <- simulate_bootstrap_data()
                      eM  <-  tryCatch({
                          estimate_shift_configuration(tree, Ystar, l1ou.options = nested.opt)
                      }, error = function(e) {

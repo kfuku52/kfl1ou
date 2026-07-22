@@ -45,6 +45,12 @@ modify \code{model$l1ou.options}.
 This component keeps its upstream name for backward compatibility.
 Replicates that fail during model fitting are skipped; the function throws an
 error only if all bootstrap replicates fail.
+For multivariate data, each trait is whitened using its observed marginal
+covariance; simulated replicates retain the original trait-specific missingness
+pattern.
+When \code{trait.covariance = "full"}, all observed trait-tip entries are
+whitened and simulated jointly so the fitted cross-trait evolutionary
+covariance is retained.
 }
 \examples{
 
@@ -65,7 +71,10 @@ if (length(eModel$shift.configuration) > 0) {
 e.l <- round(result$detection.rate*100, digits=1)
 # to avoid annotating edges with support at or below 10\%
 e.l <- ifelse(e.l>10, paste0(e.l,"\%"), NA)
-plot(eModel, edge.label=e.l, edge.ann.cex=0.7, edge.label.ann=TRUE, cex=0.5, label.offset=0.02, edge.width=e.w)
+plot(
+  eModel, edge.label=e.l, edge.ann.cex=0.7, edge.label.ann=TRUE,
+  cex=0.5, label.offset=0.02, edge.width=e.w
+)
 
 
 Y <- lizard.traits[keep, 1:2]

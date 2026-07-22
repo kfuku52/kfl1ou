@@ -57,7 +57,8 @@ test_that("rr convergent-regime search returns early for single-shift models", {
   conv <- estimate_convergent_regimes(fit, criterion = "AICc", method = "rr")
 
   expect_s3_class(conv, "l1ou")
-  expect_equal(conv$shift.configuration, fit$shift.configuration)
+  expect_equal(unname(conv$shift.configuration), fit$shift.configuration)
+  expect_equal(names(conv$shift.configuration), "1")
   expect_true(is.finite(conv$score))
 })
 
@@ -349,4 +350,97 @@ test_that("candidate collection orders repeated shifts by numeric frequency", {
   )
 
   expect_equal(candidates[[length(candidates)]], c(2L, 1L))
+})
+
+test_that("candidate collection continues after an over-limit path point", {
+  dat <- small_lizard_data(n_tips = 8)
+  path.configurations <- list(c(1L, 2L, 3L), 1L, c(1L, 2L))
+
+  local_mocked_bindings(
+    get_num_solutions = function(sol.path) length(path.configurations),
+    get_configuration_in_sol_path = function(sol.path, idx, Y) path.configurations[[idx]],
+    correct_unidentifiability = function(tree, shift.configuration, opt) shift.configuration,
+    .package = "kfl1ou"
+  )
+
+  candidates <- kfl1ou:::collect_candidate_configurations(
+    dat$tree,
+    dat$Y,
+    list(call = "internal-lasso"),
+    list(max.nShifts = 2L)
+  )
+
+  expect_equal(candidates, list(1L, c(1L, 2L)))
+})
+
+test_that("convergent fits return coefficients and fitted values from the constrained model", {
+  dat <- small_lizard_data(n_tips = 12)
+  shifts <- c(1L, 2L)
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = shifts,
+    cr.regimes = list(0L, shifts),
+    criterion = "AICc"
+  )
+  states <- kfl1ou:::convergent_regime_states(dat$tree, shifts, list(0L, shifts))
+
+  expect_true(isTRUE(fit$convergent))
+  expect_equal(fit$score, fit$cr.score)
+  expect_equal(
+    fit$residuals[, 1],
+    fit$Y[, 1] - fit$mu[, 1],
+    tolerance = 1e-10
+  )
+  expect_length(unique(fit$optima[states$tip.regime == 1L, 1]), 1L)
+})
+
+test_that("convergent fits preserve the requested random-root covariance model", {
+  dat <- small_lizard_data(n_tips = 12)
+  shifts <- c(1L, 2L)
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = shifts,
+    cr.regimes = list(0L, shifts),
+    root.model = "OUrandomRoot",
+    criterion = "AICc"
+  )
+
+  expect_equal(fit$l1ou.options$root.model, "OUrandomRoot")
+  expect_true(isTRUE(fit$convergent))
+  expect_true(is.finite(fit$score))
+  expect_equal(
+    fit$residuals[, 1],
+    fit$Y[, 1] - fit$mu[, 1],
+    tolerance = 1e-10
+  )
+})
+
+test_that("missing-data GLS whitening uses the observed marginal covariance", {
+  dat <- small_lizard_data(n_tips = 10)
+  observed <- rep(TRUE, nrow(dat$Y))
+  observed[c(2, 7)] <- FALSE
+  Sigma <- kfl1ou:::observed_trait_covariance(
+    dat$tree,
+    alpha = 0.4,
+    root.model = "OUfixedRoot",
+    sigma2 = 1.7,
+    observed = observed
+  )
+  X <- kfl1ou:::generate_design_matrix(dat$tree, "orgX", alpha = 0.4)[observed, ]
+  whitened <- kfl1ou:::whiten_gls_without_intercept(
+    dat$Y[observed, 1], X, Sigma
+  )
+
+  expect_equal(
+    whitened$transform %*% Sigma %*% t(whitened$transform),
+    diag(sum(observed) - 1L),
+    tolerance = 1e-9
+  )
+  expect_equal(
+    drop(whitened$transform %*% rep(1, sum(observed))),
+    rep(0, sum(observed) - 1L),
+    tolerance = 1e-9
+  )
 })
