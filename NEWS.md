@@ -1,4 +1,4 @@
-# kfl1ou 2.2.0
+# kfl1ou 2.2.1
 
 - Prevent Wald intervals from interpreting covariance parameters as fixed
   adaptation rates; penalized Hessians are no longer exposed as ordinary
