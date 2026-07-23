@@ -55,8 +55,16 @@ std::vector<GroupSpec> build_groups(const Rcpp::NumericMatrix& x,
     const int n = x.nrow();
     const int p = x.ncol();
 
+    if (n < 1 || p < 1) {
+        Rcpp::stop("x must have at least one row and one column.");
+    }
     if (group.size() != p) {
         Rcpp::stop("length(group) must equal ncol(x).");
+    }
+    for (R_xlen_t i = 0; i < x.size(); ++i) {
+        if (!std::isfinite(x[i])) {
+            Rcpp::stop("x must contain only finite values.");
+        }
     }
 
     std::unordered_map<int, std::size_t> positions;
@@ -67,8 +75,8 @@ std::vector<GroupSpec> build_groups(const Rcpp::NumericMatrix& x,
     const double* x_ptr = x.begin();
 
     for (int col = 0; col < p; ++col) {
-        if (Rcpp::IntegerVector::is_na(group[col])) {
-            Rcpp::stop("group indices must not contain NA values.");
+        if (Rcpp::IntegerVector::is_na(group[col]) || group[col] < 1) {
+            Rcpp::stop("group indices must be positive non-missing integers.");
         }
 
         const int key = group[col];
@@ -110,6 +118,11 @@ double linreg_group_lasso_lambda_max_cpp(Rcpp::NumericMatrix x,
     if (y.size() != n) {
         Rcpp::stop("length(y) must equal nrow(x).");
     }
+    for (R_xlen_t i = 0; i < y.size(); ++i) {
+        if (!std::isfinite(y[i])) {
+            Rcpp::stop("y must contain only finite values.");
+        }
+    }
 
     std::vector<GroupSpec> groups = build_groups(x, group);
     const double* x_ptr = x.begin();
@@ -146,6 +159,25 @@ Rcpp::List linreg_group_lasso_path_cpp(Rcpp::NumericMatrix x,
 
     if (y.size() != n) {
         Rcpp::stop("length(y) must equal nrow(x).");
+    }
+    if (n_lambda < 1) {
+        Rcpp::stop("lambda must contain at least one value.");
+    }
+    if (!std::isfinite(tol) || tol <= 0.0 || max_iter < 1 ||
+        inner_loops < 1 || !std::isfinite(beta_ls) || beta_ls <= 0.0 ||
+        beta_ls >= 1.0 || !std::isfinite(sigma_ls) || sigma_ls <= 0.0 ||
+        sigma_ls >= 1.0) {
+        Rcpp::stop("invalid group-lasso control parameters.");
+    }
+    for (R_xlen_t i = 0; i < y.size(); ++i) {
+        if (!std::isfinite(y[i])) {
+            Rcpp::stop("y must contain only finite values.");
+        }
+    }
+    for (R_xlen_t i = 0; i < lambda.size(); ++i) {
+        if (!std::isfinite(lambda[i]) || lambda[i] < 0.0) {
+            Rcpp::stop("lambda must contain finite non-negative values.");
+        }
     }
 
     std::vector<GroupSpec> groups = build_groups(x, group);

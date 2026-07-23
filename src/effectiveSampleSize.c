@@ -1,7 +1,18 @@
 //#include "phylolm.h"
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <R.h>
+
+static void *zero_alloc(size_t count, size_t size, const char *label) {
+    if (size != 0 && count > ((size_t)-1) / size) {
+        error("%s allocation size overflows size_t", label);
+    }
+    void *memory = (void *)R_alloc(count, (int)size);
+    memset(memory, 0, count * size);
+    return memory;
+}
 
 // The Rcpp entry point validates all dimensions and the root-edge sentinel
 // before calling this allocation-light pruning kernel.
@@ -23,13 +34,13 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
     //         n_e = max(V) * one' V^{-1} one, where V=BM covariance for subtree
     //         so that max(V) = subtree height
 
-    double* Theight=(double*)calloc(npN, sizeof(double));
+    double* Theight=(double*)zero_alloc((size_t)npN, sizeof(double), "tree-height workspace");
     // Theight[i] = tree height of subtree rooted node i (c-style: = node i+1 R-style)
     // fixit: later, extract those
     // of subtree at the root if i=0 (including root edge!)
     //            at child node of edge i otherwise
-    double* vec11=(double*)calloc(npN, sizeof(double));
-    int* zero =(int*)calloc(npN, sizeof(int));
+    double* vec11=(double*)zero_alloc((size_t)npN, sizeof(double), "precision workspace");
+    int* zero =(int*)zero_alloc((size_t)npN, sizeof(int), "zero-edge workspace");
     // zero[i-1] will be -1 if node i has no children edge of length 0
     //                    d if node i has exactly 1 child edge of length 0,
     //                      to child node d+1.
@@ -92,10 +103,5 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
             }
         }
     }
-
-    free(Theight);
-    free(vec11);
-    free(zero);
 }
-
 

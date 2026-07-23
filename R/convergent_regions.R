@@ -38,8 +38,8 @@ generate_prediction_vec  <-  function(tr,
     ## now the coefficients in the linear regression represent the optimum values.
     ## rather than the shift values.
 
-    for( i in 1:ncol(preds) ){
-        for( j in 1:ncol(preds) ){
+    for( i in seq_len(ncol(preds)) ){
+        for( j in seq_len(ncol(preds)) ){
             if ( i == j )  
                 next
             set1 <- which( template.Z[,i] > 0)
@@ -52,7 +52,7 @@ generate_prediction_vec  <-  function(tr,
 
     W <- numeric()
     if ( length( conv.regimes ) > 0 ){
-        for( i in 1:length(conv.regimes) ){
+        for( i in seq_along(conv.regimes) ){
             set1 <- paste(conv.regimes[[i]])
             stopifnot( length(set1) > 0 )
 
@@ -817,7 +817,7 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
         return(Inf)
     df.2 <- 0
     score <- df.1
-    for( i in 1:ncol(Y)){
+    for( i in seq_len(ncol(Y))){
         r <- get_data(tree, Y, shift.configuration, opt, i)
         trait.regimes <- map_convergent_regimes_to_trait(
             conv.regimes,
@@ -898,7 +898,7 @@ cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
     score  <- df.1
     #alpha  <- sigma2 <- logLik <- rep(0, ncol(Y))
 
-    for(i in 1:ncol(Y)){
+    for(i in seq_len(ncol(Y))){
         r <- get_data(tree, Y, shift.configuration, opt, i)
         trait.regimes <- map_convergent_regimes_to_trait(
             conv.regimes,
@@ -1026,7 +1026,7 @@ find_convergent_regimes  <-  function(tr, Y, alpha, criterion, regimes,
     #X   <-  X[,-1]
     X   <- cbind(X,1)
 
-    M   <- generate_relation(tr, 1:length(regimes))
+    M   <- generate_relation(tr, seq_along(regimes))
     M   <- cbind(M,0)
 
     ###I multipled YY by a number to scale it up. If I don't genlasso doesn't return the whole solution path :S
@@ -1145,7 +1145,7 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 					    return ( cmp_model_score_CR(tr, Y, X$regimes, model$alpha, opt=opt) )
 			       }, mc.cores=opt$nCores)
 
-		for(idx in 1:length(RE.list) ){
+		for(idx in seq_along(RE.list) ){
 			IN <- run.list[[idx]]
 			score   <- RE.list[[idx]] 
 
@@ -1354,7 +1354,7 @@ estimate_convergent_regimes  <-  function(model,
         }
 
         c.regimes <- prev.regimes <- all.regimes <- list()
-        c.regimes[1:length(model$shift.configuration)] <- model$shift.configuration
+        c.regimes[seq_along(model$shift.configuration)] <- model$shift.configuration
         min.cr.regimes <- c.regimes
         min.score <- cmp_model_score_CR(tr, Y, c(list(0), c.regimes), model$alpha, opt=opt)
         prev.min.score <- min.score
@@ -1362,14 +1362,17 @@ estimate_convergent_regimes  <-  function(model,
         
         ## similar to "backward" method. But here we may combine several shifts into convergent regimes
         ## at the same time therefore it is faster.
-        for(iter in 1:length(model$shift.configuration) ){
+        for(iter in seq_along(model$shift.configuration) ){
+            if(length(c.regimes) < 2L){
+                break
+            }
             out  <-  find_convergent_regimes(
                 tr, Y, model$alpha, opt$criterion,
                 regimes = c.regimes,
                 root.model = opt$root.model
             )
             for(num.digits in c(12,13,15,16)){
-                for( idx in 1:length(out$beta[1,]) ){
+                for( idx in seq_len(ncol(out$beta)) ){
     
                 new.est  <- round( out$M%*%out$beta[,idx], digits = num.digits)
                 conv.reg <- rownames(out$M)[ which( new.est == 0) ]
@@ -1378,7 +1381,7 @@ estimate_convergent_regimes  <-  function(model,
                 for(e in conv.reg){## converting to numerical matrix.
                     elist <- rbind( elist, unlist(strsplit(e," ") ) )
                 }
-                for(e in paste(1:length(c.regimes)) ){
+                for(e in paste(seq_along(c.regimes)) ){
                     elist <- rbind( elist, c(e,e))
                 }
     
@@ -1388,7 +1391,7 @@ estimate_convergent_regimes  <-  function(model,
                 regimes <- list()
                 counter <- 1
 
-                for(i in 1:length(cc) ){
+                for(i in seq_along(cc) ){
 
                     regimes[[counter]] <- numeric()
                     the.cc <- as.numeric(cc[[i]])

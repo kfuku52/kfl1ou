@@ -35,7 +35,7 @@ phylolm_CR <- function(formula, data=list(), phy,
     } else {
         tmp = mf
         rownames(mf) = phy$tip.label
-        mf[order,] = tmp[1:nrow(tmp),]
+        mf[order,] = tmp[seq_len(nrow(tmp)),]
     }
     X = model.matrix(attr(mf, "terms"), data=mf)
     y = model.response(mf)

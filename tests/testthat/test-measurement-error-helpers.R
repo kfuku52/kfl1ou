@@ -64,7 +64,7 @@ test_that("normalize_input_error only allows missing errors for missing observat
 test_that("get_trait_input_error matches a reduced trait tree after missing-data filtering", {
   dat <- small_lizard_data(n_tips = 6, traits = 1:2, normalize = FALSE)
   input_error <- matrix(
-    seq_len(length(dat$Y)),
+    seq_along(dat$Y),
     nrow = nrow(dat$Y),
     ncol = ncol(dat$Y),
     dimnames = list(rev(rownames(dat$Y)), rev(colnames(dat$Y)))

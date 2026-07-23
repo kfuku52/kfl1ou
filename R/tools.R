@@ -807,7 +807,7 @@ gen_tree_array <- function(tree, Y){
     tree.list <- list()
     X.1 <- generate_design_matrix(tree, type="simpX")
     rownames(X.1) <- tree$tip.label
-    for(trait.idx in 1:ncol(Y)){
+    for(trait.idx in seq_len(ncol(Y))){
         availables <- rownames(Y)[!is.na(Y[,trait.idx])]
 
         tr <- drop.tip(tree, setdiff(tree$tip.label, availables))
@@ -1298,7 +1298,7 @@ plot.l1ou <- function (x, palette = NA,
         par(oma = c(3, 0, 0, 3))
 
     if (plot.bar) {
-        layout(matrix(c(1+ncol(Y),1:ncol(Y)), nrow=1), 
+        layout(matrix(c(1+ncol(Y), seq_len(ncol(Y))), nrow=1),
                widths = c(2,rep(1, ncol(Y)))
                )
     }
@@ -1344,7 +1344,7 @@ plot.l1ou <- function (x, palette = NA,
     plot.phylo(tree, plot=FALSE)
     ape_plot_env = getFromNamespace(".PlotPhyloEnv", "ape")
     lastPP = get("last_plot.phylo", envir = ape_plot_env)
-    o = order(lastPP$yy[1:length(tree$tip.label)])
+    o = order(lastPP$yy[seq_along(tree$tip.label)])
     par.new.default <- par()$new ##just to be careful with the global variable
     par(new=TRUE)
 
@@ -1357,7 +1357,7 @@ plot.l1ou <- function (x, palette = NA,
         }
         if (bar.axis) 
             par(mar = c(0, 0, 0, 3))
-        for (i in 1:ncol(Y)) {
+        for (i in seq_len(ncol(Y))) {
             normy = (Y[, i] - mean(Y[, i], na.rm=TRUE))/sd(Y[, i], na.rm=TRUE)
             barplot(as.vector(normy[o]), border = FALSE, col = barcol[o], 
                     horiz = TRUE, names.arg = "", xaxt = "n")
@@ -1379,7 +1379,7 @@ plot.l1ou <- function (x, palette = NA,
     if (length(s.c) > 0) {
         if (asterisk) {
             Z = generate_design_matrix(tree, type = "apprX")
-            for (idx in 1:length(s.c)) {
+            for (idx in seq_along(s.c)) {
                 sP = s.c[[idx]]
                 pos = max(Z[, sP])
                 edge.labels = rep(NA, length(tree$edge[, 1]))
@@ -1409,7 +1409,7 @@ plot.l1ou <- function (x, palette = NA,
         if (!is.na(edge.label.pos)) 
             if (edge.label.pos < 0 || edge.label.pos > 1) 
                 stop("edge.label.pos should be between 0 and 1")
-        for (idx in 1:length(tree$edge.label)) {
+        for (idx in seq_along(tree$edge.label)) {
             if (is.na(tree$edge.label[[idx]])) 
                 next
             pos = max(Z[, idx])

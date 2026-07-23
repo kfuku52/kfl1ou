@@ -62,6 +62,37 @@ test_that("rr convergent-regime search returns early for single-shift models", {
   expect_true(is.finite(conv$score))
 })
 
+test_that("rr convergent-regime search evaluates multiple shifts", {
+  skip_if_not_installed("genlasso")
+  dat <- small_lizard_data(n_tips = 12, normalize = FALSE)
+  design <- kfl1ou:::generate_design_matrix(dat$tree, "simpX")
+  candidates <- which(
+    colSums(design) >= 2L & colSums(design) <= nrow(design) - 3L
+  )
+  expect_gte(length(candidates), 2L)
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    shift.configuration = candidates[1:2],
+    alpha.lower = 0.5,
+    alpha.upper = 0.5
+  )
+
+  conv <- estimate_convergent_regimes(
+    fit,
+    criterion = "AICc",
+    method = "rr",
+    fixed.alpha = TRUE
+  )
+
+  expect_s3_class(conv, "l1ou")
+  expect_equal(
+    sort(unname(conv$shift.configuration)),
+    sort(unname(fit$shift.configuration))
+  )
+  expect_true(is.finite(conv$score))
+})
+
 test_that("find_convergent_regimes tolerates rank-deficient design matrices", {
   skip_if_not_installed("genlasso")
   dat <- small_lizard_data(n_tips = 16)

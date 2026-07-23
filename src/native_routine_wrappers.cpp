@@ -20,11 +20,21 @@ Rcpp::NumericVector effective_sample_size_c(int N, int n, int pN, int root,
                                             Rcpp::IntegerVector des,
                                             Rcpp::IntegerVector anc,
                                             Rcpp::IntegerVector edge) {
-    if (N < 1 || n < 2 || pN < 1 || root < 1 || root > n + pN) {
+    if (N < 1 || n < 2 || pN < 1) {
         Rcpp::stop("invalid tree dimensions supplied to effective_sample_size_c");
+    }
+    const long long node_count = static_cast<long long>(n) + pN;
+    if (node_count > std::numeric_limits<int>::max() ||
+        N != node_count - 1 || root <= n || root > node_count) {
+        Rcpp::stop(
+            "tree dimensions or root are inconsistent in effective_sample_size_c"
+        );
     }
     if (transb.size() != N || des.size() != N || anc.size() != N) {
         Rcpp::stop("tree edge arrays have inconsistent lengths");
+    }
+    if (!std::isfinite(transa) || transa < 0.0) {
+        Rcpp::stop("tree edge lengths are invalid in effective_sample_size_c");
     }
     if (edge.size() < 1 || edge[edge.size() - 1] != N + 1) {
         Rcpp::stop("cut edges must end with the root-edge sentinel");
@@ -35,6 +45,61 @@ Rcpp::NumericVector effective_sample_size_c(int N, int n, int pN, int root,
             Rcpp::stop("cut edges must be strictly increasing valid indices");
         }
     }
+
+    std::vector<int> parent(static_cast<std::size_t>(node_count + 1), 0);
+    std::vector<int> incoming_edge(
+        static_cast<std::size_t>(node_count + 1), -1
+    );
+    std::vector<int> last_child_edge(
+        static_cast<std::size_t>(node_count + 1), -1
+    );
+    for (int i = 0; i < N; ++i) {
+        if (!std::isfinite(transb[i]) || transb[i] < 0.0 ||
+            anc[i] <= n || anc[i] > node_count || des[i] < 1 ||
+            des[i] > node_count || des[i] == root || des[i] == anc[i] ||
+            incoming_edge[des[i]] >= 0) {
+            Rcpp::stop("tree topology or edge lengths are invalid in effective_sample_size_c");
+        }
+        parent[des[i]] = anc[i];
+        incoming_edge[des[i]] = i;
+        last_child_edge[anc[i]] = i;
+    }
+    for (int node = 1; node <= node_count; ++node) {
+        if (node != root && incoming_edge[node] < 0) {
+            Rcpp::stop("tree topology is disconnected in effective_sample_size_c");
+        }
+        if (node > n && last_child_edge[node] < 0) {
+            Rcpp::stop(
+                "internal tree node has no children in effective_sample_size_c"
+            );
+        }
+        if (node > n && node != root &&
+            last_child_edge[node] >= incoming_edge[node]) {
+            Rcpp::stop(
+                "tree edges must be supplied in postorder to effective_sample_size_c"
+            );
+        }
+    }
+    std::vector<unsigned char> state(
+        static_cast<std::size_t>(node_count + 1), 0
+    );
+    state[root] = 2;
+    for (int node = 1; node <= node_count; ++node) {
+        int current = node;
+        while (state[current] == 0) {
+            state[current] = 1;
+            current = parent[current];
+        }
+        if (state[current] == 1) {
+            Rcpp::stop("tree topology contains a cycle in effective_sample_size_c");
+        }
+        current = node;
+        while (state[current] == 1) {
+            state[current] = 2;
+            current = parent[current];
+        }
+    }
+
     Rcpp::NumericVector output(edge.size());
     effectiveSampleSize(&N, &n, &pN, &root, &transa, transb.begin(), des.begin(),
                         anc.begin(), edge.begin(), output.begin());
@@ -60,7 +125,7 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
     const std::size_t nodes = static_cast<std::size_t>(node_count);
     const std::size_t max_size = std::numeric_limits<std::size_t>::max();
     const std::size_t max_double_elements = max_size / sizeof(double);
-    auto checked_product = [max_size](std::size_t left, std::size_t right) {
+    auto checked_product = [](std::size_t left, std::size_t right) {
         if (right != 0 && left > max_size / right) {
             Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
         }

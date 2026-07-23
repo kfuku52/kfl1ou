@@ -12,7 +12,7 @@ branchwise_ou_covariance <- function(
         stop("alpha must be one finite non-negative number.")
     }
     depths <- tree_node_depths(tree)
-    tip.depth <- depths[seq_len(length(tree$tip.label))]
+    tip.depth <- depths[seq_along(tree$tip.label)]
     child.depth <- depths[tree$edge[, 2L]]
     Z <- generate_design_matrix(tree, "simpX")
     propagation <- if(alpha <= .Machine$double.eps){

@@ -142,11 +142,13 @@
 #' )
 #' eModel
 #'  
-#' ## use up to two cores when available
-#' eModel.par <- estimate_shift_configuration(
-#'   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, nCores=2
-#' )
-#' eModel.par$nShifts
+#' ## use up to two cores in an interactive session
+#' if (interactive()) {
+#'   eModel.par <- estimate_shift_configuration(
+#'     lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, nCores=2
+#'   )
+#'   eModel.par$nShifts
+#' }
 #'
 #' nEdges <- Nedge(lizard$tree) # total number of edges
 #' ew <- rep(1, nEdges)  # to set default edge width of 1
@@ -581,7 +583,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     }
 
     if(!all(is.na(opt$candid.edges))){
-        to.be.removed  = setdiff(1:length(tree$edge.length), opt$candid.edges)
+        to.be.removed  = setdiff(seq_along(tree$edge.length), opt$candid.edges)
     }else{
         to.be.removed  = c(length(tree$edge.length), which(tree$edge.length < opt$edge.length.threshold))
     }
@@ -676,7 +678,7 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     ##to.be.removed = c(ncolX-1, which(tree$edge.length < opt$edge.length.threshold))
 
     if(!all(is.na(opt$candid.edges))){
-        base.to.be.removed <- setdiff(seq_len(length(tree$edge.length)), opt$candid.edges)
+        base.to.be.removed <- setdiff(seq_along(tree$edge.length), opt$candid.edges)
     }else{
         base.to.be.removed <- c(nEdges, which(tree$edge.length < opt$edge.length.threshold))
     }
@@ -888,7 +890,7 @@ estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.conf
 
 generate_design_matrix <- function(tree, type="apprX", alpha){
     stopifnot( is.ultrametric(tree) )
-    stopifnot( sum( 1:length(tree$tip.label) %in% tree$edge[,1]) == 0)
+    stopifnot( sum( seq_along(tree$tip.label) %in% tree$edge[,1]) == 0)
 
     nTips  = length(tree$tip.label)
     nEdges = Nedge(tree)
@@ -1003,7 +1005,7 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
         }
     }else{
         all.res <- vector("list", length(candidate.configurations))
-        for (i in 1:length(candidate.configurations) ){
+        for (i in seq_along(candidate.configurations) ){
             res <- search_ith_config(candidate.configurations[[i]])
             all.res[[i]] <- res
             if (min.score > res$score){
@@ -2861,7 +2863,7 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
         res
     }
 
-    if( is.na(opt$alpha.lower.bound) & is.na(opt$alpha.starting.value) ){
+    if( is.na(opt$alpha.lower.bound) && is.na(opt$alpha.starting.value) ){
         lower <- 1e-07 / prepared.tree$tip.height
     } else{
         lower <- ifelse(is.na(opt$alpha.lower.bound), 0, opt$alpha.lower.bound)
@@ -3285,7 +3287,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
     prev.val <- getOption("warn")
     options(warn = -1)
     on.exit(options(warn = prev.val), add = TRUE)
-    if( is.na(opt$alpha.lower.bound) & is.na(opt$alpha.starting.value) ){
+    if( is.na(opt$alpha.lower.bound) && is.na(opt$alpha.starting.value) ){
         fit.args <- list(formula = Y~preds-1, phy=tree, model=opt$root.model,
                          upper.bound  = opt$alpha.upper.bound,
                          measurement_error = opt$measurement_error)

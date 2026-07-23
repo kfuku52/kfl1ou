@@ -217,11 +217,13 @@ eModel <- estimate_shift_configuration(
 )
 eModel
  
-## use up to two cores when available
-eModel.par <- estimate_shift_configuration(
-  lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, nCores=2
-)
-eModel.par$nShifts
+## use up to two cores in an interactive session
+if (interactive()) {
+  eModel.par <- estimate_shift_configuration(
+    lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, nCores=2
+  )
+  eModel.par$nShifts
+}
 
 nEdges <- Nedge(lizard$tree) # total number of edges
 ew <- rep(1, nEdges)  # to set default edge width of 1

@@ -25,7 +25,7 @@ pruningwise.distFromRoot <- function(phy) {
     ## Distance from root to all nodes, for a tree in pruningwise order.
     nt <- length(phy$tip.label)
     xx <- numeric(phy$Nnode + nt)
-    for(i in length(phy$edge.length):1){
+    for(i in rev(seq_along(phy$edge.length))){
         xx[phy$edge[i, 2]] <- xx[phy$edge[i, 1]] + phy$edge.length[i]
     }
     names(xx) <- if(is.null(phy$node.label)) {

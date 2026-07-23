@@ -1,3 +1,14 @@
+# kfl1ou 2.4.2
+
+- Validate native tree topology, dimensions, branch lengths, group-lasso
+  controls, and numerical inputs before entering allocation and traversal
+  kernels; use R-managed memory so native errors cannot leak workspaces.
+- Stop regularized convergent-regime searches once all shifts have merged into
+  one regime instead of attempting to build an empty relation matrix.
+- Replace unsafe sequence construction in legacy loops and add regression
+  coverage for malformed native inputs, multi-shift convergence, and all plot
+  annotation paths.
+
 # kfl1ou 2.4.1
 
 - Prevent integer overflow when sizing native three-point likelihood

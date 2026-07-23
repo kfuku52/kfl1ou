@@ -91,6 +91,42 @@ test_that("cpp grplasso backend matches vendored backend", {
   )
 })
 
+test_that("cpp grplasso boundary rejects invalid numerical inputs and controls", {
+  fx <- make_group_lasso_fixture()
+
+  non_finite_x <- fx$x
+  non_finite_x[1L, 1L] <- Inf
+  expect_error(
+    kfl1ou:::linreg_group_lasso_lambda_max_cpp(
+      non_finite_x, fx$y, fx$group
+    ),
+    "finite values"
+  )
+
+  invalid_group <- fx$group
+  invalid_group[[1L]] <- 0L
+  expect_error(
+    kfl1ou:::linreg_group_lasso_lambda_max_cpp(
+      fx$x, fx$y, invalid_group
+    ),
+    "positive non-missing"
+  )
+
+  expect_error(
+    kfl1ou:::linreg_group_lasso_path_cpp(
+      fx$x, fx$y, fx$group, c(NA_real_, fx$lambda[[1L]])
+    ),
+    "finite non-negative"
+  )
+
+  expect_error(
+    kfl1ou:::linreg_group_lasso_path_cpp(
+      fx$x, fx$y, fx$group, fx$lambda, beta_ls = 1
+    ),
+    "control parameters"
+  )
+})
+
 test_that("grplasso support helpers detect repeated supports without string signatures", {
   coeff <- matrix(
     c(

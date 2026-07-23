@@ -52,6 +52,75 @@ test_that("root polytomies are resolved safely", {
   )
 })
 
+test_that("covariance native boundary rejects malformed edge lists", {
+  valid <- cbind(
+    ancestor = c(2, 2),
+    descendant = c(0, 1),
+    length = c(1, 1)
+  )
+  result <- kfl1ou:::cmp_sqrt_OU_covariance(valid, 2L, 0)
+  expect_equal(dim(result$sqrtSigma), c(2L, 2L))
+  expect_true(all(is.finite(result$sqrtSigma)))
+
+  bad_node <- valid
+  bad_node[1L, "descendant"] <- 3
+  expect_error(
+    kfl1ou:::cmp_sqrt_OU_covariance(bad_node, 2L, 0),
+    "invalid node identifiers or lengths"
+  )
+
+  duplicate_tip <- valid
+  duplicate_tip[, "descendant"] <- 0
+  expect_error(
+    kfl1ou:::cmp_sqrt_OU_covariance(duplicate_tip, 2L, 0),
+    "invalid tree topology"
+  )
+
+  invalid_length <- valid
+  invalid_length[1L, "length"] <- Inf
+  expect_error(
+    kfl1ou:::cmp_sqrt_OU_covariance(invalid_length, 2L, 0),
+    "invalid node identifiers or lengths"
+  )
+
+  expect_error(
+    kfl1ou:::cmp_sqrt_OU_covariance(valid, .Machine$integer.max, 0),
+    "too large or inconsistent"
+  )
+})
+
+test_that("multivariate model plots exercise all annotation paths", {
+  dat <- audit_small_traits(n=8L)
+  design <- kfl1ou:::generate_design_matrix(dat$tree, "simpX")
+  candidate <- which(
+    colSums(design) >= 2L & colSums(design) <= nrow(design) - 2L
+  )[[1L]]
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    candidate,
+    criterion="BIC",
+    alpha.lower=.5,
+    alpha.upper=.5
+  )
+  fit$tree$edge.label <- paste0("edge-", seq_len(nrow(fit$tree$edge)))
+  output <- tempfile(fileext=".pdf")
+  grDevices::pdf(output)
+  on.exit(grDevices::dev.off(), add=TRUE)
+
+  expect_error(
+    plot(
+      fit,
+      edge.label.ann=TRUE,
+      edge.label.pos=.5,
+      plot.bar=TRUE,
+      asterisk=TRUE
+    ),
+    NA
+  )
+  expect_true(file.exists(output))
+})
+
 test_that("explicit engines and shrinkage semantics are stable", {
   dat <- audit_small_traits(n=12L)
   dense <- fit_OU(
@@ -158,6 +227,59 @@ test_that("effective sample size rejects unsafe edge indices", {
   expect_true(all(is.finite(
     kfl1ou:::effective.sample.size(tree, edges=c(1L, 2L))
   )))
+})
+
+test_that("effective sample size native boundary validates dimensions and topology", {
+  valid <- list(
+    N = 2L,
+    n = 2L,
+    pN = 1L,
+    root = 3L,
+    transa = 1,
+    transb = c(1, 1),
+    des = c(1L, 2L),
+    anc = c(3L, 3L),
+    edge = 3L
+  )
+
+  result <- do.call(kfl1ou:::effective_sample_size_c, valid)
+  expect_length(result, 1L)
+  expect_true(is.finite(result))
+
+  bad_dimensions <- valid
+  bad_dimensions$N <- 3L
+  expect_error(
+    do.call(kfl1ou:::effective_sample_size_c, bad_dimensions),
+    "dimensions or root"
+  )
+
+  overflowing_dimensions <- valid
+  overflowing_dimensions$n <- .Machine$integer.max
+  expect_error(
+    do.call(kfl1ou:::effective_sample_size_c, overflowing_dimensions),
+    "dimensions or root"
+  )
+
+  duplicate_tip <- valid
+  duplicate_tip$des <- c(1L, 1L)
+  expect_error(
+    do.call(kfl1ou:::effective_sample_size_c, duplicate_tip),
+    "topology or edge lengths"
+  )
+
+  invalid_length <- valid
+  invalid_length$transb[[1L]] <- Inf
+  expect_error(
+    do.call(kfl1ou:::effective_sample_size_c, invalid_length),
+    "topology or edge lengths"
+  )
+
+  missing_sentinel <- valid
+  missing_sentinel$edge <- 1L
+  expect_error(
+    do.call(kfl1ou:::effective_sample_size_c, missing_sentinel),
+    "root-edge sentinel"
+  )
 })
 
 test_that("threepoint native boundary validates dimensions and topology", {

@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <vector>
 #include <Rcpp.h>
 
 using namespace Rcpp;
@@ -73,13 +75,105 @@ void one_step(const int i1, const int i2, const int e1, const int e2,
 
 // [[Rcpp::export]]
 Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, double rootEdge){
-    if (edgeList.ncol() != 3 || nTips < 2 ||
-        edgeList.nrow() != 2 * (nTips - 1)) {
+    if (edgeList.ncol() != 3 || nTips < 2) {
         Rcpp::stop("edgeList must describe a rooted, strictly bifurcating tree");
     }
+    const long long node_count_ll = 2LL * nTips - 1LL;
+    const long long edge_count_ll = 2LL * (nTips - 1LL);
+    if (node_count_ll > std::numeric_limits<int>::max() ||
+        edge_count_ll > std::numeric_limits<int>::max() ||
+        edgeList.nrow() != edge_count_ll) {
+        Rcpp::stop("tree dimensions are too large or inconsistent");
+    }
+    const int node_count = static_cast<int>(node_count_ll);
+    const int edge_count = static_cast<int>(edge_count_ll);
+    const long long workspace_elements =
+        static_cast<long long>(nTips) * node_count;
+    const long long square_elements =
+        static_cast<long long>(nTips) * nTips;
+    const long long max_r_length =
+        static_cast<long long>(std::numeric_limits<R_xlen_t>::max());
+    if (workspace_elements > max_r_length || square_elements > max_r_length) {
+        Rcpp::stop("requested covariance workspace is too large");
+    }
+    if (!std::isfinite(rootEdge) || rootEdge < 0.0) {
+        Rcpp::stop("root edge must be finite and non-negative");
+    }
 
-    Rcpp::NumericMatrix F(nTips, 2*nTips-1);
-    Rcpp::NumericMatrix G(nTips, 2*nTips-1);
+    std::vector<int> parent(static_cast<std::size_t>(node_count), -1);
+    std::vector<int> incoming_edge(static_cast<std::size_t>(node_count), -1);
+    std::vector<int> child_count(static_cast<std::size_t>(node_count), 0);
+    std::vector<int> last_child_edge(static_cast<std::size_t>(node_count), -1);
+    for (int edge = 0; edge < edge_count; ++edge) {
+        const double parent_value = edgeList(edge, 0);
+        const double child_value = edgeList(edge, 1);
+        const double length = edgeList(edge, 2);
+        if (!std::isfinite(parent_value) || !std::isfinite(child_value) ||
+            !std::isfinite(length) || length < 0.0 ||
+            parent_value != std::floor(parent_value) ||
+            child_value != std::floor(child_value) ||
+            parent_value < nTips || parent_value >= node_count ||
+            child_value < 0.0 || child_value >= node_count) {
+            Rcpp::stop("edgeList contains invalid node identifiers or lengths");
+        }
+        const int ancestor = static_cast<int>(parent_value);
+        const int descendant = static_cast<int>(child_value);
+        if (descendant == ancestor || incoming_edge[descendant] >= 0) {
+            Rcpp::stop("edgeList contains invalid tree topology");
+        }
+        parent[descendant] = ancestor;
+        incoming_edge[descendant] = edge;
+        child_count[ancestor] += 1;
+        last_child_edge[ancestor] = edge;
+    }
+
+    int root = -1;
+    for (int node = 0; node < node_count; ++node) {
+        if (incoming_edge[node] < 0) {
+            if (node < nTips || root >= 0) {
+                Rcpp::stop("edgeList must contain exactly one internal root");
+            }
+            root = node;
+        }
+        if (node >= nTips && child_count[node] != 2) {
+            Rcpp::stop("every internal node must have exactly two children");
+        }
+        if (node >= nTips && incoming_edge[node] >= 0 &&
+            last_child_edge[node] >= incoming_edge[node]) {
+            Rcpp::stop("edgeList must be supplied in postorder");
+        }
+    }
+    if (root < 0) {
+        Rcpp::stop("edgeList must contain exactly one internal root");
+    }
+    for (int edge = 0; edge < edge_count; edge += 2) {
+        if (edgeList(edge, 0) != edgeList(edge + 1, 0)) {
+            Rcpp::stop("sibling edges must be adjacent in postorder");
+        }
+    }
+
+    std::vector<unsigned char> state(
+        static_cast<std::size_t>(node_count), 0
+    );
+    state[root] = 2;
+    for (int node = 0; node < node_count; ++node) {
+        int current = node;
+        while (state[current] == 0) {
+            state[current] = 1;
+            current = parent[current];
+        }
+        if (state[current] == 1) {
+            Rcpp::stop("edgeList contains a cycle");
+        }
+        current = node;
+        while (state[current] == 1) {
+            state[current] = 2;
+            current = parent[current];
+        }
+    }
+
+    Rcpp::NumericMatrix F(nTips, node_count);
+    Rcpp::NumericMatrix G(nTips, node_count);
     for(int i=0; i<nTips; ++i)
         F(i,i) = G(i,i) = 1;
 
