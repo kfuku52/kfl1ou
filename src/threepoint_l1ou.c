@@ -1,7 +1,25 @@
+#include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <R.h>
+
+static size_t checked_size_product(size_t left, size_t right,
+                                   const char *label) {
+  if (right != 0 && left > ((size_t)-1) / right) {
+    error("%s allocation size overflows size_t", label);
+  }
+  return left * right;
+}
+
+static void *zero_alloc(size_t count, size_t size, const char *label) {
+  size_t bytes = checked_size_product(count, size, label);
+  void *memory = (void *)R_alloc(count, (int)size);
+  memset(memory, 0, bytes);
+  return memory;
+}
 
 void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
                      int *rootpo, double *transa, double *transb, int *des,
@@ -10,21 +28,56 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
   int N = *Npo;
   int n = *npo;
   int pN = *pNpo;
-  int npN = n + pN;
   int dY = *dYpo;
   int dX = *dXpo;
+  if (N < 1 || n < 2 || pN < 1 || dY < 1 || dX < 1 ||
+      n > INT_MAX - pN) {
+    error("invalid dimensions supplied to threepoint_l1ou");
+  }
+  int npN = n + pN;
+  if (N != npN - 1 || dY > INT_MAX / dY || dX > INT_MAX / dX ||
+      dX > INT_MAX / dY) {
+    error("dimension products are too large in threepoint_l1ou");
+  }
+  int dY2 = dY * dY;
+  int dX2 = dX * dX;
+  int dXY = dX * dY;
+  long long output_count =
+      2LL + dY + dY2 + dX + dX2 + dXY;
+  if (output_count > INT_MAX) {
+    error("requested output is too large in threepoint_l1ou");
+  }
   int r = *rootpo;
   r--;
   double rootEdge = *transa;
 
-  double *logd = (double *)calloc(npN, sizeof(double));
-  double *vec11 = (double *)calloc(npN, sizeof(double));
-  double *yy = (double *)calloc(npN * dY * dY, sizeof(double));
-  double *y1 = (double *)calloc(npN * dY, sizeof(double));
-  double *Xy = (double *)calloc(npN * dX * dY, sizeof(double));
-  double *X1 = (double *)calloc(npN * dX, sizeof(double));
-  double *XX = (double *)calloc(npN * dX * dX, sizeof(double));
-  int *zero = (int *)calloc(npN, sizeof(int));
+  size_t node_count = (size_t)npN;
+  size_t y1_count =
+      checked_size_product(node_count, (size_t)dY, "response workspace");
+  size_t yy_count =
+      checked_size_product(y1_count, (size_t)dY, "response cross-product");
+  size_t X1_count =
+      checked_size_product(node_count, (size_t)dX, "design workspace");
+  size_t XX_count =
+      checked_size_product(X1_count, (size_t)dX, "design cross-product");
+  size_t Xy_count =
+      checked_size_product(X1_count, (size_t)dY, "design-response cross-product");
+  double *logd =
+      (double *)zero_alloc(node_count, sizeof(double), "node workspace");
+  double *vec11 =
+      (double *)zero_alloc(node_count, sizeof(double), "node workspace");
+  double *yy =
+      (double *)zero_alloc(yy_count, sizeof(double), "response cross-product");
+  double *y1 =
+      (double *)zero_alloc(y1_count, sizeof(double), "response workspace");
+  double *Xy = (double *)zero_alloc(
+      Xy_count, sizeof(double), "design-response cross-product");
+  double *X1 =
+      (double *)zero_alloc(X1_count, sizeof(double), "design workspace");
+  double *XX =
+      (double *)zero_alloc(XX_count, sizeof(double), "design cross-product");
+  int *zero =
+      (int *)zero_alloc(node_count, sizeof(int), "zero-edge workspace");
 
   for (int iedge = 0; iedge < N + 1; iedge++) {
     zero[iedge] = -1;
@@ -238,11 +291,11 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
   }
   p += dY;
   ikXY = r;
-  for (int j = 0; j < dY * dY; j++) {
+  for (int j = 0; j < dY2; j++) {
     output[p + j] = yy[ikXY];
     ikXY += npN;
   }
-  p += dY * dY;
+  p += dY2;
   ikXY = r;
   for (int j = 0; j < dX; j++) {
     output[p + j] = X1[ikXY];
@@ -250,23 +303,15 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
   }
   p += dX;
   ikXY = r;
-  for (int j = 0; j < dX * dX; j++) {
+  for (int j = 0; j < dX2; j++) {
     output[p + j] = XX[ikXY];
     ikXY += npN;
   }
-  p += dX * dX;
+  p += dX2;
   ikXY = r;
-  for (int j = 0; j < dX * dY; j++) {
+  for (int j = 0; j < dXY; j++) {
     output[p + j] = Xy[ikXY];
     ikXY += npN;
   }
 
-  free(logd);
-  free(vec11);
-  free(y1);
-  free(yy);
-  free(X1);
-  free(XX);
-  free(Xy);
-  free(zero);
 }

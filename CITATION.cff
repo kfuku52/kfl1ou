@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: If you use this software, please cite it and the original l1ou article.
 title: "kfl1ou: Tools for Detecting Shifts in Comparative Trait Data"
 type: software
-version: 2.4.0
+version: 2.4.1
 date-released: 2026-07-23
 license: GPL-3.0-or-later
 repository-code: https://github.com/kfuku52/kfl1ou

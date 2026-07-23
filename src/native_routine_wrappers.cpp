@@ -57,6 +57,27 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
         N != node_count - 1 || root <= n || root > node_count) {
         Rcpp::stop("tree dimensions or root are inconsistent in threepoint_l1ou_c");
     }
+    const std::size_t nodes = static_cast<std::size_t>(node_count);
+    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+    const std::size_t max_double_elements = max_size / sizeof(double);
+    auto checked_product = [max_size](std::size_t left, std::size_t right) {
+        if (right != 0 && left > max_size / right) {
+            Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
+        }
+        return left * right;
+    };
+    const std::size_t dy = static_cast<std::size_t>(dY);
+    const std::size_t dx = static_cast<std::size_t>(dX);
+    const std::size_t y_workspace = checked_product(nodes, dy);
+    const std::size_t x_workspace = checked_product(nodes, dx);
+    const std::size_t yy_workspace = checked_product(y_workspace, dy);
+    const std::size_t xx_workspace = checked_product(x_workspace, dx);
+    const std::size_t xy_workspace = checked_product(x_workspace, dy);
+    if (yy_workspace > max_double_elements ||
+        xx_workspace > max_double_elements ||
+        xy_workspace > max_double_elements) {
+        Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
+    }
     if (!std::isfinite(transa) || transa < 0.0 || transb.size() != N ||
         des.size() != N || anc.size() != N) {
         Rcpp::stop("tree edge arrays are invalid in threepoint_l1ou_c");

@@ -194,6 +194,13 @@ test_that("threepoint native boundary validates dimensions and topology", {
     "response or design dimensions"
   )
 
+  oversized <- valid
+  oversized$dY <- .Machine$integer.max
+  expect_error(
+    do.call(kfl1ou:::threepoint_l1ou_c, oversized),
+    "working memory is too large"
+  )
+
   duplicate_tip <- valid
   duplicate_tip$des <- c(1L, 1L)
   expect_error(

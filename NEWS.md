@@ -1,3 +1,9 @@
+# kfl1ou 2.4.1
+
+- Prevent integer overflow when sizing native three-point likelihood
+  workspaces, reject infeasible allocations before entering C, and handle
+  allocation failure without dereferencing null pointers.
+
 # kfl1ou 2.4.0
 
 - Exercise the requested sparse-search backends explicitly in regression tests
