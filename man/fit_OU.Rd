@@ -23,6 +23,7 @@ fit_OU(
   likelihood.engine = c("auto", "dense", "pruning"),
   optimizer.starts = 5,
   compute.hessian = TRUE,
+  search.max.nShifts = NULL,
   l1ou.options = NA
 )
 }
@@ -57,7 +58,8 @@ variances. When combined with \code{measurement_error = TRUE},
 additional shared measurement-error variance per trait.}
 
 \item{trait.covariance}{residual covariance model for multivariate traits;
-see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.}
+see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+and a localization-aware multivariate pBIC extension.}
 
 \item{alpha.structure}{full-covariance adaptation-rate structure.}
 
@@ -70,6 +72,10 @@ see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.}
 \item{optimizer.starts}{number of deterministic optimization starts.}
 
 \item{compute.hessian}{logical; calculate a numerical Hessian when practical.}
+
+\item{search.max.nShifts}{maximum number of shifts used if a later method,
+such as \code{confint(..., selection = "full")}, repeats shift selection.
+By default this is at least one and otherwise the number of fitted shifts.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 }

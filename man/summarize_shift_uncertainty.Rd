@@ -13,8 +13,8 @@ summarize_shift_uncertainty(bootstrap.result, tree = NULL)
 \item{tree}{optional phylogeny used to label edge rows and columns.}
 }
 \value{
-Configuration frequencies, edge inclusion probabilities, and an
-edge co-selection probability matrix.
+Exact-configuration and tip-partition frequencies, edge inclusion,
+edge co-selection, and tip co-assignment probabilities.
 }
 \description{
 Summarize uncertainty in bootstrap shift locations

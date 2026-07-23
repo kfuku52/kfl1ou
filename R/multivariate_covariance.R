@@ -13,11 +13,11 @@ validate_trait_covariance_mode <- function(mode, Y, criterion){
         warning("trait.covariance = \"full\" has no effect for a univariate response; using \"diagonal\".")
         mode <- "diagonal"
     }
-    if(mode == "full" && !identical(criterion, "BIC")){
+    if(mode == "full" && !criterion %in% c("BIC", "pBIC")){
         stop(paste0(
-            "trait.covariance = \"full\" currently supports criterion = \"BIC\". ",
-            "Small-sample and phylogenetic penalties have not been derived for ",
-            "this correlated multivariate OU model."
+            "trait.covariance = \"full\" supports criterion = \"BIC\" or ",
+            "the localization-aware \"pBIC\" extension. Small-sample criteria ",
+            "have not been derived for this correlated multivariate OU model."
         ))
     }
     mode
@@ -139,6 +139,48 @@ shrink_trait_covariance <- function(sample.covariance, residuals,
         covariance=regularize_positive_definite(covariance),
         lambda=lambda
     )
+}
+
+
+estimate_trait_shrinkage_lambda <- function(
+        tree, Y, design.builder, alpha, root.model){
+    Y <- as.matrix(Y)
+    p <- ncol(Y)
+    n <- nrow(Y)
+    fallback <- min(0.95, p / max(p + n, 1L))
+    designs <- design.builder(alpha)
+    if(!is.list(designs)) designs <- rep(list(as.matrix(designs)), p)
+    residuals <- matrix(NA_real_, nrow=n, ncol=p)
+    for(j in seq_len(p)){
+        observed <- is.finite(Y[, j])
+        design <- as.matrix(designs[[min(j, length(designs))]])
+        if(sum(observed) <= qr(design[observed, , drop=FALSE])$rank) next
+        coefficient <- lm.fit(
+            design[observed, , drop=FALSE], Y[observed, j]
+        )$coefficients
+        coefficient[!is.finite(coefficient)] <- 0
+        raw <- Y[observed, j] -
+            drop(design[observed, , drop=FALSE] %*% coefficient)
+        alpha.j <- rep(as.numeric(alpha), length.out=p)[[j]]
+        base <- multivariate_ou_base_covariance(tree, alpha.j, root.model)[
+            observed, observed, drop=FALSE
+        ]
+        factor <- tryCatch(chol(base), error=function(e) NULL)
+        if(is.null(factor)) next
+        whitened <- drop(forwardsolve(t(factor), matrix(raw, ncol=1L)))
+        residuals[observed, j] <- whitened
+    }
+    complete <- stats::complete.cases(residuals)
+    residuals <- residuals[complete, , drop=FALSE]
+    if(nrow(residuals) < max(3L, min(p + 1L, n))){
+        return(fallback)
+    }
+    residuals <- sweep(residuals, 2L, colMeans(residuals), "-")
+    sample.covariance <- crossprod(residuals) / nrow(residuals)
+    lambda <- shrink_trait_covariance(
+        sample.covariance, residuals, lambda=NA_real_
+    )$lambda
+    min(0.95, max(1e-6, lambda))
 }
 
 multivariate_ou_base_covariance <- function(tree, alpha, root.model){
@@ -562,14 +604,16 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         stop("each trait needs at least two observed tips for full covariance estimation.")
     }
     bounds <- multivariate_alpha_bounds(tree, opt, fixed.alpha, p)
+    initial.alpha <- bounds$start
     shrinkage.lambda <- 0
     if(identical(opt$covariance.regularization, "shrinkage")){
         shrinkage.lambda <- opt$regularization.lambda
         if(is.na(shrinkage.lambda)){
-            shrinkage.lambda <- min(0.95, p / max(p + n, 1L))
+            shrinkage.lambda <- estimate_trait_shrinkage_lambda(
+                tree, Y, design.builder, initial.alpha, opt$root.model
+            )
         }
     }
-    initial.alpha <- bounds$start
     marginal.scale <- pmax(
         multivariate_marginal_scale(tree, initial.alpha, opt$root.model, p),
         .Machine$double.eps
@@ -875,10 +919,18 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
     fit
 }
 
-multivariate_full_information_score <- function(fit, n.shifts, criterion){
-    criterion <- match.arg(criterion, "BIC")
-    parameters <- fit$p + n.shifts
-    -2 * fit$logLik + log(fit$sample.size) * parameters
+multivariate_full_information_score <- function(
+        fit, n.shifts, criterion, n.locations=NULL){
+    criterion <- match.arg(criterion, c("BIC", "pBIC"))
+    if(criterion == "BIC"){
+        parameters <- fit$p + n.shifts
+        return(-2 * fit$logLik + log(fit$sample.size) * parameters)
+    }
+    if(is.null(n.locations)){
+        n.locations <- max(1L, 2L * fit$sample.size - 3L)
+    }
+    -2 * fit$logLik + log(fit$sample.size) * fit$p +
+        2 * n.shifts * log(max(2, n.locations))
 }
 
 fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
@@ -888,7 +940,8 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
         tree, Y, shift.configuration, opt
     )
     score <- multivariate_full_information_score(
-        fit, length(shift.configuration), opt$criterion
+        fit, length(shift.configuration), opt$criterion,
+        n.locations=Nedge(tree) - 1L
     )
     n <- nrow(Y)
     p <- ncol(Y)
@@ -952,14 +1005,20 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
         tip.trait.correlation=fit$tip.trait.correlation,
         covariance.regularization=opt$covariance.regularization,
         regularization.lambda=fit$regularization.lambda,
-        information.criterion.calibrated=identical(
-            opt$covariance.regularization, "none"
-        ),
-        score.note=if(identical(opt$covariance.regularization, "none")) NULL else
+        information.criterion.calibrated=
+            identical(opt$covariance.regularization, "none") &&
+            identical(opt$criterion, "BIC"),
+        score.note=if(!identical(opt$covariance.regularization, "none")){
             paste0(
-                "BIC is evaluated at a regularized estimate and should be ",
-                "treated as a sensitivity score."
-            ),
+                opt$criterion, " is evaluated at a regularized estimate and ",
+                "should be treated as a sensitivity score."
+            )
+        } else if(identical(opt$criterion, "pBIC")){
+            paste0(
+                "This multivariate pBIC uses an explicit shift-location ",
+                "multiplicity penalty; report BIC as a sensitivity analysis."
+            )
+        } else NULL,
         optimization=fit$optimization,
         diagnostics=fit$diagnostics,
         likelihood.engine=fit$diagnostics$likelihood.engine,
@@ -996,7 +1055,8 @@ fit_full_covariance_convergent_model <- function(tree, Y, shift.configuration,
     )
     if(is.null(score)){
         score <- multivariate_full_information_score(
-            fit, length(shift.configuration), opt$criterion
+            fit, length(shift.configuration), opt$criterion,
+            n.locations=Nedge(tree) - 1L
         )
     }
     n <- nrow(Y)
@@ -1059,14 +1119,20 @@ fit_full_covariance_convergent_model <- function(tree, Y, shift.configuration,
     model$tip.trait.correlation <- fit$tip.trait.correlation
     model$covariance.regularization <- opt$covariance.regularization
     model$regularization.lambda <- fit$regularization.lambda
-    model$information.criterion.calibrated <- identical(
-        opt$covariance.regularization, "none"
-    )
-    model$score.note <- if(model$information.criterion.calibrated) NULL else
+    model$information.criterion.calibrated <-
+        identical(opt$covariance.regularization, "none") &&
+        identical(opt$criterion, "BIC")
+    model$score.note <- if(!identical(opt$covariance.regularization, "none")){
         paste0(
-            "BIC is evaluated at a regularized estimate and should be treated ",
-            "as a sensitivity score."
+            opt$criterion, " is evaluated at a regularized estimate and ",
+            "should be treated as a sensitivity score."
         )
+    } else if(identical(opt$criterion, "pBIC")){
+        paste0(
+            "This multivariate pBIC uses an explicit shift-location ",
+            "multiplicity penalty; report BIC as a sensitivity analysis."
+        )
+    } else NULL
     model$optimization <- fit$optimization
     model$diagnostics <- fit$diagnostics
     model$likelihood.engine <- fit$diagnostics$likelihood.engine
@@ -1103,12 +1169,15 @@ full_covariance_sparse_inputs <- function(tree, Y, alpha, est.alpha, opt){
             as.numeric(alpha[[1L]])
         }
     }
-    null.fit <- fit_multivariate_ou_likelihood(
-        tree, Y, integer(), opt, fixed.alpha=fixed.alpha
+    reference.configuration <- if(is.null(opt$sparse.reference.configuration)){
+        integer()
+    } else as.integer(opt$sparse.reference.configuration)
+    reference.fit <- fit_multivariate_ou_likelihood(
+        tree, Y, reference.configuration, opt, fixed.alpha=fixed.alpha
     )
     covariance <- multivariate_ou_observed_covariance(
-        tree, Y, fixed.alpha, null.fit$trait.covariance, opt,
-        null.fit$sigma2.error
+        tree, Y, fixed.alpha, reference.fit$trait.covariance, opt,
+        reference.fit$sigma2.error
     )
     covariance.chol <- chol(covariance)
     observed <- !is.na(as.vector(Y))
@@ -1140,7 +1209,7 @@ full_covariance_sparse_inputs <- function(tree, Y, alpha, est.alpha, opt){
     list(
         y=drop(crossprod(complement, whitened.y)),
         X=crossprod(complement, whitened.edges),
-        trait.covariance=null.fit$trait.covariance,
+        trait.covariance=reference.fit$trait.covariance,
         alpha=fixed.alpha
     )
 }

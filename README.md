@@ -148,32 +148,50 @@ then not generally equal.
 
 For many traits or few residual contrasts, use
 `covariance.regularization = "shrinkage"`; an explicit
-`regularization.lambda` can be supplied or selected automatically. Full
-covariance requires `criterion = "BIC"`: the package deliberately
-rejects pBIC, pBICess, mBIC, and AICc because their penalties have not been
-derived for this joint model. The historical `trait.covariance = "diagonal"`
-mode remains the default and retains trait-specific alpha estimates. Shrinkage
-has the same correlation-penalty interpretation for dense and pruning engines,
-including incomplete data. BIC evaluated at a regularized estimate is reported
-as a sensitivity score rather than a calibrated marginal-likelihood
-approximation.
+`regularization.lambda` can be supplied or estimated from phylogenetically
+whitened residuals. Full covariance supports ordinary `BIC` and a
+localization-aware multivariate `pBIC` extension. The latter adds an explicit
+penalty for searching across branch locations and is labelled as a sensitivity
+criterion. The historical `trait.covariance = "diagonal"` mode remains the
+default and retains trait-specific alpha estimates. Shrinkage has the same
+correlation-penalty interpretation for dense and pruning engines, including
+incomplete data. Any information criterion evaluated at a regularized estimate
+is reported as a sensitivity score rather than a calibrated
+marginal-likelihood approximation.
 
 Numerical and inferential checks are available directly from fitted objects:
 
 ```r
-diagnose_l1ou(fit_general)
+diagnose_l1ou(fit_general, nsim = 200, seed = 1)
 confint(
   fit_general, method = "parametric", selection = "full",
-  nsim = 200, seed = 1
+  nsim = 200, seed = 2
 )
-compare_trait_covariance(tree, Y, nboot = 200, seed = 2)
+compare_trait_covariance(
+  tree, Y, nboot = 200, seed = 3, selection = "full"
+)
 
 support <- l1ou_bootstrap_support(
-  fit_correlated, nItrs = 200, type = "parametric", seed = 3
+  fit_correlated, nItrs = 200, type = "parametric", seed = 4
 )
 summarize_shift_uncertainty(support, tree)
 averaged <- model_average_l1ou(fit_correlated, delta.max = 10)
+
+check_rate_heterogeneity(fit_general, nsim = 200, seed = 5)
+sensitivity_l1ou(fit_general, selection = "full")
 ```
+
+`search.strategy = "auto"` now enumerates and certifies the complete shift
+configuration space when it is small. Larger searches can use
+`search.strategy = "ensemble"`, which augments the full-data sparse path with
+deterministically seeded subsampled paths. Every search reports the evaluated
+fraction and whether the reported optimum is globally certified.
+
+Bootstrap summaries and model averaging include canonical tip partitions and
+tip co-assignment probabilities, so root-complement and other edge-placement
+equivalences are not mistaken for biological disagreement. For replicated
+species measurements use `fit_l1ou_replicates()`. For phylogenetic uncertainty,
+`fit_l1ou_tree_ensemble()` aggregates partitions across alternative trees.
 
 ### Interpretation and statistical limitations
 

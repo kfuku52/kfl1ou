@@ -1,5 +1,25 @@
-# kfl1ou 2.2.1
+# kfl1ou 2.3.0
 
+- Add automatically certified exhaustive shift searches for small
+  configuration spaces, seeded ensemble-path augmentation for larger searches,
+  candidate-space coverage diagnostics, and complete candidate profiles.
+- Make full-search bootstrap intervals work for models created by `fit_OU()`;
+  non-selected exact-edge coefficients now contribute zero, with exact-edge
+  and tip-partition reselection probabilities reported explicitly.
+- Add canonical tip partitions, equivalent-scenario enumeration, partition
+  bootstrap summaries, weighted tip co-assignment, and tree-ensemble
+  sensitivity analysis.
+- Add projected residual contrasts, fitted-model predictive checks,
+  conditional tip outlier scores, clade diffusion-rate diagnostics, and a
+  scan-calibrated clade rate-shift likelihood comparison.
+- Retain trait-specific branch effects in multivariate sparse paths by default,
+  iteratively regenerate full-covariance candidates after mean refits, and add
+  a localization-aware multivariate pBIC sensitivity criterion.
+- Replace the fixed covariance-shrinkage heuristic with an analytic estimate
+  based on phylogenetically whitened residuals, while retaining an explicit
+  fixed-lambda option.
+- Add replicated-measurement fitting, measurement-error profiles, full-pipeline
+  covariance bootstrap selection, and root/alpha/criterion sensitivity grids.
 - Restore Windows builds by isolating POSIX-only runtime symbol lookup, and
   harden the native three-point likelihood boundary against malformed input.
 - Keep non-evaluated vignette examples out of extracted check code, expand

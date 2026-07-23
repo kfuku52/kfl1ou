@@ -21,6 +21,18 @@
 #'@param alpha.lower optional lower bound for the phylogenetic adaptation rate.
 #'@param lars.alg sparse-path algorithm used in the univariate case. The
 #' option name is kept for backward compatibility.
+#'@param search.strategy candidate-search strategy. \code{"auto"} performs an
+#' exact search when the requested configuration space is small and otherwise
+#' augments the sparse path with subsampled ensemble paths. The other choices
+#' force the lasso, ensemble, or exhaustive strategy.
+#'@param exhaustive.max.configurations largest raw configuration space that an
+#' automatic search will enumerate exactly.
+#'@param ensemble.replicates number of subsampled paths appended by an ensemble
+#' search after the path fitted to all whitened observations.
+#'@param ensemble.fraction fraction of whitened observations retained in each
+#' ensemble path.
+#'@param ensemble.seed deterministic seed used for ensemble subsampling without
+#' changing the caller's random-number state.
 #'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 #' then it runs sequentially. Otherwise, when fork-based parallelism is
 #' available, \code{kfl1ou} may use up to \code{nCores} forked workers via
@@ -30,6 +42,12 @@
 #'@param edge.length.threshold minimum edge length that is considered non-zero. Branches with shorter length are considered as soft polytomies, disallowing shifts on such branches.
 #'@param grp.delta internal (used when the data contain multiple traits). The input lambda sequence for the group lasso, in `grplasso', will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
 #'@param grp.seq.ub (used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
+#'@param group.support.threshold minimum trait support used to retain a branch
+#' from a multivariate group-lasso solution. A proportion in \code{(0,1)} is
+#' converted to a trait count; values of at least one are counts. The default
+#' retains a branch when any trait coefficient in its group is non-zero.
+#'@param covariance.candidate.iterations number of mean/covariance candidate
+#' regeneration rounds used for a full trait-covariance search.
 #'@param measurement_error logical. If TRUE, estimates an observation-level
 #' measurement error variance for each trait through \code{kfl1ou}'s bundled
 #' likelihood solver.
@@ -41,7 +59,8 @@
 #' \code{"diagonal"} retains the original trait-by-trait likelihood and allows
 #' a separate alpha for every trait. \code{"full"} fits a joint multivariate OU
 #' likelihood and an unrestricted positive-definite evolutionary covariance
-#' matrix among traits. The full model currently uses \code{criterion = "BIC"}.
+#' matrix among traits. Full covariance supports ordinary \code{"BIC"} and a
+#' localization-aware multivariate \code{"pBIC"} extension.
 #'@param alpha.structure for full covariance, \code{"shared"} estimates one
 #' adaptation rate; \code{"diagonal"} estimates one rate per trait.
 #'@param covariance.regularization \code{"shrinkage"} regularizes the full
@@ -159,11 +178,18 @@ estimate_shift_configuration <- function(tree, Y,
            alpha.upper            = alpha_upper_bound(tree), 
            alpha.lower            = NA,
            lars.alg               = c("lasso", "stepwise"),
+           search.strategy        = c("auto", "lasso", "ensemble", "exhaustive"),
+           exhaustive.max.configurations = 5000L,
+           ensemble.replicates    = 12L,
+           ensemble.fraction      = 0.75,
+           ensemble.seed          = 1L,
            nCores                 = 1,
            rescale                = TRUE,
            edge.length.threshold  = .Machine$double.eps,
            grp.delta              = 1/16,
            grp.seq.ub             = 5,
+           group.support.threshold = 1L,
+           covariance.candidate.iterations = 2L,
            measurement_error      = FALSE,
            input_error            = NULL,
            trait.covariance       = c("diagonal", "full"),
@@ -321,6 +347,12 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$max.nShifts       <- max.nShifts
         l1ou.options$criterion         <- match.arg(criterion)
         l1ou.options$lars.alg          <- match.arg(lars.alg)
+        l1ou.options$search.strategy   <- match.arg(search.strategy)
+        l1ou.options$exhaustive.max.configurations <-
+            exhaustive.max.configurations
+        l1ou.options$ensemble.replicates <- ensemble.replicates
+        l1ou.options$ensemble.fraction <- ensemble.fraction
+        l1ou.options$ensemble.seed <- ensemble.seed
         l1ou.options$root.model        <- match.arg(root.model)
         l1ou.options$quietly           <- quietly
 
@@ -332,6 +364,9 @@ estimate_shift_configuration <- function(tree, Y,
 
         l1ou.options$grp.seq.ub   <- grp.seq.ub
         l1ou.options$grp.delta    <- grp.delta
+        l1ou.options$group.support.threshold <- group.support.threshold
+        l1ou.options$covariance.candidate.iterations <-
+            covariance.candidate.iterations
         l1ou.options$candid.edges <- candid.edges
         l1ou.options$Z            <- generate_design_matrix(tree, "simpX")
         l1ou.options$grplasso.backend <- "cpp"
@@ -363,6 +398,7 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$max.nShifts <- normalize_max_n_shifts(l1ou.options$max.nShifts, tree)
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
     }
+    l1ou.options <- normalize_shift_search_options(l1ou.options, tree, Y)
     if(is.null(l1ou.options$tree.scale)){
         l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
     }
@@ -379,13 +415,58 @@ estimate_shift_configuration <- function(tree, Y,
     return(with_l1ou_thread_limit(thread.limit, {
         if(length(l1ou.options$candid.edges)==0 || l1ou.options$max.nShifts == 0){
             l1ou.options$use.saved.scores <- FALSE
-            return( fit_OU(tree, Y, shift.configuration=c(), l1ou.options=l1ou.options) )
+            eModel <- fit_OU(tree, Y, shift.configuration=c(),
+                             l1ou.options=l1ou.options)
+            eModel$profile <- list(
+                scores=eModel$score,
+                configurations=list(integer())
+            )
+            eModel$search.diagnostics <- list(
+                requested=l1ou.options$search.strategy,
+                strategy="none",
+                configuration.space.size=1,
+                evaluated.configurations=1L,
+                coverage=1,
+                globally.optimal=TRUE
+            )
+            return(eModel)
         }
 
+        search <- resolve_shift_search_strategy(tree, l1ou.options)
+        l1ou.options$effective.search.strategy <- search$strategy
         if (l1ou.options$use.saved.scores) { erase_configuration_score_db() }
 
+        if(search$strategy == "exhaustive"){
+            if(!isTRUE(l1ou.options$quietly)){
+                cat("Starting exhaustive evaluation of ",
+                    search$configuration.space.size,
+                    " raw shift configurations.\n", sep="")
+            }
+            configurations <- enumerate_shift_configurations(tree, l1ou.options)
+            eModel <- estimate_shift_configuration_from_candidates(
+                tree, Y, configurations, l1ou.options
+            )
+            cached.profile <- if(l1ou.options$use.saved.scores){
+                list_investigated_configs()
+            } else NULL
+            if(!is.null(cached.profile) && length(cached.profile$scores)){
+                eModel$profile <- cached.profile
+            }
+            eModel$.candidate.configurations <- NULL
+            eModel$search.diagnostics <- list(
+                requested=search$requested,
+                strategy=search$strategy,
+                configuration.space.size=search$configuration.space.size,
+                evaluated.configurations=length(eModel$profile$configurations),
+                coverage=1,
+                globally.optimal=TRUE
+            )
+            if(l1ou.options$use.saved.scores) erase_configuration_score_db()
+            return(eModel)
+        }
+
         if(!isTRUE(l1ou.options$quietly))
-            cat("Starting first LASSO (alpha=0) to find a list of candidate configurations.\n")
+            cat("Starting first sparse path (alpha=0) to find candidate configurations.\n")
         if (ncol(Y) == 1) {
             eModel1 = estimate_shift_configuration_known_alpha(tree, 
                 Y, est.alpha = TRUE, opt = l1ou.options)
@@ -415,12 +496,54 @@ estimate_shift_configuration <- function(tree, Y,
                 candidate.configurations = candidate.configurations,
                 opt = l1ou.options
             )
+            if(is_full_trait_covariance(l1ou.options, Y) &&
+               l1ou.options$covariance.candidate.iterations > 1L){
+                for(iteration in 2:l1ou.options$covariance.candidate.iterations){
+                    iterative.opt <- l1ou.options
+                    iterative.opt$sparse.reference.configuration <-
+                        eModel$shift.configuration
+                    additional <- estimate_shift_configuration_known_alpha_multivariate(
+                        tree, Y,
+                        alpha=eModel$alpha,
+                        opt=iterative.opt,
+                        candidate.only=TRUE
+                    )
+                    previous.count <- length(candidate.configurations)
+                    candidate.configurations <- unique_shift_configurations(
+                        c(candidate.configurations, additional), tree, l1ou.options
+                    )
+                    if(length(candidate.configurations) == previous.count) break
+                    eModel <- estimate_shift_configuration_from_candidates(
+                        tree, Y,
+                        candidate.configurations=candidate.configurations,
+                        opt=l1ou.options
+                    )
+                }
+            }
             if (eModel$score > eModel1$score) 
                 eModel = eModel1
         }
 
-        eModel$profile = list_investigated_configs() 
+        cached.profile <- if(l1ou.options$use.saved.scores){
+            list_investigated_configs()
+        } else NULL
+        if(!is.null(cached.profile) && length(cached.profile$scores)){
+            eModel$profile <- cached.profile
+        }
         eModel$.candidate.configurations <- NULL
+        evaluated <- if(is.null(eModel$profile$configurations)) 0L else
+            length(eModel$profile$configurations)
+        eModel$search.diagnostics <- list(
+            requested=search$requested,
+            strategy=search$strategy,
+            configuration.space.size=search$configuration.space.size,
+            evaluated.configurations=evaluated,
+            coverage=if(is.finite(search$configuration.space.size) &&
+                        search$configuration.space.size > 0){
+                min(1, evaluated / search$configuration.space.size)
+            } else NA_real_,
+            globally.optimal=FALSE
+        )
 
         if (l1ou.options$use.saved.scores) { erase_configuration_score_db() }
         if ( !isTRUE(l1ou.options$quietly) &&
@@ -485,9 +608,40 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     Tmp[,-to.be.removed] = sol.path$beta
     sol.path$beta = Tmp
 
-    result  = select_best_solution(tree, Y, sol.path, opt)
+    candidate.configurations <- collect_candidate_configurations(
+        tree, Y, sol.path, opt
+    )
+    if(identical(opt$effective.search.strategy, "ensemble")){
+        subsamples <- ensemble_row_subsamples(nrow(XX), opt)
+        for(rows in subsamples){
+            subsampled.path <- tryCatch(
+                suppressWarnings(run_univariate_sparse_path(
+                    XX[rows, , drop=FALSE], YY[rows, , drop=FALSE], opt
+                )),
+                error=function(e) NULL
+            )
+            if(is.null(subsampled.path)) next
+            padded <- matrix(0, nrow(subsampled.path$beta), nP)
+            padded[, -to.be.removed] <- subsampled.path$beta
+            subsampled.path$beta <- padded
+            candidate.configurations <- c(
+                candidate.configurations,
+                collect_candidate_configurations(tree, Y, subsampled.path, opt)
+            )
+        }
+        candidate.configurations <- unique_shift_configurations(
+            candidate.configurations, tree, opt
+        )
+    }
+    result <- evaluate_candidate_configurations(
+        tree, Y, candidate.configurations, opt
+    )
     eModel  = fit_OU_model(tree, Y, result$shift.configuration, opt)
     eModel$.candidate.configurations <- result$candidate.configurations
+    eModel$profile <- list(
+        scores=result$scores,
+        configurations=result$evaluated.configurations
+    )
 
     if(!opt$quietly){
         print(eModel)
@@ -616,21 +770,46 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     grpX               = grpX[,grpX.col.nZero.idx]
     grpIdx             = grpIdx[grpX.col.nZero.idx]
 
-    sol = run_grplasso(grpX, grpY, nVariables, grpIdx, opt)
+    pad.group.solution <- function(solution){
+        Tmp <- matrix(0, grpX.nCol, ncol(solution$coefficients))
+        Tmp[grpX.col.nZero.idx, ] <- matrix(solution$coefficients)
+        solution$coefficients <- Tmp
+        Tmp <- matrix(0, nEdges * nVariables,
+                      ncol(solution$coefficients))
+        Tmp[keep.col.idx, ] <- matrix(solution$coefficients)
+        solution$coefficients <- Tmp
+        solution
+    }
 
-    Tmp                      = matrix(0, grpX.nCol, ncol(sol$coefficients))
-    Tmp[grpX.col.nZero.idx,] = matrix(sol$coefficients)
-    sol$coefficients         = Tmp
-    ###end NOTE:
-    
-    Tmp                  = matrix(0, nEdges * nVariables, ncol(sol$coefficients))
-    Tmp[keep.col.idx,]   = matrix(sol$coefficients)
-    sol$coefficients     = Tmp
+    sol <- pad.group.solution(
+        run_grplasso(grpX, grpY, nVariables, grpIdx, opt)
+    )
 
     ##removing the intercept results
     #sol$coefficients     = sol$coefficients[-ncol(grpX), ]
 
     candidate.configurations <- collect_candidate_configurations(tree, Y, sol, opt)
+    if(identical(opt$effective.search.strategy, "ensemble")){
+        subsamples <- ensemble_row_subsamples(nrow(grpX), opt)
+        for(rows in subsamples){
+            subsampled <- tryCatch(
+                suppressWarnings(run_grplasso(
+                    grpX[rows, , drop=FALSE], grpY[rows],
+                    nVariables, grpIdx, opt
+                )),
+                error=function(e) NULL
+            )
+            if(is.null(subsampled)) next
+            subsampled <- pad.group.solution(subsampled)
+            candidate.configurations <- c(
+                candidate.configurations,
+                collect_candidate_configurations(tree, Y, subsampled, opt)
+            )
+        }
+        candidate.configurations <- unique_shift_configurations(
+            candidate.configurations, tree, opt
+        )
+    }
     if(isTRUE(candidate.only)){
         return(candidate.configurations)
     }
@@ -639,6 +818,10 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     result  = evaluate_candidate_configurations(tree, Y, candidate.configurations, opt=opt)
     eModel  = fit_OU_model(tree, Y, result$shift.configuration, opt=opt)
     eModel$.candidate.configurations <- result$candidate.configurations
+    eModel$profile <- list(
+        scores=result$scores,
+        configurations=result$evaluated.configurations
+    )
 
     if(!opt$quietly){
         print(eModel)
@@ -650,7 +833,12 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
 estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.configurations, opt){
 
     if(length(candidate.configurations) == 0){
-        return(fit_OU_model(tree, Y, integer(), opt))
+        model <- fit_OU_model(tree, Y, integer(), opt)
+        model$profile <- list(
+            scores=model$score,
+            configurations=list(integer())
+        )
+        return(model)
     }
 
     keys <- vapply(candidate.configurations, function(sc) {
@@ -662,7 +850,12 @@ estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.conf
                                        candidate.configurations)
 
     if(length(candidate.configurations) == 0){
-        return(fit_OU_model(tree, Y, integer(), opt))
+        model <- fit_OU_model(tree, Y, integer(), opt)
+        model$profile <- list(
+            scores=model$score,
+            configurations=list(integer())
+        )
+        return(model)
     }
 
     search_ith_config <- make_parallel_candidate_search(tree, Y, opt)
@@ -680,6 +873,14 @@ estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.conf
     result <- all.res[[which.min(scores)]]
     eModel <- fit_OU_model(tree, Y, result$shift.configuration, opt)
     eModel$.candidate.configurations <- candidate.configurations
+    evaluated.configurations <- lapply(all.res, `[[`, "shift.configuration")
+    keys <- vapply(evaluated.configurations, paste, collapse=",",
+                   FUN.VALUE=character(1))
+    keep <- !duplicated(keys)
+    eModel$profile <- list(
+        scores=scores[keep],
+        configurations=evaluated.configurations[keep]
+    )
     eModel
 }
 
@@ -730,7 +931,9 @@ collect_candidate_configurations <- function(tree, Y, sol.path, opt){
 
     precomputed.configurations <- NULL
     if(any(grepl("grplasso", sol.path$call))){
-        precomputed.configurations <- get_configurations_in_sol_path(sol.path, Y)
+        precomputed.configurations <- get_configurations_in_sol_path(
+            sol.path, Y, opt=opt
+        )
     }
 
     shift.counts <- integer(Nedge(tree))
@@ -779,7 +982,9 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
     if(length(candidate.configurations) == 0){
         return(list(score=min.score,
                     shift.configuration=best.shift.configuration,
-                    candidate.configurations=candidate.configurations))
+                    candidate.configurations=candidate.configurations,
+                    scores=numeric(),
+                    evaluated.configurations=list()))
     }
 
     search_ith_config <- make_parallel_candidate_search(tree, Y, opt)
@@ -788,7 +993,8 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
         all.res <- l1ou_mclapply(rev(candidate.configurations),
                                  FUN=search_ith_config,
                                  mc.cores=opt$nCores)
-        for (i in length(all.res):1 ){
+        all.res <- rev(all.res)
+        for (i in seq_along(all.res)){
             res <- all.res[[i]] 
             if (min.score > res$score){
                 min.score = res$score
@@ -796,8 +1002,10 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
             }
         }
     }else{
+        all.res <- vector("list", length(candidate.configurations))
         for (i in 1:length(candidate.configurations) ){
             res <- search_ith_config(candidate.configurations[[i]])
+            all.res[[i]] <- res
             if (min.score > res$score){
                 min.score = res$score
                 best.shift.configuration = res$shift.configuration
@@ -807,7 +1015,11 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
 
     return ( list(score=min.score,
                   shift.configuration=best.shift.configuration,
-                  candidate.configurations=candidate.configurations) )
+                  candidate.configurations=candidate.configurations,
+                  scores=vapply(all.res, `[[`, numeric(1), "score"),
+                  evaluated.configurations=lapply(
+                      all.res, `[[`, "shift.configuration"
+                  )) )
 }
 
 do_backward_correction <- function(tree, Y, shift.configuration, opt){
@@ -875,7 +1087,8 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #' \code{kfl1ou} treats these as known tip-specific variances and estimates an
 #' additional shared measurement-error variance per trait.
 #'@param trait.covariance residual covariance model for multivariate traits;
-#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.
+#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+#' and a localization-aware multivariate pBIC extension.
 #'@param alpha.structure full-covariance adaptation-rate structure.
 #'@param covariance.regularization optional covariance shrinkage.
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
@@ -992,6 +1205,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
     if( is.null(opt$trait.covariance) ){
         opt$trait.covariance <- "diagonal"
     }
+    opt <- normalize_shift_search_options(opt, tree, Y)
     if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
        identical(opt$alpha.structure, "diagonal")){
@@ -1058,13 +1272,17 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #' \code{kfl1ou} treats these as known tip-specific variances and estimates an
 #' additional shared measurement-error variance per trait.
 #'@param trait.covariance residual covariance model for multivariate traits;
-#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.
+#' see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+#' and a localization-aware multivariate pBIC extension.
 #'@param alpha.structure full-covariance adaptation-rate structure.
 #'@param covariance.regularization optional covariance shrinkage.
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
 #'@param likelihood.engine dense, pruning, or automatic likelihood engine.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param compute.hessian logical; calculate a numerical Hessian when practical.
+#'@param search.max.nShifts maximum number of shifts used if a later method,
+#' such as \code{confint(..., selection = "full")}, repeats shift selection.
+#' By default this is at least one and otherwise the number of fitted shifts.
 #'@param l1ou.options if provided, all the default values will be ignored. 
 #'
 #'@return an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
@@ -1128,6 +1346,7 @@ fit_OU <- function(tree, Y, shift.configuration,
                      likelihood.engine = c("auto", "dense", "pruning"),
                      optimizer.starts = 5,
                      compute.hessian = TRUE,
+                     search.max.nShifts = NULL,
                      l1ou.options = NA
                    ){
 
@@ -1160,6 +1379,9 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$likelihood.engine <- match.arg(likelihood.engine)
         opt$optimizer.starts <- optimizer.starts
         opt$compute.hessian <- compute.hessian
+        opt$max.nShifts <- if(is.null(search.max.nShifts)){
+            max(1L, length(shift.configuration))
+        } else search.max.nShifts
         opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
     if( is.null(opt$measurement_error) ){
@@ -1171,6 +1393,12 @@ fit_OU <- function(tree, Y, shift.configuration,
     if( is.null(opt$trait.covariance) ){
         opt$trait.covariance <- "diagonal"
     }
+    if(is.null(opt$max.nShifts)){
+        opt$max.nShifts <- if(is.null(search.max.nShifts)){
+            max(1L, length(shift.configuration))
+        } else search.max.nShifts
+    }
+    opt <- normalize_shift_search_options(opt, tree, Y)
     if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
        identical(opt$alpha.structure, "diagonal")){
@@ -1400,7 +1628,8 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
             tree, Y, shift.configuration, opt
         )
         score <- multivariate_full_information_score(
-            fit, length(shift.configuration), opt$criterion
+            fit, length(shift.configuration), opt$criterion,
+            n.locations=Nedge(tree) - 1L
         )
         if(isTRUE(opt$use.saved.scores)){
             add_configuration_score_to_list(
@@ -1553,6 +1782,205 @@ normalize_max_n_shifts <- function(max.nShifts, tree){
     }
 
     return(l1ou_integer_argument(max.nShifts, "max.nShifts", 0L))
+}
+
+
+normalize_group_support_threshold <- function(value, n.traits){
+
+    if(is.null(value)) value <- 1L
+    if(is.character(value) && length(value) == 1L){
+        value <- switch(
+            match.arg(value, c("any", "majority", "all")),
+            any=1L,
+            majority=max(1L, ceiling(n.traits / 2)),
+            all=n.traits
+        )
+    }
+    if(length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+       value <= 0){
+        stop(paste0(
+            "group.support.threshold must be one positive number or one of ",
+            '"any", "majority", and "all".'
+        ))
+    }
+    threshold <- if(value < 1) ceiling(value * n.traits) else{
+        if(value != floor(value)){
+            stop("group.support.threshold values of at least one must be integers.")
+        }
+        as.integer(value)
+    }
+    if(threshold > n.traits){
+        stop("group.support.threshold cannot exceed the number of traits.")
+    }
+    max(1L, as.integer(threshold))
+}
+
+
+normalize_shift_search_options <- function(opt, tree, Y){
+
+    Y <- as.matrix(Y)
+    defaults <- list(
+        nCores=1L,
+        parallel.computing=FALSE,
+        use.saved.scores=FALSE,
+        lars.alg="lasso",
+        search.strategy="auto",
+        exhaustive.max.configurations=5000L,
+        ensemble.replicates=12L,
+        ensemble.fraction=0.75,
+        ensemble.seed=1L,
+        edge.length.threshold=.Machine$double.eps,
+        rescale=TRUE,
+        grp.delta=1/16,
+        grp.seq.ub=5,
+        candid.edges=NA_integer_,
+        grplasso.backend="cpp",
+        group.support.threshold=1L,
+        covariance.candidate.iterations=2L,
+        quietly=TRUE
+    )
+    for(name in names(defaults)){
+        if(is.null(opt[[name]])) opt[[name]] <- defaults[[name]]
+    }
+    opt$max.nShifts <- normalize_max_n_shifts(opt$max.nShifts, tree)
+    opt$nCores <- l1ou_integer_argument(opt$nCores, "nCores", 1L)
+    opt$parallel.computing <- l1ou_logical_argument(
+        opt$parallel.computing, "parallel.computing"
+    )
+    opt$use.saved.scores <- l1ou_logical_argument(
+        opt$use.saved.scores, "use.saved.scores"
+    )
+    opt$lars.alg <- match.arg(opt$lars.alg, c("lasso", "stepwise"))
+    opt$search.strategy <- match.arg(
+        opt$search.strategy, c("auto", "lasso", "ensemble", "exhaustive")
+    )
+    opt$exhaustive.max.configurations <- l1ou_integer_argument(
+        opt$exhaustive.max.configurations,
+        "exhaustive.max.configurations", 1L
+    )
+    opt$ensemble.replicates <- l1ou_integer_argument(
+        opt$ensemble.replicates, "ensemble.replicates", 0L
+    )
+    opt$ensemble.seed <- l1ou_integer_argument(
+        opt$ensemble.seed, "ensemble.seed", 0L
+    )
+    if(length(opt$ensemble.fraction) != 1L ||
+       !is.numeric(opt$ensemble.fraction) ||
+       !is.finite(opt$ensemble.fraction) ||
+       opt$ensemble.fraction <= 0 || opt$ensemble.fraction > 1){
+        stop("ensemble.fraction must be one number in (0,1].")
+    }
+    opt$covariance.candidate.iterations <- l1ou_integer_argument(
+        opt$covariance.candidate.iterations,
+        "covariance.candidate.iterations", 1L
+    )
+    opt$group.support.threshold <- normalize_group_support_threshold(
+        opt$group.support.threshold, ncol(Y)
+    )
+    if(is.null(opt$Z)) opt$Z <- generate_design_matrix(tree, "simpX")
+    if(is.null(opt$multivariate.missing)) opt$multivariate.missing <- anyNA(Y)
+    if(isTRUE(opt$multivariate.missing) && is.null(opt$tree.list)){
+        opt$tree.list <- gen_tree_array(tree, Y)
+    }
+    opt
+}
+
+
+shift_search_candidate_edges <- function(tree, opt){
+
+    n.edges <- Nedge(tree)
+    if(!all(is.na(opt$candid.edges))){
+        return(sort(unique(as.integer(opt$candid.edges))))
+    }
+    allowed <- seq_len(max(0L, n.edges - 1L))
+    allowed[tree$edge.length[allowed] >= opt$edge.length.threshold]
+}
+
+
+shift_configuration_space_size <- function(tree, opt){
+
+    m <- length(shift_search_candidate_edges(tree, opt))
+    k <- min(opt$max.nShifts, m)
+    if(k < 0L) return(0)
+    terms <- vapply(0:k, function(i){
+        value <- lchoose(m, i)
+        if(!is.finite(value) || value > log(.Machine$double.xmax)) Inf else exp(value)
+    }, numeric(1))
+    total <- sum(terms)
+    if(!is.finite(total)) Inf else round(total)
+}
+
+
+resolve_shift_search_strategy <- function(tree, opt){
+
+    size <- shift_configuration_space_size(tree, opt)
+    requested <- opt$search.strategy
+    strategy <- requested
+    if(requested == "auto"){
+        strategy <- if(is.finite(size) &&
+                       size <= opt$exhaustive.max.configurations){
+            "exhaustive"
+        } else if(opt$ensemble.replicates > 0L){
+            "ensemble"
+        } else "lasso"
+    }
+    if(strategy == "exhaustive" &&
+       (!is.finite(size) || size > opt$exhaustive.max.configurations)){
+        stop(paste0(
+            "the exhaustive shift search contains ", format(size),
+            " raw configurations, above exhaustive.max.configurations = ",
+            opt$exhaustive.max.configurations, ". Increase the limit explicitly ",
+            "or use search.strategy = \"ensemble\"."
+        ))
+    }
+    list(requested=requested, strategy=strategy, configuration.space.size=size)
+}
+
+
+enumerate_shift_configurations <- function(tree, opt){
+
+    edges <- shift_search_candidate_edges(tree, opt)
+    max.shifts <- min(opt$max.nShifts, length(edges))
+    configurations <- list(integer())
+    if(max.shifts > 0L){
+        for(k in seq_len(max.shifts)){
+            configurations <- c(
+                configurations,
+                utils::combn(edges, k, simplify=FALSE)
+            )
+        }
+    }
+    configurations <- lapply(configurations, function(configuration){
+        sort(unname(correct_unidentifiability(tree, configuration, opt)))
+    })
+    keys <- vapply(configurations, paste, collapse=",", FUN.VALUE=character(1))
+    configurations[!duplicated(keys)]
+}
+
+
+unique_shift_configurations <- function(configurations, tree, opt){
+
+    if(length(configurations) == 0L) return(list())
+    normalized <- lapply(configurations, function(configuration){
+        sort(unname(correct_unidentifiability(tree, configuration, opt)))
+    })
+    keys <- vapply(normalized, paste, collapse=",", FUN.VALUE=character(1))
+    normalized[!duplicated(keys)]
+}
+
+
+ensemble_row_subsamples <- function(n, opt){
+
+    if(opt$ensemble.replicates <= 0L || n < 3L) return(list())
+    size <- min(n, max(2L, ceiling(opt$ensemble.fraction * n)))
+    if(size >= n) return(rep(list(seq_len(n)), opt$ensemble.replicates))
+    with_l1ou_seed(opt$ensemble.seed, {
+        replicate(
+            opt$ensemble.replicates,
+            sort(sample.int(n, size=size, replace=FALSE)),
+            simplify=FALSE
+        )
+    })
 }
 
 get_trait_input_error <- function(opt, idx, tree=NULL, available=NULL, input_error=opt$input_error){
@@ -2913,7 +3341,10 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         lmbd = lmbdMax * (0.5^base.seq)
         sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd, tol = 0.01, backend = backend)
 
-        support.summary <- grplasso_support_summary(sol$coefficients, grpIdx, nVariables)
+        support.summary <- grplasso_support_summary(
+            sol$coefficients, grpIdx, nVariables,
+            support.threshold=opt$group.support.threshold
+        )
         df.vec <- support.summary$df.vec
 
         next.seq <- grplasso_refine_base_seq(base.seq, df.vec, opt$max.nShifts, min.delta)
@@ -2942,7 +3373,10 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         coarse.sol <- run_grplasso_path(grpX, grpY, grpIdx, final.lmbd, tol = 0.01, backend = backend)
     }
     lmbd <- final.lmbd
-    coarse.summary <- grplasso_support_summary(coarse.sol$coefficients, grpIdx, nVariables)
+    coarse.summary <- grplasso_support_summary(
+        coarse.sol$coefficients, grpIdx, nVariables,
+        support.threshold=opt$group.support.threshold
+    )
     df.vec <- coarse.summary$df.vec
     df.missing = setdiff(0:opt$max.nShifts, df.vec)
     refine.idx <- coarse.summary$refine.idx
@@ -2963,12 +3397,15 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     return(sol);
 }
 
-grplasso_support_summary <- function(coefficients, grpIdx, nVariables){
+grplasso_support_summary <- function(coefficients, grpIdx, nVariables,
+                                     support.threshold=NULL){
 
     coeff.mat <- as.matrix(coefficients)
     valid <- !is.na(grpIdx)
     nSolutions <- ncol(coeff.mat)
-    threshold <- max(1L, ceiling(nVariables / 2))
+    threshold <- if(is.null(support.threshold)){
+        max(1L, ceiling(nVariables / 2))
+    } else normalize_group_support_threshold(support.threshold, nVariables)
 
     if(nSolutions == 0){
         return(list(

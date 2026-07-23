@@ -53,7 +53,8 @@ variances. When combined with \code{measurement_error = TRUE},
 additional shared measurement-error variance per trait.}
 
 \item{trait.covariance}{residual covariance model for multivariate traits;
-see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC.}
+see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+and a localization-aware multivariate pBIC extension.}
 
 \item{alpha.structure}{full-covariance adaptation-rate structure.}
 

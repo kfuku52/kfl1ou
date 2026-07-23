@@ -183,16 +183,17 @@ test_that("full covariance bootstrap preserves the joint mode", {
   expect_equal(bootstrap$detection.rate, rep(0, nrow(dat$tree$edge)))
 })
 
-test_that("unsupported phylogenetic penalties are rejected for full covariance", {
+test_that("localization-aware pBIC is supported for full covariance", {
   dat <- simulate_correlated_ou_traits(n.tips=12L, seed=48L)
-  expect_error(
-    fit_OU(
-      dat$tree,
-      dat$Y,
-      integer(),
-      trait.covariance="full",
-      criterion="pBIC"
-    ),
-    "have not been derived"
+  fit <- fit_OU(
+    dat$tree,
+    dat$Y,
+    integer(),
+    trait.covariance="full",
+    criterion="pBIC",
+    alpha.lower=dat$alpha,
+    alpha.upper=dat$alpha
   )
+  expect_true(is.finite(fit$score))
+  expect_match(fit$score.note, "shift-location")
 })

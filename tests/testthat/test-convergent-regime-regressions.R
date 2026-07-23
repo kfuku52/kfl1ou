@@ -239,6 +239,7 @@ test_that("multivariate second search only uses two grplasso passes", {
       dat$tree,
       dat$Y,
       max.nShifts = 2,
+      search.strategy = "lasso",
       quietly = TRUE
     )
   )

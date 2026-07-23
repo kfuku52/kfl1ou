@@ -122,7 +122,10 @@ test_that("standard model API, diagnostics and simulation are coherent", {
   expect_length(simulated, 2L)
   expect_equal(dim(simulated[[1L]]), dim(fit$Y))
   diagnostics <- diagnose_l1ou(fit)
-  expect_length(diagnostics$standardized.residuals, length(fit$Y))
+  expect_length(
+    diagnostics$standardized.residuals,
+    length(fit$Y) - ncol(fit$Y)
+  )
 
   interval <- confint(
     fit, parm="alpha:shared", method="parametric", nsim=2L, seed=2

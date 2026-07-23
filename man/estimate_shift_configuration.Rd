@@ -16,11 +16,18 @@ estimate_shift_configuration(
   alpha.upper = alpha_upper_bound(tree),
   alpha.lower = NA,
   lars.alg = c("lasso", "stepwise"),
+  search.strategy = c("auto", "lasso", "ensemble", "exhaustive"),
+  exhaustive.max.configurations = 5000L,
+  ensemble.replicates = 12L,
+  ensemble.fraction = 0.75,
+  ensemble.seed = 1L,
   nCores = 1,
   rescale = TRUE,
   edge.length.threshold = .Machine$double.eps,
   grp.delta = 1/16,
   grp.seq.ub = 5,
+  group.support.threshold = 1L,
+  covariance.candidate.iterations = 2L,
   measurement_error = FALSE,
   input_error = NULL,
   trait.covariance = c("diagonal", "full"),
@@ -60,6 +67,23 @@ names must be in the same order as the tip labels.}
 \item{lars.alg}{sparse-path algorithm used in the univariate case. The
 option name is kept for backward compatibility.}
 
+\item{search.strategy}{candidate-search strategy. \code{"auto"} performs an
+exact search when the requested configuration space is small and otherwise
+augments the sparse path with subsampled ensemble paths. The other choices
+force the lasso, ensemble, or exhaustive strategy.}
+
+\item{exhaustive.max.configurations}{largest raw configuration space that an
+automatic search will enumerate exactly.}
+
+\item{ensemble.replicates}{number of subsampled paths appended by an ensemble
+search after the path fitted to all whitened observations.}
+
+\item{ensemble.fraction}{fraction of whitened observations retained in each
+ensemble path.}
+
+\item{ensemble.seed}{deterministic seed used for ensemble subsampling without
+changing the caller's random-number state.}
+
 \item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
 then it runs sequentially. Otherwise, when fork-based parallelism is
 available, \code{kfl1ou} may use up to \code{nCores} forked workers via
@@ -74,6 +98,14 @@ overall computation respects this budget when possible.}
 
 \item{grp.seq.ub}{(used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).}
 
+\item{group.support.threshold}{minimum trait support used to retain a branch
+from a multivariate group-lasso solution. A proportion in \code{(0,1)} is
+converted to a trait count; values of at least one are counts. The default
+retains a branch when any trait coefficient in its group is non-zero.}
+
+\item{covariance.candidate.iterations}{number of mean/covariance candidate
+regeneration rounds used for a full trait-covariance search.}
+
 \item{measurement_error}{logical. If TRUE, estimates an observation-level
 measurement error variance for each trait through \code{kfl1ou}'s bundled
 likelihood solver.}
@@ -87,7 +119,8 @@ additional shared measurement-error variance per trait.}
 \code{"diagonal"} retains the original trait-by-trait likelihood and allows
 a separate alpha for every trait. \code{"full"} fits a joint multivariate OU
 likelihood and an unrestricted positive-definite evolutionary covariance
-matrix among traits. The full model currently uses \code{criterion = "BIC"}.}
+matrix among traits. Full covariance supports ordinary \code{"BIC"} and a
+localization-aware multivariate \code{"pBIC"} extension.}
 
 \item{alpha.structure}{for full covariance, \code{"shared"} estimates one
 adaptation rate; \code{"diagonal"} estimates one rate per trait.}

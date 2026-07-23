@@ -209,7 +209,9 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
     if(identical(opt$covariance.regularization, "shrinkage")){
         shrinkage.lambda <- opt$regularization.lambda
         if(is.na(shrinkage.lambda)){
-            shrinkage.lambda <- min(0.95, p / max(p + n, 1L))
+            shrinkage.lambda <- estimate_trait_shrinkage_lambda(
+                tree, Y, design.builder, initial.alpha, opt$root.model
+            )
         }
     }
 

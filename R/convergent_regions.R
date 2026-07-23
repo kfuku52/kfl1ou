@@ -957,7 +957,8 @@ cmp_model_score_CR <- function(tree, Y, regimes=NULL, alpha=NA, opt){
             fixed.alpha=fixed.alpha
         )
         return(multivariate_full_information_score(
-            fit, length(shift.configuration), opt$criterion
+            fit, length(shift.configuration), opt$criterion,
+            n.locations=Nedge(tree) - 1L
         ))
     }
 

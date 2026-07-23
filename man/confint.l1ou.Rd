@@ -31,7 +31,9 @@
 \item{seed}{optional random seed.}
 
 \item{selection}{whether bootstrap refits condition on the selected shift
-configuration or repeat the complete shift search.}
+configuration or repeat the complete shift search. For a full search, an
+original shift coefficient is recorded as zero when its exact edge is not
+selected; exact-edge reselection probabilities are returned as attributes.}
 
 \item{interval}{percentile or basic bootstrap interval.}
 

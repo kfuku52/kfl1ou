@@ -19,7 +19,10 @@ compare_trait_covariance(
   quietly = TRUE,
   covariance.regularization = c("none", "shrinkage"),
   regularization.lambda = NA_real_,
-  nCores = 1L
+  nCores = 1L,
+  selection = c("conditional", "full"),
+  search.max.nShifts = NULL,
+  search.strategy = c("auto", "lasso", "ensemble", "exhaustive")
 )
 }
 \arguments{
@@ -55,6 +58,16 @@ one alpha per trait, making the diagonal model nested in the full model.}
 
 \item{nCores}{number of bootstrap refits evaluated concurrently where fork
 parallelism is supported.}
+
+\item{selection}{whether the covariance bootstrap conditions on the supplied
+shift configuration or repeats shift discovery in every null simulation.}
+
+\item{search.max.nShifts}{maximum shifts in a repeated search. By default it
+is at least one and otherwise the size of \code{shift.configuration}.}
+
+\item{search.strategy}{search strategy passed to
+\code{\link{estimate_shift_configuration}} when
+\code{selection = "full"}.}
 }
 \value{
 An object of class \code{"l1ou_covariance_comparison"} containing the

@@ -1006,7 +1006,7 @@ get_num_solutions <- function(sol.path){
 }
 
 
-get_configurations_in_sol_path <- function(sol.path, Y, tidx=1){
+get_configurations_in_sol_path <- function(sol.path, Y, tidx=1, opt=NULL){
     if ( grepl("lars",sol.path$call)[[1]] || grepl("l1ou_.*_path", sol.path$call)[[1]] ){
         beta.mat <- as.matrix(sol.path$beta)
         return(lapply(seq_len(nrow(beta.mat)), function(idx) {
@@ -1020,7 +1020,11 @@ get_configurations_in_sol_path <- function(sol.path, Y, tidx=1){
         nGroups <- nrow(coeff.mat) %/% nVariables
         stopifnot(nGroups * nVariables == nrow(coeff.mat))
 
-        threshold <- max(1L, ceiling(nVariables / 2))
+        threshold <- if(is.null(opt)){
+            max(1L, ceiling(nVariables / 2))
+        } else normalize_group_support_threshold(
+            opt$group.support.threshold, nVariables
+        )
         support.counts <- rowsum(
             (coeff.mat != 0) + 0L,
             group = rep.int(seq_len(nGroups), nVariables),

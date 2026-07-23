@@ -4,13 +4,27 @@
 \alias{diagnose_l1ou}
 \title{Diagnose numerical and residual problems in a fitted model}
 \usage{
-diagnose_l1ou(model, max.dense.dimension = 2000L)
+diagnose_l1ou(
+  model,
+  max.dense.dimension = 2000L,
+  nsim = 0L,
+  seed = NULL,
+  min.clade.size = 3L
+)
 }
 \arguments{
 \item{model}{fitted object of class \code{"l1ou"}.}
 
 \item{max.dense.dimension}{largest observed response dimension for which a
 dense residual-whitening covariance is constructed.}
+
+\item{nsim}{number of fitted-model predictive simulations used for absolute
+adequacy and clade-rate diagnostics. Zero skips simulation calibration.}
+
+\item{seed}{optional deterministic simulation seed.}
+
+\item{min.clade.size}{minimum observed tips inside and outside a clade for the
+diffusion-rate heterogeneity statistic.}
 }
 \value{
 A list containing optimizer, covariance, standardized-residual, and
