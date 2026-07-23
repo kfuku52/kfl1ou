@@ -1,3 +1,19 @@
+# kfl1ou 2.4.0
+
+- Exercise the requested sparse-search backends explicitly in regression tests
+  instead of allowing automatic exhaustive search to bypass them.
+- Harden continuous integration with pinned actions, concurrency cancellation,
+  timeouts, generated-file drift checks, patch and critical-file coverage
+  gates, dependency review, CodeQL, and scheduled extended platform checks.
+- Add scheduled AddressSanitizer, UndefinedBehaviorSanitizer, and Valgrind
+  checks using the CRAN-like R-hub containers.
+- Add reproducible performance and determinism benchmarks for exact and
+  ensemble shift searches.
+- Add Dependabot configuration, release automation, a pkgdown site workflow,
+  contribution and security policies, and machine-readable citation metadata.
+- Publish coverage and benchmark artifacts so regressions can be inspected
+  without rerunning a workflow.
+
 # kfl1ou 2.3.0
 
 - Add automatically certified exhaustive shift searches for small

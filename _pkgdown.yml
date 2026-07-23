@@ -1,0 +1,22 @@
+url: https://kfuku52.github.io/kfl1ou/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: auto
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    github:
+      icon: fab fa-github
+      aria-label: GitHub
+      href: https://github.com/kfuku52/kfl1ou
+
+articles:
+  - title: Inference
+    contents:
+      - multivariate-inference

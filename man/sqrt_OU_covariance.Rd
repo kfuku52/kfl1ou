@@ -48,8 +48,12 @@ and can be applied to very big trees.
 \examples{
 
 data(lizard.tree)
-res <- sqrt_OU_covariance(lizard.tree) # alpha not provided: so BM model.
-Sigma <- vcv(lizard.tree)
+example_tree <- drop.tip(
+  lizard.tree,
+  lizard.tree$tip.label[-seq_len(15)]
+)
+res <- sqrt_OU_covariance(example_tree) # alpha not provided: so BM model.
+Sigma <- vcv(example_tree)
 dimnames(Sigma) <- NULL
 all.equal(res$sqrtSigma \%*\% t(res$sqrtSigma), Sigma) # TRUE
 all.equal(res$sqrtInvSigma \%*\% t(res$sqrtInvSigma), solve(Sigma)) # TRUE

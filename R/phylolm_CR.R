@@ -181,6 +181,7 @@ phylolm_CR <- function(formula, data=list(), phy,
 ################################################
 
 #' @noRd
+#' @exportS3Method NULL
 print.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
     cat("Call:\n")
     print(x$call)
@@ -201,6 +202,7 @@ print.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 summary.phylolm <- function(object, ...) {
     se <- sqrt(diag(object$vcov))
     tval <- coef(object) / se
@@ -216,6 +218,7 @@ summary.phylolm <- function(object, ...) {
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 print.summary.phylolm <- function(x, digits = max(3, getOption("digits") - 3), ...){
     cat("\nCall:\n")
     print(x$call)
@@ -249,44 +252,53 @@ print.summary.phylolm <- function(x, digits = max(3, getOption("digits") - 3), .
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 residuals.phylolm <-function(object,type=c("response"), ...){
     type <- match.arg(type)
     object$residuals	 
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 vcov.phylolm <- function(object, ...){
     object$vcov
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 logLik.phylolm <- function(object, ...){
     res = list(logLik = object$logLik, df = object$p)
     class(res) = "logLik.phylolm"
     res
 }
 #' @noRd
+#' @exportS3Method NULL
 print.logLik.phylolm <- function (x, ...) {
     cat("'log Lik.' ",x$logLik," (df=",x$df,")\n", sep = "")
 }
 #' @noRd
+#' @exportS3Method NULL
 AIC.logLik.phylolm <- function(object, k=2, ...) {
     return(k*object$df - 2*object$logLik)
 }
 #' @noRd
+#' @exportS3Method NULL
 AIC.phylolm <- function(object, k=2, ...) {
     return(AIC(logLik(object),k))
 }
 #' @noRd
+#' @exportS3Method NULL
 extractAIC.phylolm <- function(fit, scale, k=2, ...) {
     c(fit$p, - 2*fit$logLik + k * fit$p)
 }
 #' @noRd
+#' @exportS3Method NULL
 nobs.phylolm <- function(object, ...){
     return(object$n)
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 predict.phylolm <- function(object, newdata=NULL, ...){
     if (object$model=="trend")
         stop("Predicting for trend model has not been implemented.")
@@ -299,6 +311,7 @@ predict.phylolm <- function(object, newdata=NULL, ...){
 }
 ################################################
 #' @noRd
+#' @exportS3Method NULL
 plot.phylolm <-function(x, ...){
     plot(x$y, fitted(x), xlab = "Observed value", ylab = "Fitted value", ...)
 }

@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: r-lib/actions/setup-pandoc@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          r-version: release
+      - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: Rscript {0}
+        run: |
+          version <- read.dcf("DESCRIPTION")[1, "Version"]
+          tag <- Sys.getenv("GITHUB_REF_NAME")
+          stopifnot(identical(tag, paste0("v", version)))
+      - name: Build and check source package
+        shell: bash
+        run: |
+          R CMD build --compact-vignettes=gs+qpdf .
+          tarball=$(find . -maxdepth 1 -name 'kfl1ou_*.tar.gz' -print -quit)
+          Rscript -e 'rcmdcheck::rcmdcheck(commandArgs(TRUE)[1], args = c("--no-manual", "--as-cran"), error_on = "warning")' "$tarball"
+          shasum -a 256 "$tarball" > SHA256SUMS
+      - name: Upload source artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-package
+          path: |
+            kfl1ou_*.tar.gz
+            SHA256SUMS
+          retention-days: 90
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" kfl1ou_*.tar.gz SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" kfl1ou_*.tar.gz SHA256SUMS \
+              --verify-tag --generate-notes --title "kfl1ou ${GITHUB_REF_NAME#v}"
+          fi

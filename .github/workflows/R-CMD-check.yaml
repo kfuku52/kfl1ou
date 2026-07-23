@@ -1,91 +1,124 @@
-# Workflow derived from https://github.com/r-lib/actions/tree/v2/examples
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-  workflow_dispatch:
-
 name: R-CMD-check
 
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
 permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+    timeout-minutes: 40
 
     strategy:
       fail-fast: false
       matrix:
         config:
-          - {os: macos-latest, r: 'release'}
-          - {os: windows-latest, r: 'release'}
-          - {os: ubuntu-latest, r: 'devel', http-user-agent: 'release'}
-          - {os: ubuntu-latest, r: 'release'}
-          - {os: ubuntu-latest, r: 'oldrel-1'}
-          - {os: ubuntu-latest, r: '4.1.0'}
+          - {os: macos-latest, r: "release"}
+          - {os: windows-latest, r: "release"}
+          - {os: ubuntu-latest, r: "release"}
+          - {os: ubuntu-latest, r: "4.1.0"}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-pandoc@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
 
-      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           r-version: ${{ matrix.config.r }}
-          http-user-agent: ${{ matrix.config.http-user-agent }}
 
-      - uses: r-lib/actions/setup-r-dependencies@v2
+      - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           extra-packages: any::rcmdcheck
           needs: check
 
-      - uses: r-lib/actions/check-r-package@v2
+      - uses: r-lib/actions/check-r-package@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
-  coverage:
+  generated-files:
+    name: generated-files
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: r-lib/actions/setup-r@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
-          r-version: 'release'
-      - uses: r-lib/actions/setup-r-dependencies@v2
+          r-version: release
+      - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          extra-packages: any::Rcpp, any::roxygen2
+          needs: check
+      - name: Regenerate Rcpp and roxygen files
+        shell: Rscript {0}
+        run: |
+          Rcpp::compileAttributes(".")
+          roxygen2::roxygenise(".")
+      - name: Require committed generated files
+        run: git diff --exit-code
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          r-version: release
+      - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           extra-packages: any::covr
           needs: coverage
-      - name: Measure test coverage
-        run: |
-          library(covr)
-          coverage <- package_coverage(quiet = FALSE)
-          print(coverage)
-          overall <- as.numeric(percent_coverage(coverage))
-          coverage_data <- as.data.frame(coverage)
-          bootstrap_data <- coverage_data[
-            coverage_data$filename == "R/phylogeny_bootstrap.R",
-            ,
-            drop = FALSE
-          ]
-          bootstrap <- 100 * mean(bootstrap_data$value > 0)
+      - name: Measure and enforce coverage
+        run: Rscript .github/scripts/check-coverage.R
+      - name: Upload coverage details
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: |
+            coverage.rds
+            coverage.csv
+            coverage.xml
+            coverage-summary.md
+          if-no-files-found: warn
+          retention-days: 30
 
-          cat(sprintf("Overall coverage: %.2f%%\n", overall))
-          cat(sprintf("Bootstrap coverage: %.2f%%\n", bootstrap))
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
 
-          if (overall < 80) {
-            stop(sprintf("Overall coverage %.2f%% is below 80%%", overall))
-          }
-          if (!nrow(bootstrap_data) || bootstrap < 80) {
-            stop(sprintf(
-              "Bootstrap coverage %.2f%% is below 80%%",
-              bootstrap
-            ))
-          }
-        shell: Rscript {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate

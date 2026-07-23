@@ -1,0 +1,17 @@
+.DS_Store
+.Rhistory
+.Rproj.user/
+*.Rcheck/
+check/
+*.tar.gz
+src/*.o
+src/*.so
+src/*.dylib
+src/*.dll
+src/symbols.rds
+coverage.rds
+coverage.csv
+coverage.xml
+coverage-summary.md
+benchmark-results.csv
+docs/

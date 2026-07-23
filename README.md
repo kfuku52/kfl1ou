@@ -1,9 +1,15 @@
 
-### Tools for detecting past changes in the expected mean trait values and studying trait evolution from comparative data
+# kfl1ou
+
+[![R-CMD-check](https://github.com/kfuku52/kfl1ou/actions/workflows/R-CMD-check.yaml/badge.svg?branch=main)](https://github.com/kfuku52/kfl1ou/actions/workflows/R-CMD-check.yaml)
+[![CodeQL](https://github.com/kfuku52/kfl1ou/actions/workflows/codeql.yaml/badge.svg?branch=main)](https://github.com/kfuku52/kfl1ou/actions/workflows/codeql.yaml)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL%20v3%2B-blue.svg)](LICENSE)
+
+## Tools for detecting past changes in expected mean trait values
 
 The kfl1ou package is an independently maintained fork of l1ou. It provides functions to study trait evolution from comparative data and detect past changes in the expected mean trait values, as well as convergent evolution. It uses the Ornstein-Uhlenbeck process along a phylogenetic tree, which can model a changing adaptive landscape over time and over lineages. 
 
-### Origin and license
+## Origin and license
 
 `kfl1ou` is an independently maintained derivative of `l1ou`.
 This package is distributed under the GNU General Public License, version 3 or
@@ -11,7 +17,7 @@ later (`GPL (>= 3)` in `DESCRIPTION`). The full license text is available in
 [LICENSE](LICENSE), and provenance notes for this fork are summarized in
 [NOTICE](NOTICE).
 
-### Install using the devtools package
+## Install using the devtools package
 From within R:
 ```r
 install.packages("devtools")
@@ -20,7 +26,7 @@ install_github("kfuku52/kfl1ou")
 ```
 Windows users will first need to install [Rtools](https://cran.r-project.org/bin/windows/Rtools/).
 
-### Install without the devtools package
+## Install without the devtools package
 
 To resolve hard dependencies, first install the following packages from CRAN.
 From within R:
@@ -35,7 +41,7 @@ R CMD build kfl1ou
 R CMD INSTALL kfl1ou_*.tar.gz
 ```
 
-### Data preparation and tree repair
+## Data preparation and tree repair
 
 `adjust_data()` reorders and validates data but does not alter branch lengths by
 default. If a nearly ultrametric tree needs repair, request it explicitly and
@@ -53,7 +59,7 @@ prepared <- adjust_data(
 Repair fails instead of silently exceeding the supplied tolerance. Review any
 reported branch-length change before interpreting fitted shift locations.
 
-### Observation error handling
+## Observation error handling
 
 `kfl1ou` supports two observation-error inputs:
 
@@ -92,7 +98,7 @@ fit_joint <- estimate_shift_configuration(
 
 For multivariate data, `input_error` can be a matrix with one column per trait.
 
-### Correlated multivariate OU model
+## Correlated multivariate OU model
 
 Set `trait.covariance = "full"` to estimate evolutionary covariance among
 traits instead of fitting a block-diagonal trait likelihood:
@@ -193,7 +199,7 @@ equivalences are not mistaken for biological disagreement. For replicated
 species measurements use `fit_l1ou_replicates()`. For phylogenetic uncertainty,
 `fit_l1ou_tree_ensemble()` aggregates partitions across alternative trees.
 
-### Interpretation and statistical limitations
+## Interpretation and statistical limitations
 
 - Shift configurations describe phylogenetically consistent clusters. Tip-only
   data generally cannot identify the exact number, branch position, or timing of

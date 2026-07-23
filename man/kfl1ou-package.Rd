@@ -11,6 +11,7 @@ Internal package declarations used to generate the namespace.
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://kfuku52.github.io/kfl1ou/}
   \item \url{https://github.com/kfuku52/kfl1ou}
   \item Report bugs at \url{https://github.com/kfuku52/kfl1ou/issues}
 }

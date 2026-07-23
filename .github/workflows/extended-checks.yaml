@@ -1,0 +1,67 @@
+name: Extended checks
+
+on:
+  schedule:
+    - cron: "17 2 * * 2"
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: R ${{ matrix.r }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        r: [devel, oldrel-1]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          r-version: ${{ matrix.r }}
+          http-user-agent: release
+      - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+      - uses: r-lib/actions/check-r-package@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
+
+  native-code:
+    name: ${{ matrix.config.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: clang-ASAN
+            image: ghcr.io/r-hub/containers/clang-asan@sha256:4eac4db3f387e6c24a5eb93545de127053d053ab2c8b211d9e61dfa38fb42bc6
+          - name: clang-UBSAN
+            image: ghcr.io/r-hub/containers/clang-ubsan@sha256:2ba700e9950adee20dd4fbd01523a578df8fe08aec3d7428299583f8e85ffe1b
+          - name: Valgrind
+            image: ghcr.io/r-hub/containers/valgrind@sha256:2af9613fb4782095dfe2477a6bc05d3c767533c1a7b6ff44bad52c8db77704a8
+    container:
+      image: ${{ matrix.config.image }}
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install dependencies
+        run: R -q -e 'pak::pkg_install(c("deps::.", "any::rcmdcheck"), dependencies = TRUE)'
+      - uses: r-lib/actions/check-r-package@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'

@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it and the original l1ou article.
+title: "kfl1ou: Tools for Detecting Shifts in Comparative Trait Data"
+type: software
+version: 2.4.0
+date-released: 2026-07-23
+license: GPL-3.0-or-later
+repository-code: https://github.com/kfuku52/kfl1ou
+url: https://kfuku52.github.io/kfl1ou/
+authors:
+  - family-names: Fukushima
+    given-names: Kenji
+    email: kenji.fukushima@nig.ac.jp
+  - family-names: Khabbazian
+    given-names: Mohammad
+preferred-citation:
+  type: article
+  title: Fast and Accurate Detection of Evolutionary Shifts in Ornstein-Uhlenbeck Models
+  authors:
+    - family-names: Khabbazian
+      given-names: Mohammad
+    - family-names: Kriebel
+      given-names: Ricardo
+    - family-names: Rohe
+      given-names: Karl
+    - family-names: Ané
+      given-names: Cécile
+  journal: Methods in Ecology and Evolution
+  year: 2016
+  volume: 7
+  issue: 7
+  start: 811
+  end: 824
+  doi: 10.1111/2041-210X.12534

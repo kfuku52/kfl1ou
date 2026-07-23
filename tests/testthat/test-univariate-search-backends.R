@@ -6,11 +6,13 @@ test_that("univariate estimate_shift_configuration works with the internal lasso
       dat$tree,
       dat$Y,
       max.nShifts = 2,
+      search.strategy = "lasso",
       quietly = TRUE
     )
   )
 
   expect_s3_class(fit, "l1ou")
+  expect_identical(fit$search.diagnostics$strategy, "lasso")
   expect_true(is.finite(fit$score))
   expect_true(fit$nShifts <= 2)
 })
@@ -24,11 +26,13 @@ test_that("univariate estimate_shift_configuration works with the internal stepw
       dat$Y,
       max.nShifts = 2,
       lars.alg = "stepwise",
+      search.strategy = "lasso",
       quietly = TRUE
     )
   )
 
   expect_s3_class(fit, "l1ou")
+  expect_identical(fit$search.diagnostics$strategy, "lasso")
   expect_true(is.finite(fit$score))
   expect_true(fit$nShifts <= 2)
 })

@@ -132,6 +132,7 @@ test_that("multivariate estimate_shift_configuration agrees across grplasso back
         dat$tree,
         dat$Y,
         max.nShifts = 2,
+        search.strategy = "lasso",
         quietly = TRUE
       )
     )
@@ -140,12 +141,15 @@ test_that("multivariate estimate_shift_configuration agrees across grplasso back
   fit_vendor <- fit_with_backend("vendor-r")
   fit_cpp <- fit_with_backend("cpp")
 
+  expect_identical(fit_vendor$search.diagnostics$strategy, "lasso")
+  expect_identical(fit_cpp$search.diagnostics$strategy, "lasso")
   expect_equal(fit_cpp$shift.configuration, fit_vendor$shift.configuration)
   expect_equal(fit_cpp$score, fit_vendor$score, tolerance = 1e-8)
 
   if (requireNamespace("grplasso", quietly = TRUE)) {
     fit_package <- fit_with_backend("package")
 
+    expect_identical(fit_package$search.diagnostics$strategy, "lasso")
     expect_equal(fit_vendor$shift.configuration, fit_package$shift.configuration)
     expect_equal(fit_cpp$shift.configuration, fit_package$shift.configuration)
     expect_equal(fit_vendor$score, fit_package$score, tolerance = 1e-8)
