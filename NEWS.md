@@ -1,5 +1,9 @@
 # kfl1ou 2.2.1
 
+- Restore Windows builds by isolating POSIX-only runtime symbol lookup, and
+  harden the native three-point likelihood boundary against malformed input.
+- Keep non-evaluated vignette examples out of extracted check code, expand
+  residual-bootstrap regression coverage, and enforce coverage floors in CI.
 - Prevent Wald intervals from interpreting covariance parameters as fixed
   adaptation rates; penalized Hessians are no longer exposed as ordinary
   parameter covariance matrices.

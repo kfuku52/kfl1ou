@@ -9,7 +9,7 @@ typedef Matrix<REALSXP> NumericMatrix;
 
 // [[Rcpp::plugins(cpp11)]]
 void one_step(const int i1, const int i2, const int e1, const int e2,
-        const int counter, const int nTips,
+        const int counter,
         Rcpp::NumericMatrix &edgeList, //the third column contains lengths
         Rcpp::NumericVector &tips, 
         Rcpp::NumericMatrix &F, Rcpp::NumericMatrix &G, 
@@ -92,7 +92,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
 
     int counter = 0;
     for(int i=0; i + 1 < edgeList.nrow() && tips.size() > 1; i+=2)
-        one_step( edgeList(i,1), edgeList(i+1,1), i, i+1, counter++, nTips, edgeList, tips, F, G, D, B, rootEdge);
+        one_step( edgeList(i,1), edgeList(i+1,1), i, i+1, counter++, edgeList, tips, F, G, D, B, rootEdge);
 
     if (tips.size() != 1) {
         Rcpp::stop("failed to reduce the tree to a single root state");

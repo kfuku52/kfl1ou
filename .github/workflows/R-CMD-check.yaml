@@ -64,7 +64,28 @@ jobs:
           needs: coverage
       - name: Measure test coverage
         run: |
-          coverage <- covr::package_coverage(quiet = FALSE)
+          library(covr)
+          coverage <- package_coverage(quiet = FALSE)
           print(coverage)
-          cat("Coverage:", covr::percent_coverage(coverage), "%\n")
+          overall <- as.numeric(percent_coverage(coverage))
+          coverage_data <- as.data.frame(coverage)
+          bootstrap_data <- coverage_data[
+            coverage_data$filename == "R/phylogeny_bootstrap.R",
+            ,
+            drop = FALSE
+          ]
+          bootstrap <- 100 * mean(bootstrap_data$value > 0)
+
+          cat(sprintf("Overall coverage: %.2f%%\n", overall))
+          cat(sprintf("Bootstrap coverage: %.2f%%\n", bootstrap))
+
+          if (overall < 80) {
+            stop(sprintf("Overall coverage %.2f%% is below 80%%", overall))
+          }
+          if (!nrow(bootstrap_data) || bootstrap < 80) {
+            stop(sprintf(
+              "Bootstrap coverage %.2f%% is below 80%%",
+              bootstrap
+            ))
+          }
         shell: Rscript {0}

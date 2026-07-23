@@ -1,5 +1,9 @@
 #include <Rcpp.h>
 
+#include <cmath>
+#include <limits>
+#include <vector>
+
 extern "C" {
 void effectiveSampleSize(int *Npo, int *npo, int *pNpo, int *rootpo,
                          double *transa, double *transb, int *des, int *anc,
@@ -45,7 +49,92 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
                                       Rcpp::IntegerVector anc,
                                       Rcpp::NumericVector y,
                                       Rcpp::NumericVector X) {
-    Rcpp::NumericVector output(2 + dY + dY * dY + dX + dX * dX + dX * dY);
+    if (N < 1 || n < 2 || pN < 1 || dY < 1 || dX < 1) {
+        Rcpp::stop("invalid dimensions supplied to threepoint_l1ou_c");
+    }
+    const long long node_count = static_cast<long long>(n) + pN;
+    if (node_count > std::numeric_limits<int>::max() ||
+        N != node_count - 1 || root <= n || root > node_count) {
+        Rcpp::stop("tree dimensions or root are inconsistent in threepoint_l1ou_c");
+    }
+    if (!std::isfinite(transa) || transa < 0.0 || transb.size() != N ||
+        des.size() != N || anc.size() != N) {
+        Rcpp::stop("tree edge arrays are invalid in threepoint_l1ou_c");
+    }
+    const long long expected_y = static_cast<long long>(n) * dY;
+    const long long expected_x = static_cast<long long>(n) * dX;
+    if (y.size() != expected_y || X.size() != expected_x) {
+        Rcpp::stop("response or design dimensions are inconsistent in threepoint_l1ou_c");
+    }
+
+    std::vector<int> parent(static_cast<std::size_t>(node_count + 1), 0);
+    std::vector<int> incoming_edge(static_cast<std::size_t>(node_count + 1), -1);
+    std::vector<int> last_child_edge(static_cast<std::size_t>(node_count + 1), -1);
+    for (int i = 0; i < N; ++i) {
+        if (!std::isfinite(transb[i]) || transb[i] < 0.0 ||
+            anc[i] <= n || anc[i] > node_count || des[i] < 1 ||
+            des[i] > node_count || des[i] == root || des[i] == anc[i] ||
+            incoming_edge[des[i]] >= 0) {
+            Rcpp::stop("tree topology is invalid in threepoint_l1ou_c");
+        }
+        parent[des[i]] = anc[i];
+        incoming_edge[des[i]] = i;
+        last_child_edge[anc[i]] = i;
+    }
+    for (int node = 1; node <= node_count; ++node) {
+        if (node != root && incoming_edge[node] < 0) {
+            Rcpp::stop("tree topology is disconnected in threepoint_l1ou_c");
+        }
+        if (node > n && last_child_edge[node] < 0) {
+            Rcpp::stop("internal tree node has no children in threepoint_l1ou_c");
+        }
+        if (node > n && node != root &&
+            last_child_edge[node] >= incoming_edge[node]) {
+            Rcpp::stop("tree edges must be supplied in postorder to threepoint_l1ou_c");
+        }
+    }
+    std::vector<unsigned char> state(
+        static_cast<std::size_t>(node_count + 1), 0
+    );
+    state[root] = 2;
+    for (int node = 1; node <= node_count; ++node) {
+        int current = node;
+        while (state[current] == 0) {
+            state[current] = 1;
+            current = parent[current];
+        }
+        if (state[current] == 1) {
+            Rcpp::stop("tree topology contains a cycle in threepoint_l1ou_c");
+        }
+        current = node;
+        while (state[current] == 1) {
+            state[current] = 2;
+            current = parent[current];
+        }
+    }
+    for (R_xlen_t i = 0; i < y.size(); ++i) {
+        if (!std::isfinite(y[i])) {
+            Rcpp::stop("response contains non-finite values in threepoint_l1ou_c");
+        }
+    }
+    for (R_xlen_t i = 0; i < X.size(); ++i) {
+        if (!std::isfinite(X[i])) {
+            Rcpp::stop("design contains non-finite values in threepoint_l1ou_c");
+        }
+    }
+
+    const long long max_output = std::numeric_limits<int>::max();
+    const long long dy_square = static_cast<long long>(dY) * dY;
+    const long long dx_square = static_cast<long long>(dX) * dX;
+    if (dy_square > max_output || dx_square > max_output) {
+        Rcpp::stop("requested output is too large in threepoint_l1ou_c");
+    }
+    const long long output_size = 2LL + dY + dy_square + dX + dx_square +
+        static_cast<long long>(dX) * dY;
+    if (output_size > max_output) {
+        Rcpp::stop("requested output is too large in threepoint_l1ou_c");
+    }
+    Rcpp::NumericVector output(static_cast<R_xlen_t>(output_size));
     threepoint_l1ou(&N, &n, &pN, &dY, &dX, &root, &transa, transb.begin(),
                     des.begin(), anc.begin(), y.begin(), X.begin(),
                     output.begin());

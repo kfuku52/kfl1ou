@@ -7,7 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, purl=FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
 ```
 
@@ -21,7 +21,7 @@ Start by validating and, if desired, normalizing the data. The normalization
 factor is retained so rate parameters can be converted back to the original
 tree-time unit.
 
-```{r}
+```{r, purl=FALSE}
 library(kfl1ou)
 data(lizard.tree, lizard.traits)
 
@@ -34,7 +34,7 @@ Fit a full evolutionary innovation covariance only when there are enough
 species and residual contrasts for the number of traits. A distinct alpha for
 each trait is more flexible but also less identifiable.
 
-```{r}
+```{r, purl=FALSE}
 fit <- estimate_shift_configuration(
   dat$tree,
   dat$Y,
@@ -53,7 +53,7 @@ original_time_parameters(fit)
 Use parametric calibration for covariance comparison and repeat the complete
 shift search when uncertainty from shift selection is scientifically relevant.
 
-```{r}
+```{r, purl=FALSE}
 comparison <- compare_trait_covariance(
   dat$tree, dat$Y, nboot = 200, seed = 1, nCores = 2
 )

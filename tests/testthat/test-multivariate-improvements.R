@@ -96,7 +96,11 @@ test_that("shrinkage permits high-dimensional trait covariance estimation", {
   direct.logLik <- -.5 * (length(residual) * log(2*pi) +
     2 * sum(log(diag(factor))) +
     sum(forwardsolve(t(factor), residual)^2))
-  expect_equal(fit$joint.logLik, direct.logLik, tolerance=1e-8)
+  # The p = n shrinkage case is intentionally close to singular.  Different
+  # BLAS/LAPACK implementations accumulate the equivalent matrix-normal and
+  # dense Cholesky likelihoods in a different order, so compare at a tolerance
+  # appropriate for this ill-conditioned validation case.
+  expect_equal(fit$joint.logLik, direct.logLik, tolerance=1e-5)
 })
 
 test_that("standard model API, diagnostics and simulation are coherent", {

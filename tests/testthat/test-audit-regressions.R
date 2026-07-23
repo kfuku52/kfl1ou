@@ -159,3 +159,52 @@ test_that("effective sample size rejects unsafe edge indices", {
     kfl1ou:::effective.sample.size(tree, edges=c(1L, 2L))
   )))
 })
+
+test_that("threepoint native boundary validates dimensions and topology", {
+  valid <- list(
+    N = 2L,
+    n = 2L,
+    pN = 1L,
+    dY = 1L,
+    dX = 1L,
+    root = 3L,
+    transa = 1,
+    transb = c(1, 1),
+    des = c(1L, 2L),
+    anc = c(3L, 3L),
+    y = c(1, 2),
+    X = c(1, 1)
+  )
+
+  result <- do.call(kfl1ou:::threepoint_l1ou_c, valid)
+  expect_length(result, 7L)
+  expect_true(all(is.finite(result)))
+
+  bad_dimensions <- valid
+  bad_dimensions$N <- 3L
+  expect_error(
+    do.call(kfl1ou:::threepoint_l1ou_c, bad_dimensions),
+    "dimensions or root"
+  )
+
+  bad_vectors <- valid
+  bad_vectors$X <- 1
+  expect_error(
+    do.call(kfl1ou:::threepoint_l1ou_c, bad_vectors),
+    "response or design dimensions"
+  )
+
+  duplicate_tip <- valid
+  duplicate_tip$des <- c(1L, 1L)
+  expect_error(
+    do.call(kfl1ou:::threepoint_l1ou_c, duplicate_tip),
+    "topology is invalid"
+  )
+
+  non_finite <- valid
+  non_finite$y[[1L]] <- Inf
+  expect_error(
+    do.call(kfl1ou:::threepoint_l1ou_c, non_finite),
+    "response contains non-finite"
+  )
+})

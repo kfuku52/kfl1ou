@@ -1,5 +1,7 @@
 #include <Rcpp.h>
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 
 namespace {
 
@@ -8,7 +10,16 @@ using set_threads_fn = void (*)(int);
 
 template <typename Fn>
 Fn lookup_symbol(const char* name) {
+#ifdef _WIN32
+    // Fork-based execution is unavailable on Windows, so nested kfl1ou work
+    // is already sequential.  Returning nullptr keeps the thread-control API
+    // functional without introducing a dependency on the POSIX dynamic-loader
+    // interface, which is not provided by Rtools.
+    (void)name;
+    return nullptr;
+#else
     return reinterpret_cast<Fn>(dlsym(RTLD_DEFAULT, name));
+#endif
 }
 
 int get_threads(const char* name) {
