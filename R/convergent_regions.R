@@ -28,7 +28,7 @@ generate_prediction_vec  <-  function(tr,
         stopifnot(ncol(ageMatrix)==length(shift.configuration))
         stopifnot(alpha>0)
 
-        preds <- cbind(1, 1-exp(-alpha*ageMatrix))
+        preds <- cbind(1, -expm1(-alpha * ageMatrix))
         colnames(preds) <- c(0, shift.configuration)
 
         template.Z  <- cbind(1, ageMatrix)
@@ -753,7 +753,10 @@ fit_convergent_model <- function(tree, Y, shift.configuration, regimes, opt,
             source.optimum <- regime.optima[states$shift.parent.regime + 1L]
             shift.values[, trait.index] <- target.optimum - source.optimum
             shift.means[, trait.index] <- shift.values[, trait.index] *
-                (1 - exp(-alpha[[trait.index]] * edge.age[shift.configuration]))
+                -expm1(
+                    -alpha[[trait.index]] *
+                        edge.age[shift.configuration]
+                )
         }
     }
 
@@ -995,7 +998,7 @@ generate_relation  <- function(tr, shift.configuration){
             nr       <- nr[s.p]
 
             ## removing rows with only one +-1, we assume that previous step took care of redundancy.
-            if ( length( which( abs(nr)>0) ) < 2)
+            if(sum(abs(nr) > 0) < 2)
                 next
 
             M <- rbind(M, nr)

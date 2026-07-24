@@ -9,7 +9,8 @@ make_data <- function(n_tips, seed) {
   list(tree = tree, trait = trait)
 }
 
-benchmark_case <- function(name, data, strategy, max_shifts, iterations = 3L) {
+benchmark_case <- function(name, data, strategy, max_shifts,
+                           max_median_seconds, iterations = 3L) {
   run_once <- function() {
     set.seed(20260723)
     suppressWarnings(
@@ -36,13 +37,27 @@ benchmark_case <- function(name, data, strategy, max_shifts, iterations = 3L) {
     )
   }
 
+  median_seconds <- stats::median(elapsed)
+  if (median_seconds > max_median_seconds) {
+    stop(
+      sprintf(
+        "%s median runtime %.3fs exceeds the %.3fs regression budget.",
+        name,
+        median_seconds,
+        max_median_seconds
+      ),
+      call. = FALSE
+    )
+  }
+
   data.frame(
     benchmark = name,
     strategy = strategy,
     tips = length(data$tree$tip.label),
     max_shifts = max_shifts,
     iterations = iterations,
-    median_seconds = stats::median(elapsed),
+    median_seconds = median_seconds,
+    max_median_seconds = max_median_seconds,
     min_seconds = min(elapsed),
     max_seconds = max(elapsed),
     score = reference$score,
@@ -56,13 +71,15 @@ results <- rbind(
     "certified-small-search",
     make_data(12L, 1L),
     "exhaustive",
-    2L
+    2L,
+    5
   ),
   benchmark_case(
     "ensemble-medium-search",
     make_data(30L, 2L),
     "ensemble",
-    3L
+    3L,
+    2
   )
 )
 
@@ -74,14 +91,15 @@ if (nzchar(step_summary)) {
   lines <- c(
     "# Search benchmark summary",
     "",
-    "| Benchmark | Strategy | Tips | Median seconds | Selected shifts |",
-    "|---|---|---:|---:|---:|",
+    "| Benchmark | Strategy | Tips | Median seconds | Budget seconds | Selected shifts |",
+    "|---|---|---:|---:|---:|---:|",
     sprintf(
-      "| %s | %s | %d | %.3f | %d |",
+      "| %s | %s | %d | %.3f | %.3f | %d |",
       results$benchmark,
       results$strategy,
       results$tips,
       results$median_seconds,
+      results$max_median_seconds,
       results$selected_shifts
     ),
     ""

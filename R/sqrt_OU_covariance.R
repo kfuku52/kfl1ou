@@ -18,7 +18,12 @@
 #' is always enforced when \code{alpha > 0} because otherwise the OU
 #' transformation is invalid.
 #'
-#'@return 
+#'@details The stationary-root covariance becomes intrinsically
+#' ill-conditioned as \code{alpha} approaches zero. A warning is emitted when
+#' \code{alpha} is too small relative to the tree height for reliable
+#' double-precision inversion.
+#'
+#'@return
 #' \item{sqrtInvSigma}{inverse square root of the phylogenetic covariance matrix.}
 #' \item{sqrtSigma}{square root of the phylogenetic covariance matrix.}
 #'
@@ -141,6 +146,17 @@ sqrt_OU_covariance <- function(tree, alpha=0, root.model = c("OUfixedRoot", "OUr
         ## This transformation is valid only for ultrametric trees.
         if(!isTRUE(is.ultrametric(tree))){
             stop("alpha>0, the tree has to be ultrametric")
+        }
+        if(root.model == "OUrandomRoot"){
+            tip.height <- max(
+                tree_node_depths(tree)[seq_along(tree$tip.label)]
+            )
+            if(alpha * tip.height <= sqrt(.Machine$double.eps)){
+                warning(
+                    "OUrandomRoot covariance is numerically ill-conditioned ",
+                    "because alpha is extremely small relative to tree height."
+                )
+            }
         }
         tre <- transf.branch.lengths(tree, model=root.model, parameters=list(alpha=alpha), check.pruningwise=F)$tree
 	coe = 2*alpha 

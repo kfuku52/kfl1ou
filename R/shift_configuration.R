@@ -249,7 +249,7 @@ estimate_shift_configuration <- function(tree, Y,
                 warning("some of the entries of the trait matrix (Y) are
                         missing.\n", immediate.=TRUE)
             }
-            if( length( which(rowSums(!is.na(Y))==0) ) != 0 ){
+            if(any(rowSums(!is.na(Y)) == 0)){
                 stop("the trait matrix has a row with all missing values. you
                      may use drop.tip to drop corresponding tips from the tree.\n")
             }
@@ -911,7 +911,7 @@ generate_design_matrix <- function(tree, type="apprX", alpha){
     edge.values <- Tval - depths[tree$edge[, 1]]
 
     if(type == "orgX"){
-        edge.values <- 1 - exp(-alpha*edge.values)
+        edge.values <- -expm1(-alpha * edge.values)
     }else if(type == "apprX"){
         edge.values <- edge.values
     }else
@@ -2711,7 +2711,7 @@ edge_scaling_from_cache <- function(edge.age, type=c("apprX", "orgX"), alpha=NA_
     type <- match.arg(type)
 
     if(type == "orgX"){
-        return(1 - exp(-alpha * edge.age))
+        return(-expm1(-alpha * edge.age))
     }
     return(edge.age)
 }
@@ -2768,7 +2768,6 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
     tol <- 1e-10
     n2llh.offset <- n * (log(2 * pi) + 1)
     root.is.random <- identical(opt$root.model, "OUrandomRoot")
-    external.edge <- prepared.tree$externalEdge
     internal.edge <- prepared.tree$internalEdge
     anc.index <- prepared.tree$anc.index
     des.internal.index <- prepared.tree$des.internal.index
@@ -2788,23 +2787,17 @@ fast_phylolm_ou_fit <- function(prepared.tree, Y, preds, opt){
             return(loglik.cache$value)
         }
 
-        if(root.is.random){
-            distFromRoot <- exp(-2 * alpha * prepared.tree$times)
-            d1 <- distFromRoot[anc.index]
-            d2 <- numeric(prepared.tree$N)
-            d2[external.edge] <- 1
-            d2[internal.edge] <- distFromRoot[des.internal.index]
+        parent.age <- prepared.tree$times[anc.index]
+        child.age <- numeric(prepared.tree$N)
+        child.age[internal.edge] <-
+            prepared.tree$times[des.internal.index]
+        edge.length <- exp(-2 * alpha * child.age) *
+            -expm1(-2 * alpha * (parent.age - child.age))
+        min.dist.from.root <- if(root.is.random){
+            exp(-2 * alpha * prepared.tree$Tmax)
         } else{
-            distFromRoot <- exp(-2 * alpha * prepared.tree$times) *
-                (1 - exp(-2 * alpha * (prepared.tree$Tmax - prepared.tree$times)))
-            d1 <- distFromRoot[anc.index]
-            d2 <- numeric(prepared.tree$N)
-            d2[external.edge] <- 1 - exp(-2 * alpha * prepared.tree$Tmax)
-            d2[internal.edge] <- distFromRoot[des.internal.index]
+            0
         }
-
-        edge.length <- d2 - d1
-        min.dist.from.root <- min(distFromRoot)
         tmp <- threepoint_l1ou_c(
             N.int,
             n.int,
@@ -3079,7 +3072,8 @@ summarize_trait_fit_results <- function(tree, shift.configuration, opt, trait.re
                 FALSE,
                 FALSE
             )
-            df.2 <- (3 + extra_error_df(opt)) * log(nrow(y) + 1) + sum(log(ess + 1))
+            df.2 <- (3 + extra_error_df(opt)) * log1p(nrow(y)) +
+                sum(log1p(ess))
             score <- score - 2 * fit$logLik + df.2
 
             alpha[[i]] <- fit$optpar
@@ -3425,8 +3419,13 @@ grplasso_support_summary <- function(coefficients, grpIdx, nVariables,
         ))
     }
 
-    active.by.group <- rowsum((coeff.mat[valid, , drop=FALSE] != 0) + 0L,
-                              group=grpIdx[valid], reorder=FALSE) >= threshold
+    coefficient.scale <- max(1, abs(coeff.mat[valid, , drop=FALSE]))
+    coefficient.tolerance <- 64 * .Machine$double.eps * coefficient.scale
+    active.by.group <- rowsum(
+        (abs(coeff.mat[valid, , drop=FALSE]) > coefficient.tolerance) + 0L,
+        group=grpIdx[valid],
+        reorder=FALSE
+    ) >= threshold
     keep <- c(TRUE, colSums(
         active.by.group[, -1, drop=FALSE] != active.by.group[, -nSolutions, drop=FALSE]
     ) > 0L)
@@ -3445,7 +3444,13 @@ grplasso_group_nonzero_counts <- function(coefficients, grpIdx){
     }
 
     coeff.mat <- as.matrix(coefficients)[valid, , drop=FALSE]
-    rowsum((coeff.mat != 0) + 0L, group=grpIdx[valid], reorder=FALSE)
+    coefficient.scale <- max(1, abs(coeff.mat))
+    coefficient.tolerance <- 64 * .Machine$double.eps * coefficient.scale
+    rowsum(
+        (abs(coeff.mat) > coefficient.tolerance) + 0L,
+        group=grpIdx[valid],
+        reorder=FALSE
+    )
 }
 
 count_active_grplasso_groups <- function(coefficients, grpIdx, nVariables){

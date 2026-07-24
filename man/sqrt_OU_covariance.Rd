@@ -45,6 +45,12 @@ under the Brownian motion (BM) or the Ornstein-Uhlenbeck (OU) model.
 The algorithm traverses the tree only once, hence the algorithm is very fast
 and can be applied to very big trees.
 }
+\details{
+The stationary-root covariance becomes intrinsically
+ill-conditioned as \code{alpha} approaches zero. A warning is emitted when
+\code{alpha} is too small relative to the tree height for reliable
+double-precision inversion.
+}
 \examples{
 
 data(lizard.tree)

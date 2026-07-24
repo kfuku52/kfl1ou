@@ -1,3 +1,17 @@
+# kfl1ou 2.4.3
+
+- Stabilize OU branch transformations and design matrices near the Brownian
+  motion boundary, and warn when a stationary-root covariance is intrinsically
+  ill-conditioned at extremely small adaptation rates.
+- Ignore machine-precision group-lasso coefficients when identifying active
+  supports and add randomized objective-equivalence regression coverage for
+  the C++ and vendored solvers.
+- Run deterministic search benchmarks for pushes and pull requests, enforce
+  generous performance-regression budgets, and use stable `log1p` evaluations
+  in native and R likelihood calculations.
+- Derive the installed package citation version from `DESCRIPTION` so release
+  metadata cannot silently drift.
+
 # kfl1ou 2.4.2
 
 - Validate native tree topology, dimensions, branch lengths, group-lasso

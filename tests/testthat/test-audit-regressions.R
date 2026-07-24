@@ -52,6 +52,63 @@ test_that("root polytomies are resolved safely", {
   )
 })
 
+test_that("fixed-root OU calculations remain stable at the BM boundary", {
+  tree <- ape::stree(8L, type="balanced")
+  tree$edge.length <- rep(1, nrow(tree$edge))
+  tree <- ape::reorder.phylo(tree, "postorder")
+  Y <- matrix(
+    seq_len(8L) / 8,
+    ncol=1L,
+    dimnames=list(tree$tip.label, "trait")
+  )
+  expected <- ape::vcv.phylo(tree)
+  dimnames(expected) <- NULL
+  approximate.design <- kfl1ou:::generate_design_matrix(
+    tree, type="apprX"
+  )
+  exact.design <- kfl1ou:::generate_design_matrix(
+    tree, type="orgX", alpha=1e-14
+  )
+  expect_equal(
+    exact.design / 1e-14,
+    approximate.design,
+    tolerance=1e-12
+  )
+
+  for(alpha in c(1e-14, 1e-12)){
+    result <- sqrt_OU_covariance(
+      tree, alpha=alpha, root.model="OUfixedRoot"
+    )
+    expect_equal(
+      result$sqrtSigma %*% t(result$sqrtSigma),
+      expected,
+      tolerance=1e-10
+    )
+    expect_equal(
+      result$sqrtInvSigma %*% t(result$sqrtInvSigma),
+      solve(expected),
+      tolerance=1e-10
+    )
+  }
+
+  bm <- fit_OU(
+    tree, Y, integer(), alpha.lower=0, alpha.upper=0,
+    compute.hessian=FALSE
+  )
+  near.bm <- fit_OU(
+    tree, Y, integer(), alpha.lower=1e-14, alpha.upper=1e-14,
+    compute.hessian=FALSE
+  )
+  expect_equal(near.bm$logLik, bm$logLik, tolerance=1e-10)
+
+  expect_warning(
+    sqrt_OU_covariance(
+      tree, alpha=1e-14, root.model="OUrandomRoot"
+    ),
+    "numerically ill-conditioned"
+  )
+})
+
 test_that("covariance native boundary rejects malformed edge lists", {
   valid <- cbind(
     ancestor = c(2, 2),

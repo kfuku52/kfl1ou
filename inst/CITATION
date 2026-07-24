@@ -5,11 +5,11 @@ bibentry(
   author = c(person("Kenji", "Fukushima")),
   year = 2026,
   title = "kfl1ou: Independently Maintained Fork of l1ou",
-  note = "R package version 2.4.2",
+  note = sprintf("R package version %s", meta$Version),
   textVersion = paste(
     "Fukushima, K. (2026).",
     "kfl1ou: Independently maintained fork of l1ou.",
-    "R package version 2.4.2."
+    sprintf("R package version %s.", meta$Version)
   )
 )
 

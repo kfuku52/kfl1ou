@@ -152,6 +152,64 @@ test_that("grplasso support helpers detect repeated supports without string sign
     kfl1ou:::grplasso_support_change_indices(coeff, grp_idx, nVariables = 2L),
     c(1L, 2L, 3L)
   )
+
+  noisy <- coeff
+  noisy[noisy == 0] <- 8 * .Machine$double.eps
+  noisy_summary <- kfl1ou:::grplasso_support_summary(
+    noisy, grp_idx, nVariables = 2L
+  )
+  expect_equal(noisy_summary$active.by.group, summary$active.by.group)
+  expect_equal(
+    kfl1ou:::grplasso_group_nonzero_counts(noisy, grp_idx),
+    kfl1ou:::grplasso_group_nonzero_counts(coeff, grp_idx)
+  )
+})
+
+test_that("cpp and vendored grplasso paths have equivalent objectives", {
+  set.seed(7302L)
+
+  objective <- function(x, y, group, beta, lambda) {
+    group_norm <- vapply(
+      split(beta, group),
+      function(value) sqrt(sum(value^2)),
+      numeric(1)
+    )
+    sum((y - x %*% beta)^2) +
+      lambda * sum(sqrt(as.numeric(table(group))) * group_norm)
+  }
+
+  for(index in seq_len(35L)) {
+    n <- sample(18:55, 1L)
+    n_groups <- sample(2:10, 1L)
+    sizes <- sample(1:4, n_groups, replace=TRUE)
+    group <- rep(seq_len(n_groups), sizes)
+    x <- matrix(rnorm(n * length(group)), nrow=n)
+    y <- rnorm(n)
+    lambda_max <- kfl1ou:::linreg_group_lasso_lambda_max_r(x, y, group)
+    lambda <- lambda_max * c(1, .8, .55, .3)
+    vendored <- kfl1ou:::run_vendored_grplasso_path(
+      x, y, group, lambda, tol=1e-8
+    )
+    cpp <- kfl1ou:::run_cpp_grplasso_path(
+      x, y, group, lambda, tol=1e-8
+    )
+
+    expect_true(all(vendored$converged))
+    expect_true(all(cpp$converged))
+    for(path_index in seq_along(lambda)) {
+      expect_equal(
+        objective(
+          x, y, group, cpp$coefficients[, path_index],
+          lambda[[path_index]]
+        ),
+        objective(
+          x, y, group, vendored$coefficients[, path_index],
+          lambda[[path_index]]
+        ),
+        tolerance=1e-7
+      )
+    }
+  }
 })
 
 test_that("multivariate estimate_shift_configuration agrees across grplasso backends", {

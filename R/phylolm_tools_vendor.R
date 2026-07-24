@@ -125,24 +125,17 @@ transf.branch.lengths <- function(phy,
         Tmax <- max(times)
         alpha <- p$alpha
         errEdge <- errEdge * exp(-2 * alpha * D[des[externalEdge]])
-        if(model == "OUrandomRoot"){
-            distFromRoot <- exp(-2 * alpha * times)
-            d1 <- distFromRoot[phy$edge[, 1] - n]
-            d2 <- numeric(nrow(phy$edge))
-            d2[externalEdge] <- exp(-2 * alpha * D[des[externalEdge]])
-            d2[!externalEdge] <- distFromRoot[des[!externalEdge] - n]
+        parent.age <- times[phy$edge[, 1] - n]
+        child.age <- numeric(nrow(phy$edge))
+        child.age[externalEdge] <- D[des[externalEdge]]
+        child.age[!externalEdge] <- times[des[!externalEdge] - n]
+        edge.length <- exp(-2 * alpha * child.age) *
+            -expm1(-2 * alpha * (parent.age - child.age))
+        root.edge <- if(model == "OUrandomRoot"){
+            exp(-2 * alpha * Tmax)
+        } else{
+            0
         }
-        if(model == "OUfixedRoot"){
-            distFromRoot <- exp(-2 * alpha * times) *
-                (1 - exp(-2 * alpha * (Tmax - times)))
-            d1 <- distFromRoot[phy$edge[, 1] - n]
-            d2 <- numeric(nrow(phy$edge))
-            d2[externalEdge] <- exp(-2 * alpha * D[des[externalEdge]]) *
-                (1 - exp(-2 * alpha * (Tmax - D[des[externalEdge]])))
-            d2[!externalEdge] <- distFromRoot[des[!externalEdge] - n]
-        }
-        edge.length <- d2 - d1
-        root.edge <- min(distFromRoot)
         diagWeight <- exp(alpha * D)
     }
 

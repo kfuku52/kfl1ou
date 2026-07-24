@@ -160,7 +160,7 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
         goodchildren = 0;
       }
       if (goodchildren) {
-        logd[di] += log(1 + el * vec11[di]);
+        logd[di] += log1p(el * vec11[di]);
         ev = el / (1 + el * vec11[di]);
         ev2 = 1 / (1 + el * vec11[di]);
         for (int j = 0; j < dY; j++) {
