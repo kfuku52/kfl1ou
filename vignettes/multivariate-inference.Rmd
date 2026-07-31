@@ -8,7 +8,7 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE, purl=FALSE}
-knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
 ```
 
 This workflow separates three questions that should not be conflated:
@@ -25,9 +25,9 @@ tree-time unit.
 library(kfl1ou)
 data(lizard.tree, lizard.traits)
 
-keep <- lizard.tree$tip.label[seq_len(30)]
+keep <- lizard.tree$tip.label[seq_len(12)]
 tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-dat <- adjust_data(tree, lizard.traits[keep, 1:3])
+dat <- adjust_data(tree, lizard.traits[keep, 1:2], quietly = TRUE)
 ```
 
 Fit a full evolutionary innovation covariance only when there are enough
@@ -38,11 +38,12 @@ each trait is more flexible but also less identifiable.
 fit <- estimate_shift_configuration(
   dat$tree,
   dat$Y,
-  max.nShifts = 2,
+  max.nShifts = 0,
   criterion = "BIC",
   trait.covariance = "full",
   alpha.structure = "diagonal",
-  likelihood.engine = "auto"
+  likelihood.engine = "auto",
+  optimizer.starts = 1
 )
 
 evolutionary_vcov(fit)
@@ -53,7 +54,22 @@ original_time_parameters(fit)
 Use parametric calibration for covariance comparison and repeat the complete
 shift search when uncertainty from shift selection is scientifically relevant.
 
-```{r, purl=FALSE}
+The following inferential calibration is intentionally not run while building
+the vignette because hundreds of complete model searches are computationally
+expensive. Run it for a scientific analysis after choosing an adequate
+simulation count.
+
+```{r calibration, eval=FALSE, purl=FALSE}
+fit <- estimate_shift_configuration(
+  dat$tree,
+  dat$Y,
+  max.nShifts = 2,
+  criterion = "BIC",
+  trait.covariance = "full",
+  alpha.structure = "diagonal",
+  likelihood.engine = "auto"
+)
+
 comparison <- compare_trait_covariance(
   dat$tree, dat$Y, nboot = 200, seed = 1, nCores = 2
 )

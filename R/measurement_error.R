@@ -23,6 +23,12 @@ fit_l1ou_replicates <- function(
         singleton.error=c("pooled", "zero"), ...){
     validate_l1ou_tree(tree, require.positive.edges=TRUE)
     Y <- as.matrix(Y)
+    if(!is.numeric(Y)){
+        stop("Y must be a numeric matrix or data frame.")
+    }
+    if(any(is.nan(Y)) || any(is.infinite(Y))){
+        stop("Y cannot contain infinite or NaN values; use NA for missing observations.")
+    }
     storage.mode(Y) <- "double"
     if(nrow(Y) != length(species)){
         stop("species must contain one tip label per row of Y.")
@@ -52,18 +58,22 @@ fit_l1ou_replicates <- function(
     )
     counts <- input.error <- means
     pooled.variance <- vapply(seq_len(ncol(Y)), function(j){
-        centered <- unlist(lapply(split(Y[, j], species), function(values){
-            values <- values[is.finite(values)]
-            if(length(values) < 2L) numeric() else values - mean(values)
-        }), use.names=FALSE)
-        if(length(centered) < 2L) 0 else sum(centered^2) /
-            max(1L, length(centered) - length(unique(species)))
+        groups <- split(Y[, j], species)
+        within.ss <- 0
+        within.df <- 0L
+        for(values in groups){
+            values <- values[!is.na(values)]
+            if(length(values) < 2L) next
+            within.ss <- within.ss + sum((values - mean(values))^2)
+            within.df <- within.df + length(values) - 1L
+        }
+        if(within.df == 0L) 0 else within.ss / within.df
     }, numeric(1))
     for(i in seq_along(tree$tip.label)){
         rows <- species == tree$tip.label[[i]]
         for(j in seq_len(ncol(Y))){
             values <- Y[rows, j]
-            values <- values[is.finite(values)]
+            values <- values[!is.na(values)]
             counts[i, j] <- length(values)
             if(!length(values)) next
             means[i, j] <- mean(values)

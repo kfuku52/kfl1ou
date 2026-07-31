@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <R.h>
+#include <R_ext/Utils.h>
 
 static void *zero_alloc(size_t count, size_t size, const char *label) {
     if (size != 0 && count > ((size_t)-1) / size) {
@@ -48,9 +49,12 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
     for (int iedge=0; iedge<N+1; iedge++)
         zero[iedge] = -1;
     int nextE = 0; //index of next edge to cut, in cut edge vector
+    size_t interrupt_counter = 0;
 
     // loop over all N+1 edges, with root edge last. Assumes postorder traversal.
     for (int iedge=0; iedge < N+1; iedge++){
+        if (((++interrupt_counter) & 0x3fffU) == 0U)
+            R_CheckUserInterrupt();
         double len;         // edge length
         int di, anci=0;
         if (iedge<N){      // non-root edge
@@ -104,4 +108,3 @@ void effectiveSampleSize (int *Npo, int *npo, int *pNpo, int *rootpo, double *tr
         }
     }
 }
-

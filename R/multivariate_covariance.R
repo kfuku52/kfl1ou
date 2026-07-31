@@ -306,6 +306,13 @@ multivariate_observation_error_vector <- function(Y, opt, sigma2.error=NULL){
         if(ncol(input.error) == 1L && p > 1L){
             input.error <- input.error[, rep(1L, p), drop=FALSE]
         }
+        missing.error <- is.na(input.error)
+        if(any(missing.error & !is.na(Y))){
+            stop("input_error is missing for an observed trait value.")
+        }
+        ## Missing observation variances do not contribute to the latent
+        ## full-data simulation; the observed-data likelihood drops these cells.
+        input.error[missing.error] <- 0
         result <- result + as.vector(input.error)
     }
 
@@ -409,10 +416,25 @@ multivariate_alpha_bounds <- function(tree, opt, fixed.alpha=NULL, n.traits=1L){
         return(list(fixed=TRUE, lower=fixed.alpha, upper=fixed.alpha,
                     start=fixed.alpha, n.alpha=n.alpha))
     }
+    requested.lower <- rep(as.numeric(opt$alpha.lower.bound), length.out=n.alpha)
+    requested.upper <- rep(as.numeric(opt$alpha.upper.bound), length.out=n.alpha)
+    if(isTRUE(opt$fixed.alpha) &&
+       all(is.finite(requested.lower)) &&
+       all(is.finite(requested.upper)) &&
+       all(abs(requested.lower - requested.upper) <=
+           1e-10 * pmax(1, abs(requested.lower), abs(requested.upper)))){
+        return(list(
+            fixed=TRUE,
+            lower=requested.lower,
+            upper=requested.upper,
+            start=requested.lower,
+            n.alpha=n.alpha
+        ))
+    }
     tree.height <- mean(ape::node.depth.edgelength(tree)[seq_along(tree$tip.label)])
-    lower <- rep(as.numeric(opt$alpha.lower.bound), length.out=n.alpha)
+    lower <- requested.lower
     lower[is.na(lower) | lower <= 0] <- 1e-7 / tree.height
-    upper <- rep(as.numeric(opt$alpha.upper.bound), length.out=n.alpha)
+    upper <- requested.upper
     upper[is.na(upper)] <- alpha_upper_bound(tree)
     start <- rep(as.numeric(opt$alpha.starting.value), length.out=n.alpha)
     missing.start <- is.na(start) | start <= 0
@@ -968,14 +990,35 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
         rownames(shift.means) <- as.character(shift.configuration)
         colnames(shift.means) <- trait.names
         alpha.by.trait <- rep(as.numeric(fit$alpha), length.out=p)
-        scales <- vapply(alpha.by.trait, function(a){
-            edge_scaling_from_cache(
-                opt$edge.age, type="orgX", alpha=a
-            )[shift.configuration]
-        }, numeric(length(shift.configuration)))
-        shift.values <- shift.means / scales
-        optima <- optima + opt$Z[, shift.configuration, drop=FALSE] %*%
-            shift.values
+        scales <- matrix(
+            vapply(alpha.by.trait, function(a){
+                edge_scaling_from_cache(
+                    opt$edge.age, type="orgX", alpha=a
+                )[shift.configuration]
+            }, numeric(length(shift.configuration))),
+            nrow=length(shift.configuration), ncol=p
+        )
+        shift.values <- matrix(
+            NA_real_, nrow=length(shift.configuration), ncol=p,
+            dimnames=dimnames(shift.means)
+        )
+        identifiable <- is.finite(scales) & scales != 0
+        shift.values[identifiable] <-
+            shift.means[identifiable] / scales[identifiable]
+        for(trait.index in seq_len(p)){
+            for(shift.index in seq_along(shift.configuration)){
+                affected <- opt$Z[
+                    , shift.configuration[[shift.index]]
+                ] > 0
+                effect <- shift.values[shift.index, trait.index]
+                if(is.finite(effect)){
+                    optima[affected, trait.index] <-
+                        optima[affected, trait.index] + effect
+                } else{
+                    optima[affected, trait.index] <- NA_real_
+                }
+            }
+        }
     }
 
     model.opt <- opt

@@ -249,7 +249,18 @@ run_cpp_grplasso_path <- function(grpX, grpY, grpIdx, lambda, tol) {
         return(run_vendored_grplasso_path(grpX, grpY, grpIdx, lambda, tol))
     }
 
-    grplasso_path_result(sol$coefficients, lambda, "cpp", converged = sol$converged)
+    result <- grplasso_path_result(
+        sol$coefficients, lambda, "cpp", converged = sol$converged
+    )
+    valid <- length(result$lambda) == ncol(result$coefficients) &&
+        length(result$converged) == ncol(result$coefficients) &&
+        !anyNA(result$converged) &&
+        all(result$converged) &&
+        all(is.finite(result$coefficients))
+    if (!valid) {
+        return(run_vendored_grplasso_path(grpX, grpY, grpIdx, lambda, tol))
+    }
+    result
 }
 
 run_grplasso_path <- function(grpX, grpY, grpIdx, lambda, tol, backend = c("cpp", "vendor-r", "package")) {
@@ -264,4 +275,25 @@ run_grplasso_path <- function(grpX, grpY, grpIdx, lambda, tol, backend = c("cpp"
     }
 
     run_cpp_grplasso_path(grpX, grpY, grpIdx, lambda, tol)
+}
+
+
+validate_grplasso_path_result <- function(sol) {
+
+    coefficients <- as.matrix(sol$coefficients)
+    n.solutions <- ncol(coefficients)
+    valid <- n.solutions > 0L &&
+        length(sol$lambda) == n.solutions &&
+        length(sol$converged) == n.solutions &&
+        !anyNA(sol$converged) &&
+        all(sol$converged) &&
+        all(is.finite(sol$lambda)) &&
+        all(is.finite(coefficients))
+    if (!valid) {
+        stop(paste0(
+            "the group-lasso path did not converge to finite coefficients; ",
+            "try a different backend or adjust grp.delta and grp.seq."
+        ))
+    }
+    sol
 }

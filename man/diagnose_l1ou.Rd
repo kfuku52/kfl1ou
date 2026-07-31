@@ -27,8 +27,9 @@ adequacy and clade-rate diagnostics. Zero skips simulation calibration.}
 diffusion-rate heterogeneity statistic.}
 }
 \value{
-A list containing optimizer, covariance, standardized-residual, and
-potential tip-outlier diagnostics.
+A list containing optimizer, covariance, standardized-residual,
+raw and trait-whitened residual-correlation, and potential tip-outlier
+diagnostics.
 }
 \description{
 Diagnose numerical and residual problems in a fitted model

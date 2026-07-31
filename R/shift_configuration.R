@@ -217,15 +217,7 @@ estimate_shift_configuration <- function(tree, Y,
        edge.length.threshold < 0){
         stop("edge.length.threshold must be one finite non-negative number.")
     }
-    if(!all(is.na(candid.edges))){
-        if(!is.numeric(candid.edges) || anyNA(candid.edges) ||
-           any(!is.finite(candid.edges)) ||
-           any(candid.edges != as.integer(candid.edges)) ||
-           any(candid.edges < 1L | candid.edges > Nedge(tree))){
-            stop("candid.edges must contain valid integer edge indices or NA.")
-        }
-        candid.edges <- unique(as.integer(candid.edges))
-    }
+    candid.edges <- normalize_candidate_edges(tree, candid.edges)
     if(!is.ultrametric(tree))      stop("the input tree is not ultrametric.")
 
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
@@ -404,6 +396,11 @@ estimate_shift_configuration <- function(tree, Y,
     if(is.null(l1ou.options$tree.scale)){
         l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
     }
+    l1ou.options$fixed.alpha <- isTRUE(l1ou.options$fixed.alpha) ||
+        alpha_bounds_are_fixed(
+            l1ou.options$alpha.lower.bound,
+            l1ou.options$alpha.upper.bound
+        )
     l1ou.options$trait.covariance <- validate_trait_covariance_mode(
         l1ou.options$trait.covariance, Y, l1ou.options$criterion
     )
@@ -598,7 +595,8 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     XX  = Cinvh%*%X
 
     nP  = ncol(XX)
-    XX  = as.matrix(XX[,-to.be.removed])
+    keep.columns <- setdiff(seq_len(nP), to.be.removed)
+    XX  = as.matrix(XX[, keep.columns, drop=FALSE])
     # NOTE: refer to the above note about whitening.
     XX  = XX[-nrow(XX), ]
 
@@ -607,7 +605,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     )
 
     Tmp = matrix(0, nrow(sol.path$beta), nP)
-    Tmp[,-to.be.removed] = sol.path$beta
+    Tmp[, keep.columns] = sol.path$beta
     sol.path$beta = Tmp
 
     candidate.configurations <- collect_candidate_configurations(
@@ -624,7 +622,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
             )
             if(is.null(subsampled.path)) next
             padded <- matrix(0, nrow(subsampled.path$beta), nP)
-            padded[, -to.be.removed] <- subsampled.path$beta
+            padded[, keep.columns] <- subsampled.path$beta
             subsampled.path$beta <- padded
             candidate.configurations <- c(
                 candidate.configurations,
@@ -1074,7 +1072,10 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #' Computes the information criterion score for a given configuration
 #'
 #'@param tree ultrametric tree of class phylo, with branch lengths, and edges in postorder.
-#'@param Y trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.
+#'@param Y trait vector/matrix. Multivariate matrices may contain trait-specific
+#' missing entries, provided every tip has at least one observed trait. For a
+#' univariate response, drop tips with missing values before fitting. Row names
+#' must be in the same order as the tip labels.
 #'@param shift.configuration shift positions, i.e. vector of indices of the edges where the shifts occur.
 #'@param criterion an information criterion (see Details).
 #'@param root.model an ancestral state model at the root.
@@ -1108,12 +1109,6 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
 #'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
-#'
-#'When \code{cr.regimes} is supplied, the model is refitted under the equality
-#'constraints. Returned fitted values, residuals, optima, likelihoods, and
-#'variance parameters all correspond to that constrained model. pBIC for such
-#'convergent constraints is a heuristic extension of the unconstrained pBIC
-#'derivation; compare it with AICc/BIC and bootstrap support.
 #' 
 #'@examples
 #' 
@@ -1167,11 +1162,15 @@ configuration_ic <- function(tree, Y, shift.configuration,
                    ){
 
     validate_l1ou_tree(tree, require.positive.edges=TRUE)
+    shift.configuration <- validate_shift_configuration(
+        tree, shift.configuration, name="shift.configuration"
+    )
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
         stop("the input phylogenetic tree is not in postorder. Use adjust_data function.")
 
     Y <- as_l1ou_trait_matrix(Y)
     if(!identical(rownames(Y), tree$tip.label)) stop("rownames of Y and tree$tip.label are not identical.")
+    multivariate.missing <- validate_fixed_configuration_missingness(Y)
 
 
     opt = list()
@@ -1185,7 +1184,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$alpha.upper.bound    <- alpha.upper
         opt$alpha.lower.bound    <- alpha.lower
         opt$Z                    <- generate_design_matrix(tree, "simpX")
-        opt$multivariate.missing <- FALSE
+        opt$multivariate.missing <- multivariate.missing
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
         opt$input_error          <- normalize_input_error(tree, Y, input_error)
@@ -1207,6 +1206,8 @@ configuration_ic <- function(tree, Y, shift.configuration,
     if( is.null(opt$trait.covariance) ){
         opt$trait.covariance <- "diagonal"
     }
+    opt$multivariate.missing <- multivariate.missing
+    opt$tree.list <- if(multivariate.missing) gen_tree_array(tree, Y) else NULL
     opt <- normalize_shift_search_options(opt, tree, Y)
     if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
@@ -1225,6 +1226,10 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$alpha.lower.bound <- alpha.bounds$lower
         opt$alpha.upper.bound <- alpha.bounds$upper
     }
+    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
+        alpha_bounds_are_fixed(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
     opt$trait.covariance <- validate_trait_covariance_mode(
         opt$trait.covariance, Y, opt$criterion
@@ -1256,7 +1261,10 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #' Fits an OU model based on a given configuration
 #'
 #'@param tree ultrametric tree of class phylo, with branch lengths, and edges in postorder.
-#'@param Y trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.
+#'@param Y trait vector/matrix. Multivariate matrices may contain trait-specific
+#' missing entries, provided every tip has at least one observed trait. For a
+#' univariate response, drop tips with missing values before fitting. Row names
+#' must be in the same order as the tip labels.
 #'@param shift.configuration shift positions, i.e. vector of indices of the edges where the shifts occur.
 #'@param criterion an information criterion (see Details).
 #'@param root.model model for the ancestral state at the root.
@@ -1295,6 +1303,12 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
 #'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+#'
+#'When \code{cr.regimes} is supplied, the model is refitted under the equality
+#'constraints. Returned fitted values, residuals, optima, likelihoods, and
+#'variance parameters all correspond to that constrained model. pBIC for such
+#'convergent constraints is a heuristic extension of the unconstrained pBIC
+#'derivation; compare it with AICc/BIC and bootstrap support.
 #' 
 #'@examples
 #' 
@@ -1353,11 +1367,20 @@ fit_OU <- function(tree, Y, shift.configuration,
                    ){
 
     validate_l1ou_tree(tree, require.positive.edges=TRUE)
+    shift.configuration <- validate_shift_configuration(
+        tree, shift.configuration, name="shift.configuration"
+    )
+    if(!is.null(cr.regimes)){
+        cr.regimes <- normalize_convergent_regimes(
+            cr.regimes, shift.configuration, require.background=TRUE
+        )
+    }
     if( !identical(tree$edge, reorder(tree, "postorder")$edge))
         stop("the input phylogenetic tree is not in postorder. Use adjust_data function.")
 
     Y <- as_l1ou_trait_matrix(Y)
     if(!identical(rownames(Y), tree$tip.label)) stop("rownames of Y and tree$tip.label are not identical.")
+    multivariate.missing <- validate_fixed_configuration_missingness(Y)
 
     opt = list()
     if(!all(is.na(l1ou.options))){
@@ -1370,7 +1393,7 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$alpha.upper.bound    <- alpha.upper
         opt$alpha.lower.bound    <- alpha.lower
         opt$Z                    <- generate_design_matrix(tree, "simpX")
-        opt$multivariate.missing <- FALSE
+        opt$multivariate.missing <- multivariate.missing
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
         opt$input_error          <- normalize_input_error(tree, Y, input_error)
@@ -1400,6 +1423,8 @@ fit_OU <- function(tree, Y, shift.configuration,
             max(1L, length(shift.configuration))
         } else search.max.nShifts
     }
+    opt$multivariate.missing <- multivariate.missing
+    opt$tree.list <- if(multivariate.missing) gen_tree_array(tree, Y) else NULL
     opt <- normalize_shift_search_options(opt, tree, Y)
     if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
     if(identical(opt$trait.covariance, "full") &&
@@ -1418,6 +1443,10 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$alpha.lower.bound <- alpha.bounds$lower
         opt$alpha.upper.bound <- alpha.bounds$upper
     }
+    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
+        alpha_bounds_are_fixed(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
     opt$trait.covariance <- validate_trait_covariance_mode(
         opt$trait.covariance, Y, opt$criterion
@@ -1438,14 +1467,6 @@ fit_OU <- function(tree, Y, shift.configuration,
 
          eModel = fit_OU_model(tree, Y, shift.configuration, opt)
          if(!is.null(cr.regimes) ){
-            if( !( 0 %in% unlist(cr.regimes) ) ){
-                stop("background/intercept is not included in the regimes! Represent the background by \"0\".")
-            }
-            sc.reference <- sort(as.integer(c(0, shift.configuration)))
-            cr.reference <- sort(as.integer(unlist(cr.regimes)))
-            if( !identical(sc.reference, cr.reference) ){
-                stop("convergent regimes do not match with the shift positions.")
-            }
             opt$shift.configuration <- shift.configuration
             cr.score <- cmp_model_score_CR(tree, Y, regimes=cr.regimes,
                                alpha=eModel$alpha, opt=opt)
@@ -1532,26 +1553,42 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
         resi[!is.na(Y[,i]), i] = fit$residuals
         intercept[i] = fit$coefficients[[1]] # = y0 * e^-T + theta0_root * (1-e^-T), assumes ultrametric tree
 
-        ## Now we have the alpha hat and we can form the true design matrix
+        mean.effects <- optimum.effects <- numeric()
+        ## Convert finite expected tip displacements into optimum shifts. At the
+        ## exact Brownian boundary the conversion scale is zero, so the optimum
+        ## shift is not identifiable even though the fitted mean displacement is.
         if( nShifts > 0 ){
-            scale.values <- edge_scaling_from_cache(edge.age, type="orgX", alpha=alpha[i])[s.c]^-1
-            fit$coefficients[2:(nShifts+1)] <- scale.values * fit$coefficients[2:(nShifts+1)]
+            mean.effects <- fit$coefficients[2:(nShifts+1)]
+            scales <- edge_scaling_from_cache(
+                edge.age, type="orgX", alpha=alpha[i]
+            )[s.c]
+            optimum.effects <- rep(NA_real_, nShifts)
+            identifiable <- is.finite(scales) & scales != 0
+            optimum.effects[identifiable] <-
+                mean.effects[identifiable] / scales[identifiable]
         }
 
         if( length(shift.configuration) > 0 && nShifts > 0 ){
             visible.idx <- which(!is.na(augmented.s.c))
-            shift.values[visible.idx, i] <- fit$coefficients[2:(nShifts+1)]
-            shift.means[visible.idx, i] <- fit$coefficients[2:(nShifts+1)] / scale.values
+            shift.values[visible.idx, i] <- optimum.effects
+            shift.means[visible.idx, i] <- mean.effects
         }
 
         optima.tmp = rep(fit$coefficients[[1]], nTips)  # optima at the tips for one trait
         if( length(shift.configuration) > 0 && nShifts > 0 ){
             visible.idx <- which(!is.na(augmented.s.c))
             if(length(visible.idx) > 0){
-                optima.tmp <- optima.tmp + drop(
-                    opt$Z[, shift.configuration[visible.idx], drop=FALSE] %*%
-                        fit$coefficients[2:(nShifts+1)]
-                )
+                for(local.idx in seq_along(visible.idx)){
+                    affected <- opt$Z[
+                        , shift.configuration[visible.idx[[local.idx]]]
+                    ] > 0
+                    effect <- optimum.effects[[local.idx]]
+                    if(is.finite(effect)){
+                        optima.tmp[affected] <- optima.tmp[affected] + effect
+                    } else{
+                        optima.tmp[affected] <- NA_real_
+                    }
+                }
             }
         }
 
@@ -1574,10 +1611,15 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
         score <- score.info$score
     }
     if(opt$use.saved.scores && !all(is.na(score.info))){
+        stationary.variance <- ifelse(
+            score.info$alpha > 0,
+            score.info$sigma2 / (2 * score.info$alpha),
+            NA_real_
+        )
         add_configuration_score_to_list(
             shift.configuration,
             score,
-            paste0(c(score.info$sigma2/(2 * score.info$alpha), score.info$logLik), collapse=" ")
+            paste0(c(stationary.variance, score.info$logLik), collapse=" ")
         )
     }
     model.opt <- opt
@@ -1768,6 +1810,68 @@ sanitize_alpha_bounds <- function(alpha.lower, alpha.upper){
     return(list(lower=lower, upper=upper))
 }
 
+
+alpha_bounds_are_fixed <- function(alpha.lower, alpha.upper, tolerance=1e-10){
+
+    lower <- as.numeric(alpha.lower)
+    upper <- as.numeric(alpha.upper)
+    length(lower) > 0L &&
+        length(lower) == length(upper) &&
+        all(is.finite(lower)) &&
+        all(is.finite(upper)) &&
+        all(abs(lower - upper) <=
+            tolerance * pmax(1, abs(lower), abs(upper)))
+}
+
+
+validate_fixed_configuration_missingness <- function(Y){
+
+    Y <- as.matrix(Y)
+    if(!anyNA(Y)){
+        return(FALSE)
+    }
+    if(ncol(Y) == 1L){
+        stop(paste0(
+            "some entries of the univariate response are missing; ",
+            "drop the corresponding tips before fitting."
+        ))
+    }
+    if(any(rowSums(!is.na(Y)) == 0L)){
+        stop(paste0(
+            "the trait matrix has a tip with no observed traits; ",
+            "drop that tip before fitting."
+        ))
+    }
+    TRUE
+}
+
+
+normalize_candidate_edges <- function(tree, candid.edges){
+
+    if(is.null(candid.edges)){
+        return(NA_integer_)
+    }
+    if(length(candid.edges) == 0L){
+        return(integer())
+    }
+    if(all(is.na(candid.edges))){
+        valid.na.sentinel <- (is.numeric(candid.edges) ||
+                              is.logical(candid.edges)) &&
+            !(is.numeric(candid.edges) && any(is.nan(candid.edges)))
+        if(valid.na.sentinel){
+            return(NA_integer_)
+        }
+    }
+    if(!is.numeric(candid.edges) || anyNA(candid.edges) ||
+       any(!is.finite(candid.edges)) ||
+       any(candid.edges < 1 | candid.edges > Nedge(tree)) ||
+       any(candid.edges != floor(candid.edges))){
+        stop("candid.edges must contain valid integer edge indices or NA.")
+    }
+    unique(as.integer(candid.edges))
+}
+
+
 normalize_max_n_shifts <- function(max.nShifts, tree){
 
     auto.max.n.shifts <- floor(Nedge(tree) / 2)
@@ -1844,6 +1948,7 @@ normalize_shift_search_options <- function(opt, tree, Y){
     for(name in names(defaults)){
         if(is.null(opt[[name]])) opt[[name]] <- defaults[[name]]
     }
+    opt$candid.edges <- normalize_candidate_edges(tree, opt$candid.edges)
     opt$max.nShifts <- normalize_max_n_shifts(opt$max.nShifts, tree)
     opt$nCores <- l1ou_integer_argument(opt$nCores, "nCores", 1L)
     opt$parallel.computing <- l1ou_logical_argument(
@@ -3335,7 +3440,9 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     base.seq = seq(0, seq.ub, coarse.delta)
     for (itrTmp in 1:max.nTries) {
         lmbd = lmbdMax * (0.5^base.seq)
-        sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd, tol = 0.01, backend = backend)
+        sol <- validate_grplasso_path_result(run_grplasso_path(
+            grpX, grpY, grpIdx, lmbd, tol = 0.01, backend = backend
+        ))
 
         support.summary <- grplasso_support_summary(
             sol$coefficients, grpIdx, nVariables,
@@ -3366,7 +3473,9 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
         coarse.sol <- sol
         coarse.sol$coefficients <- as.matrix(sol$coefficients)[, seq_along(final.lmbd), drop=FALSE]
     } else{
-        coarse.sol <- run_grplasso_path(grpX, grpY, grpIdx, final.lmbd, tol = 0.01, backend = backend)
+        coarse.sol <- validate_grplasso_path_result(run_grplasso_path(
+            grpX, grpY, grpIdx, final.lmbd, tol = 0.01, backend = backend
+        ))
     }
     lmbd <- final.lmbd
     coarse.summary <- grplasso_support_summary(
@@ -3379,7 +3488,9 @@ run_grplasso  <- function (grpX, grpY, nVariables, grpIdx, opt){
     if(length(refine.idx) == 0){
         refine.idx <- 1L
     }
-    sol <- run_grplasso_path(grpX, grpY, grpIdx, lmbd[refine.idx], tol = 1e-6, backend = backend)
+    sol <- validate_grplasso_path_result(run_grplasso_path(
+        grpX, grpY, grpIdx, lmbd[refine.idx], tol = 1e-6, backend = backend
+    ))
 
     if(!isTRUE(opt$quietly)){
         for (dfm in df.missing) {

@@ -127,6 +127,42 @@ test_that("cpp grplasso boundary rejects invalid numerical inputs and controls",
   )
 })
 
+test_that("non-converged cpp paths fall back and cannot enter shift support", {
+  fx <- make_group_lasso_fixture()
+  fallback <- kfl1ou:::grplasso_path_result(
+    matrix(0, nrow=ncol(fx$x), ncol=length(fx$lambda)),
+    fx$lambda,
+    "vendor-r"
+  )
+
+  local_mocked_bindings(
+    linreg_group_lasso_path_cpp=function(...){
+      list(
+        coefficients=matrix(
+          1, nrow=ncol(fx$x), ncol=length(fx$lambda)
+        ),
+        converged=rep(FALSE, length(fx$lambda))
+      )
+    },
+    run_vendored_grplasso_path=function(...) fallback,
+    .package="kfl1ou"
+  )
+
+  recovered <- kfl1ou:::run_cpp_grplasso_path(
+    fx$x, fx$y, fx$group, fx$lambda, tol=1e-8
+  )
+  expect_identical(recovered$call, "grplasso_vendor-r")
+  expect_true(all(recovered$converged))
+  expect_equal(recovered$coefficients, fallback$coefficients)
+
+  invalid <- fallback
+  invalid$converged[[1L]] <- FALSE
+  expect_error(
+    kfl1ou:::validate_grplasso_path_result(invalid),
+    "did not converge"
+  )
+})
+
 test_that("grplasso support helpers detect repeated supports without string signatures", {
   coeff <- matrix(
     c(

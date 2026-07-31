@@ -10,11 +10,9 @@
 #'@export
 shift_tip_partition <- function(tree, shift.configuration=integer()){
     validate_l1ou_tree(tree, require.positive.edges=FALSE)
-    shift.configuration <- sort(unique(as.integer(shift.configuration)))
-    if(anyNA(shift.configuration) ||
-       any(shift.configuration < 1L | shift.configuration > Nedge(tree))){
-        stop("shift.configuration contains an invalid edge index.")
-    }
+    shift.configuration <- sort(validate_shift_configuration(
+        tree, shift.configuration
+    ))
     if(length(shift.configuration) == 0L){
         return(stats::setNames(rep(1L, length(tree$tip.label)), tree$tip.label))
     }
@@ -114,11 +112,13 @@ equivalent_shift_configurations <- function(
 #' Compare diagonal and correlated-trait OU covariance models
 #'
 #' Fits a diagonal innovation-covariance null model and a full covariance model
-#' to the same shift configuration. A parametric-bootstrap likelihood-ratio test
-#' is used because small phylogenetic samples and covariance optimization can
-#' make a simple chi-squared reference distribution inaccurate. Zero
-#' off-diagonal covariances are interior points of the positive-definite
-#' covariance parameter space, not boundary parameters.
+#' to the same shift configuration. With trait-specific adaptation rates in
+#' both fits, the diagonal model is nested in the full model and the bootstrap
+#' calibrates its likelihood-ratio statistic. A shared-alpha full model is not
+#' nested in the trait-specific-alpha null; in that case the reported deviance
+#' difference is calibrated only by the parametric bootstrap. Regularized full
+#' covariance fits are reported as sensitivity comparisons rather than
+#' conventional likelihood-ratio tests.
 #'
 #'@param tree ultrametric phylogeny in postorder.
 #'@param Y numeric trait matrix aligned to \code{tree$tip.label}.
@@ -129,6 +129,8 @@ equivalent_shift_configurations <- function(
 #'@param root.model ancestral-root model.
 #'@param alpha.structure alpha structure for the full model. The default allows
 #' one alpha per trait, making the diagonal model nested in the full model.
+#' A shared-alpha alternative is non-nested relative to the trait-specific-alpha
+#' diagonal fit and therefore requires parametric-bootstrap calibration.
 #'@param likelihood.engine likelihood engine for the full model.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param measurement_error logical; estimate additional observation variance.
@@ -180,6 +182,9 @@ compare_trait_covariance <- function(
         stop("rownames of Y must be identical to tree$tip.label.")
     }
     if(ncol(Y) < 2L) stop("at least two traits are required.")
+    shift.configuration <- validate_shift_configuration(
+        tree, shift.configuration
+    )
     null <- fit_OU(
         tree, Y, shift.configuration, criterion="BIC",
         root.model=root.model, measurement_error=measurement_error,
@@ -267,11 +272,39 @@ compare_trait_covariance <- function(
     p.interval <- if(length(bootstrap.statistics) > 0L){
         stats::binom.test(exceedances, length(bootstrap.statistics))$conf.int
     } else c(NA_real_, NA_real_)
+    nested <- identical(alpha.structure, "diagonal")
+    parameter.delta <- as.numeric(
+        attr(logLik(alternative), "df") - attr(logLik(null), "df")
+    )
+    if(length(parameter.delta) != 1L || !is.finite(parameter.delta)){
+        parameter.delta <- NA_real_
+    }
+    regularized <- !identical(covariance.regularization, "none")
+    empirically.calibrated <- length(bootstrap.statistics) > 0L
+    calibrated <- !regularized && (nested || empirically.calibrated)
+    calibration.note <- if(regularized){
+        paste0(
+            "The alternative was fitted with a covariance penalty; the ",
+            "result is a regularized sensitivity comparison, not a ",
+            "conventional likelihood-ratio test."
+        )
+    } else if(!nested && empirically.calibrated){
+        paste0(
+            "The shared-alpha and trait-specific-alpha models are not nested; ",
+            "the reported p-value is calibrated only by the parametric ",
+            "bootstrap statistic."
+        )
+    } else if(!nested){
+        paste0(
+            "The shared-alpha and trait-specific-alpha models are not nested. ",
+            "Run with nboot > 0 for an empirically calibrated comparison."
+        )
+    } else NULL
     result <- list(
         null=null,
         alternative=alternative,
         statistic=statistic,
-        df=ncol(Y) * (ncol(Y) - 1L) / 2L,
+        df=parameter.delta,
         bootstrap.statistics=bootstrap.statistics,
         p.value=p.value,
         p.value.mcse=if(is.finite(p.value))
@@ -283,13 +316,12 @@ compare_trait_covariance <- function(
         attempted=nboot,
         selection=selection,
         search.max.nShifts=search.max.nShifts,
-        calibrated=identical(covariance.regularization, "none"),
-        calibration.note=if(identical(covariance.regularization, "none")) NULL else
-            paste0(
-                "The alternative was fitted with a covariance penalty; the ",
-                "result is a regularized sensitivity comparison, not a ",
-                "conventional likelihood-ratio test."
-            ),
+        nested=nested,
+        comparison=if(regularized) "regularized sensitivity" else
+            if(nested) "nested likelihood-ratio" else
+                "non-nested parametric-bootstrap",
+        calibrated=calibrated,
+        calibration.note=calibration.note,
         failure.messages=sort(
             table(failure.messages[nzchar(failure.messages)]), decreasing=TRUE
         )
@@ -300,11 +332,19 @@ compare_trait_covariance <- function(
 
 #'@export
 print.l1ou_covariance_comparison <- function(x, ...){
-    cat("Trait-covariance likelihood-ratio comparison\n")
-    cat("LR statistic:", signif(x$statistic, 6), "\n")
+    comparison <- if(is.null(x$comparison)){
+        "likelihood-ratio"
+    } else x$comparison
+    cat("Trait-covariance ", comparison, " comparison\n", sep="")
+    cat("deviance statistic:", signif(x$statistic, 6), "\n")
     if(is.finite(x$p.value)){
         cat("parametric-bootstrap p-value:", signif(x$p.value, 6),
             "(", x$successful, "successful refits)\n")
+    }
+    if(!is.null(x$calibration.note) &&
+       length(x$calibration.note) == 1L &&
+       nzchar(x$calibration.note)){
+        cat("calibration:", x$calibration.note, "\n")
     }
     invisible(x)
 }
@@ -606,7 +646,8 @@ print.l1ou_model_average <- function(x, ...){
 #'@param ... arguments passed to
 #' \code{\link{estimate_shift_configuration}}.
 #'@return A tree-ensemble object containing fits, partition weights, mean tip
-#' co-assignment probabilities, and pairwise adjusted Rand indices.
+#' co-assignment probabilities, pairwise adjusted Rand indices, and the number
+#' of zero-weight trees excluded before fitting.
 #'@export
 fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
     if(inherits(trees, "phylo")) trees <- list(trees)
@@ -625,27 +666,36 @@ fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
         stop("rownames(Y) must match the common tree tip labels.")
     }
     if(is.null(tree.weights)) tree.weights <- rep(1, length(trees))
+    total.weight <- if(is.numeric(tree.weights)) sum(tree.weights) else NA_real_
     if(length(tree.weights) != length(trees) || !is.numeric(tree.weights) ||
        any(!is.finite(tree.weights)) || any(tree.weights < 0) ||
-       sum(tree.weights) <= 0){
+       !is.finite(total.weight) || total.weight <= 0){
         stop("tree.weights must be finite, non-negative, and have positive sum.")
     }
-    tree.weights <- tree.weights / sum(tree.weights)
-    errors <- character(length(trees))
-    fits <- lapply(seq_along(trees), function(i){
+    tree.weights <- tree.weights / total.weight
+    active <- which(tree.weights > 0)
+    excluded.zero.weight <- length(trees) - length(active)
+    errors <- character(length(active))
+    fits <- lapply(seq_along(active), function(j){
+        i <- active[[j]]
         tree <- reorder(trees[[i]], "postorder")
         response <- Y[tree$tip.label, , drop=FALSE]
         tryCatch(
             estimate_shift_configuration(tree, response, ...),
             error=function(e){
-                errors[[i]] <<- conditionMessage(e)
+                errors[[j]] <<- conditionMessage(e)
                 NULL
             }
         )
     })
     successful <- !vapply(fits, is.null, logical(1))
-    if(!any(successful)) stop("shift inference failed on every tree.")
-    weights <- tree.weights[successful]
+    if(!any(successful)){
+        stop("shift inference failed on every positive-weight tree.")
+    }
+    weights <- tree.weights[active][successful]
+    if(sum(weights) <= 0){
+        stop("successful tree fits have zero total weight.")
+    }
     weights <- weights / sum(weights)
     fits <- fits[successful]
     partitions <- lapply(fits, function(fit){
@@ -676,6 +726,7 @@ fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
         }, integer(1)),
         successful=sum(successful),
         failed=sum(!successful),
+        excluded.zero.weight=excluded.zero.weight,
         failure.messages=sort(table(errors[nzchar(errors)]), decreasing=TRUE)
     )
     class(result) <- "l1ou_tree_ensemble"
@@ -687,6 +738,9 @@ fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
 print.l1ou_tree_ensemble <- function(x, ...){
     cat("kfl1ou tree-ensemble sensitivity analysis\n")
     cat("successful:", x$successful, "failed:", x$failed, "\n")
+    if(!is.null(x$excluded.zero.weight) && x$excluded.zero.weight > 0L){
+        cat("excluded zero-weight trees:", x$excluded.zero.weight, "\n")
+    }
     cat("weighted shift count:", sum(x$weights * x$shift.counts), "\n")
     cat("top tip partitions:\n")
     print(utils::head(x$partition.weights, 5L))

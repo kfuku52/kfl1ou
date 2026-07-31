@@ -103,19 +103,39 @@ scan_branch_rate_models <- function(model, Y=NULL, candidate.edges=NULL,
     tree <- model$tree
     y <- if(is.null(Y)) as.numeric(model$Y[, 1L]) else as.numeric(Y[, 1L])
     Z <- generate_design_matrix(tree, "simpX")
+    model.shifts <- validate_shift_configuration(
+        tree, model$shift.configuration
+    )
     design <- cbind(
         intercept=1,
-        Z[, as.integer(model$shift.configuration), drop=FALSE]
+        Z[, model.shifts, drop=FALSE]
     )
+    sizes <- colSums(Z > 0)
     if(is.null(candidate.edges)){
-        sizes <- colSums(Z > 0)
         candidate.edges <- which(
             sizes >= min.clade.size &
             sizes <= length(y) - min.clade.size &
             seq_len(Nedge(tree)) < Nedge(tree)
         )
+    } else{
+        if(!is.numeric(candidate.edges) || anyNA(candidate.edges) ||
+           any(!is.finite(candidate.edges)) ||
+           any(candidate.edges != floor(candidate.edges)) ||
+           any(candidate.edges < 1L | candidate.edges >= Nedge(tree)) ||
+           anyDuplicated(candidate.edges)){
+            stop(
+                "candidate.edges must contain unique, finite integer ",
+                "non-reference edge indices."
+            )
+        }
+        candidate.edges <- as.integer(candidate.edges)
+        invalid.size <- sizes[candidate.edges] < min.clade.size |
+            sizes[candidate.edges] > length(y) - min.clade.size
+        if(any(invalid.size)){
+            stop("candidate.edges contains a clade that violates min.clade.size.")
+        }
     }
-    candidate.edges <- sort(unique(as.integer(candidate.edges)))
+    candidate.edges <- sort(as.integer(candidate.edges))
     if(!length(candidate.edges)){
         stop("no rate-shift candidate edge satisfies min.clade.size.")
     }
@@ -153,7 +173,9 @@ scan_branch_rate_models <- function(model, Y=NULL, candidate.edges=NULL,
 #' rate-edge scan, thereby calibrating selection of the best rate edge.
 #'
 #'@param model fitted univariate \code{"l1ou"} model without observation error.
-#'@param candidate.edges optional rate-shift stem edges.
+#'@param candidate.edges optional unique integer rate-shift stem edges. The
+#' postorder reference edge is excluded to avoid an equivalent complementary
+#' rate parameterization.
 #'@param min.clade.size minimum tips inside and outside a candidate clade.
 #'@param multiplier.bounds positive optimization bounds for the clade rate.
 #'@param nsim number of homogeneous-null simulations for a scan-calibrated

@@ -1,3 +1,29 @@
+# kfl1ou 2.5.0
+
+- Correct convergent-regime design matrices for nested shifts, refit the final
+  design at the estimated adaptation rate, retain continuous OU weights when
+  alpha is fixed, and base BIC/AICc penalties on the dimensions of the models
+  actually fitted.
+- Preserve finite expected mean shifts at the exact Brownian boundary while
+  marking unidentifiable optimum shifts as missing, propagate fixed-alpha
+  bounds consistently, and handle observation-error entries for unobserved
+  multivariate cells during latent simulation.
+- Strengthen tree, shift, candidate-edge, replicate, ensemble-weight, and
+  simulation validation; reconstruct complete latent fitted means for
+  missing-data simulations and distinguish raw from trait-whitened diagnostic
+  correlations.
+- Label non-nested and regularized trait-covariance comparisons explicitly,
+  calibrate them only when justified, and report their actual fitted parameter
+  difference.
+- Harden native pruning, covariance, configuration-score, and group-lasso
+  routines against interrupted unwinding, size overflow, input mutation,
+  subnormal branch loss, non-finite scores, and unstable large-scale arithmetic.
+- Expand public-API and regression coverage, execute a lightweight
+  multivariate vignette, test the minimum supported testthat and reduced
+  dependency sets, build the PDF manual, audit the R dependency closure with
+  CycloneDX and OSV, and gate releases on successful checks and provenance
+  attestation.
+
 # kfl1ou 2.4.3
 
 - Stabilize OU branch transformations and design matrices near the Brownian

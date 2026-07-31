@@ -13,6 +13,46 @@ coverage_percent <- function(data) {
 }
 
 overall <- as.numeric(covr::percent_coverage(coverage))
+namespace <- trimws(readLines("NAMESPACE", warn=FALSE))
+export.lines <- grep("^export\\([^)]+\\)$", namespace, value=TRUE)
+s3.lines <- grep("^S3method\\([^,]+,[^)]+\\)$", namespace, value=TRUE)
+public.api <- sort(unique(c(
+  sub("^export\\(([^)]+)\\)$", "\\1", export.lines),
+  sub("^S3method\\(([^,]+),([^)]+)\\)$", "\\1.\\2", s3.lines)
+)))
+coverage.functions <- as.character(coverage_data$functions)
+public.api.results <- data.frame(
+  function_name=public.api,
+  expressions=vapply(
+    public.api,
+    function(name) sum(coverage.functions == name, na.rm=TRUE),
+    integer(1)
+  ),
+  covered_expressions=vapply(
+    public.api,
+    function(name) sum(
+      coverage.functions == name & coverage_data$value > 0,
+      na.rm=TRUE
+    ),
+    integer(1)
+  ),
+  stringsAsFactors=FALSE
+)
+public.api.results$coverage <- ifelse(
+  public.api.results$expressions == 0L,
+  NA_real_,
+  100 * public.api.results$covered_expressions /
+    public.api.results$expressions
+)
+utils::write.csv(
+  public.api.results,
+  "public-api-coverage.csv",
+  row.names=FALSE
+)
+zero.public.api <- public.api.results$function_name[
+  public.api.results$expressions == 0L |
+    public.api.results$covered_expressions == 0L
+]
 file_floors <- c(
   "R/phylogeny_bootstrap.R" = 85,
   "R/univariate_sparse_backends.R" = 80,
@@ -128,6 +168,18 @@ summary_lines <- c(
   "# Coverage summary",
   "",
   sprintf("- Overall: **%s** (floor: %.1f%%)", format_percent(overall), overall_floor),
+  if(length(zero.public.api)){
+    paste0(
+      "- Public API functions with zero covered expressions: **",
+      paste(zero.public.api, collapse=", "),
+      "**"
+    )
+  } else{
+    sprintf(
+      "- Public API functions with zero covered expressions: **none** (%d checked)",
+      nrow(public.api.results)
+    )
+  },
   if (is.na(patch$percent)) {
     "- Changed executable expressions: **not applicable**"
   } else {
@@ -156,6 +208,15 @@ if (nzchar(step_summary)) {
 cat(paste(summary_lines, collapse = "\n"), "\n")
 
 failures <- character()
+if(length(zero.public.api)){
+  failures <- c(
+    failures,
+    paste0(
+      "Public API functions must have at least one covered expression: ",
+      paste(zero.public.api, collapse=", ")
+    )
+  )
+}
 if (overall < overall_floor) {
   failures <- c(
     failures,

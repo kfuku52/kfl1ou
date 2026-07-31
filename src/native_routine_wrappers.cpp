@@ -1,6 +1,8 @@
 #include <Rcpp.h>
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <vector>
 
@@ -101,8 +103,12 @@ Rcpp::NumericVector effective_sample_size_c(int N, int n, int pN, int root,
     }
 
     Rcpp::NumericVector output(edge.size());
-    effectiveSampleSize(&N, &n, &pN, &root, &transa, transb.begin(), des.begin(),
-                        anc.begin(), edge.begin(), output.begin());
+    Rcpp::unwindProtect([&]() -> SEXP {
+        effectiveSampleSize(&N, &n, &pN, &root, &transa, transb.begin(),
+                            des.begin(), anc.begin(), edge.begin(),
+                            output.begin());
+        return R_NilValue;
+    });
     return output;
 }
 
@@ -124,8 +130,11 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
     }
     const std::size_t nodes = static_cast<std::size_t>(node_count);
     const std::size_t max_size = std::numeric_limits<std::size_t>::max();
-    const std::size_t max_double_elements = max_size / sizeof(double);
-    auto checked_product = [](std::size_t left, std::size_t right) {
+    const std::size_t max_double_elements = std::min(
+        max_size / sizeof(double),
+        static_cast<std::size_t>(R_XLEN_T_MAX)
+    );
+    auto checked_product = [max_size](std::size_t left, std::size_t right) {
         if (right != 0 && left > max_size / right) {
             Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
         }
@@ -138,7 +147,9 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
     const std::size_t yy_workspace = checked_product(y_workspace, dy);
     const std::size_t xx_workspace = checked_product(x_workspace, dx);
     const std::size_t xy_workspace = checked_product(x_workspace, dy);
-    if (yy_workspace > max_double_elements ||
+    if (y_workspace > max_double_elements ||
+        x_workspace > max_double_elements ||
+        yy_workspace > max_double_elements ||
         xx_workspace > max_double_elements ||
         xy_workspace > max_double_elements) {
         Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
@@ -221,8 +232,11 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
         Rcpp::stop("requested output is too large in threepoint_l1ou_c");
     }
     Rcpp::NumericVector output(static_cast<R_xlen_t>(output_size));
-    threepoint_l1ou(&N, &n, &pN, &dY, &dX, &root, &transa, transb.begin(),
-                    des.begin(), anc.begin(), y.begin(), X.begin(),
-                    output.begin());
+    Rcpp::unwindProtect([&]() -> SEXP {
+        threepoint_l1ou(&N, &n, &pN, &dY, &dX, &root, &transa,
+                        transb.begin(), des.begin(), anc.begin(), y.begin(),
+                        X.begin(), output.begin());
+        return R_NilValue;
+    });
     return output;
 }

@@ -1,26 +1,120 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag; dispatch this workflow at the same tag
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  attestations: write
+  checks: read
   contents: write
+  id-token: write
 
 jobs:
   release:
+    name: release
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 120
+    environment:
+      name: release
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag }}
+      - name: Verify tag format and main ancestry
+        id: release-ref
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a v-prefixed semantic version." >&2
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          tag_sha=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          if [[ "$GITHUB_REF" != "refs/tags/${RELEASE_TAG}" ]]; then
+            echo "Dispatch this workflow with --ref ${RELEASE_TAG} so provenance identifies the released tag." >&2
+            exit 1
+          fi
+          dispatch_sha=$(git rev-parse "${GITHUB_SHA}^{commit}")
+          if [[ "$dispatch_sha" != "$tag_sha" ]]; then
+            echo "The workflow-dispatch SHA does not match $RELEASE_TAG." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_sha" refs/remotes/origin/main; then
+            echo "$RELEASE_TAG does not point to a commit reachable from main." >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$tag_sha" ]]; then
+            echo "The checked-out commit does not match $RELEASE_TAG." >&2
+            exit 1
+          fi
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+      - name: Require successful main checks
+        env:
+          RELEASE_SHA: ${{ steps.release-ref.outputs.sha }}
+        shell: bash
+        run: |
+          required_checks=(
+            "ubuntu-latest (release)"
+            "windows-latest (release)"
+            "macos-latest (release)"
+            "ubuntu-latest (4.1.0)"
+            "generated-files"
+            "coverage"
+            "minimum-testthat"
+            "hard-dependencies-only"
+            "pdf-manual"
+            "C and C++"
+            "benchmark"
+            "cran-dependency-audit"
+          )
+          deadline=$((SECONDS + 3000))
+          while true; do
+            gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs?per_page=100" \
+              > "${RUNNER_TEMP}/release-check-runs.json"
+            pending=()
+            failed=()
+            for check_name in "${required_checks[@]}"; do
+              state=$(jq -r --arg name "$check_name" '
+                [.[].check_runs[] | select(.name == $name)]
+                | sort_by(.started_at // .completed_at // "")
+                | last
+                | if . == null then "missing:"
+                  else ((.status // "missing") + ":" + (.conclusion // ""))
+                  end
+              ' "${RUNNER_TEMP}/release-check-runs.json")
+              case "$state" in
+                completed:success) ;;
+                completed:*) failed+=("${check_name}=${state}") ;;
+                *) pending+=("${check_name}=${state}") ;;
+              esac
+            done
+            if (( ${#failed[@]} > 0 )); then
+              printf 'Required checks failed: %s\n' "${failed[*]}" >&2
+              exit 1
+            fi
+            if (( ${#pending[@]} == 0 )); then
+              break
+            fi
+            if (( SECONDS >= deadline )); then
+              printf 'Required checks did not complete: %s\n' "${pending[*]}" >&2
+              exit 1
+            fi
+            printf 'Waiting for required checks: %s\n' "${pending[*]}"
+            sleep 20
+          done
       - uses: r-lib/actions/setup-pandoc@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
       - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
@@ -30,19 +124,26 @@ jobs:
           extra-packages: any::rcmdcheck
           needs: check
       - name: Verify release version
-        if: startsWith(github.ref, 'refs/tags/')
         shell: Rscript {0}
         run: |
           version <- read.dcf("DESCRIPTION")[1, "Version"]
-          tag <- Sys.getenv("GITHUB_REF_NAME")
+          tag <- Sys.getenv("RELEASE_TAG")
           stopifnot(identical(tag, paste0("v", version)))
       - name: Build and check source package
         shell: bash
         run: |
           R CMD build --compact-vignettes=gs+qpdf .
           tarball=$(find . -maxdepth 1 -name 'kfl1ou_*.tar.gz' -print -quit)
+          if [[ -z "$tarball" ]]; then
+            echo "R CMD build did not create a source tarball." >&2
+            exit 1
+          fi
           Rscript -e 'rcmdcheck::rcmdcheck(commandArgs(TRUE)[1], args = c("--no-manual", "--as-cran"), error_on = "warning")' "$tarball"
           shasum -a 256 "$tarball" > SHA256SUMS
+      - name: Attest source package provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: kfl1ou_*.tar.gz
       - name: Upload source artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -50,14 +151,14 @@ jobs:
           path: |
             kfl1ou_*.tar.gz
             SHA256SUMS
+          if-no-files-found: error
           retention-days: 90
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" kfl1ou_*.tar.gz SHA256SUMS --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" kfl1ou_*.tar.gz SHA256SUMS --clobber
           else
-            gh release create "$GITHUB_REF_NAME" kfl1ou_*.tar.gz SHA256SUMS \
-              --verify-tag --generate-notes --title "kfl1ou ${GITHUB_REF_NAME#v}"
+            gh release create "$RELEASE_TAG" kfl1ou_*.tar.gz SHA256SUMS \
+              --verify-tag --generate-notes --title "kfl1ou ${RELEASE_TAG#v}"
           fi

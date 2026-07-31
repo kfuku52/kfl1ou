@@ -18,7 +18,8 @@ fit_l1ou_tree_ensemble(trees, Y, tree.weights = NULL, ...)
 }
 \value{
 A tree-ensemble object containing fits, partition weights, mean tip
-co-assignment probabilities, and pairwise adjusted Rand indices.
+co-assignment probabilities, pairwise adjusted Rand indices, and the number
+of zero-weight trees excluded before fitting.
 }
 \description{
 Fits the complete shift-search pipeline independently to trees sharing the

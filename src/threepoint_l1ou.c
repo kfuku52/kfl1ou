@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <R.h>
+#include <R_ext/Utils.h>
 
 static size_t checked_size_product(size_t left, size_t right,
                                    const char *label) {
@@ -14,11 +15,26 @@ static size_t checked_size_product(size_t left, size_t right,
   return left * right;
 }
 
+static size_t checked_size_sum(size_t left, size_t right,
+                               const char *label) {
+  if (left > ((size_t)-1) - right) {
+    error("%s size overflows size_t", label);
+  }
+  return left + right;
+}
+
 static void *zero_alloc(size_t count, size_t size, const char *label) {
   size_t bytes = checked_size_product(count, size, label);
   void *memory = (void *)R_alloc(count, (int)size);
   memset(memory, 0, bytes);
   return memory;
+}
+
+static void check_interrupt_periodically(size_t *counter) {
+  ++(*counter);
+  if (((*counter) & 0x3fffU) == 0U) {
+    R_CheckUserInterrupt();
+  }
 }
 
 void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
@@ -34,34 +50,42 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
       n > INT_MAX - pN) {
     error("invalid dimensions supplied to threepoint_l1ou");
   }
-  int npN = n + pN;
-  if (N != npN - 1 || dY > INT_MAX / dY || dX > INT_MAX / dX ||
-      dX > INT_MAX / dY) {
+  size_t node_count = checked_size_sum((size_t)n, (size_t)pN, "node");
+  if (node_count > (size_t)INT_MAX || (size_t)N != node_count - 1U) {
+    error("tree dimensions are inconsistent in threepoint_l1ou");
+  }
+  size_t dy = (size_t)dY;
+  size_t dx = (size_t)dX;
+  size_t dY2 = checked_size_product(dy, dy, "response output");
+  size_t dX2 = checked_size_product(dx, dx, "design output");
+  size_t dXY = checked_size_product(dx, dy, "cross-product output");
+  if (dY2 > (size_t)INT_MAX || dX2 > (size_t)INT_MAX ||
+      dXY > (size_t)INT_MAX) {
     error("dimension products are too large in threepoint_l1ou");
   }
-  int dY2 = dY * dY;
-  int dX2 = dX * dX;
-  int dXY = dX * dY;
-  long long output_count =
-      2LL + dY + dY2 + dX + dX2 + dXY;
-  if (output_count > INT_MAX) {
+  size_t output_count = 2U;
+  output_count = checked_size_sum(output_count, dy, "output");
+  output_count = checked_size_sum(output_count, dY2, "output");
+  output_count = checked_size_sum(output_count, dx, "output");
+  output_count = checked_size_sum(output_count, dX2, "output");
+  output_count = checked_size_sum(output_count, dXY, "output");
+  if (output_count > (size_t)INT_MAX) {
     error("requested output is too large in threepoint_l1ou");
   }
   int r = *rootpo;
   r--;
   double rootEdge = *transa;
 
-  size_t node_count = (size_t)npN;
   size_t y1_count =
-      checked_size_product(node_count, (size_t)dY, "response workspace");
+      checked_size_product(node_count, dy, "response workspace");
   size_t yy_count =
-      checked_size_product(y1_count, (size_t)dY, "response cross-product");
+      checked_size_product(y1_count, dy, "response cross-product");
   size_t X1_count =
-      checked_size_product(node_count, (size_t)dX, "design workspace");
+      checked_size_product(node_count, dx, "design workspace");
   size_t XX_count =
-      checked_size_product(X1_count, (size_t)dX, "design cross-product");
+      checked_size_product(X1_count, dx, "design cross-product");
   size_t Xy_count =
-      checked_size_product(X1_count, (size_t)dY, "design-response cross-product");
+      checked_size_product(X1_count, dy, "design-response cross-product");
   double *logd =
       (double *)zero_alloc(node_count, sizeof(double), "node workspace");
   double *vec11 =
@@ -79,11 +103,13 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
   int *zero =
       (int *)zero_alloc(node_count, sizeof(int), "zero-edge workspace");
 
-  for (int iedge = 0; iedge < N + 1; iedge++) {
-    zero[iedge] = -1;
+  for (size_t inode = 0; inode < node_count; inode++) {
+    zero[inode] = -1;
   }
 
+  size_t interrupt_counter = 0;
   for (int iedge = 0; iedge < N + 1; iedge++) {
+    check_interrupt_periodically(&interrupt_counter);
     double el;
     double invel;
     int di;
@@ -97,11 +123,11 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
       di = r;
     }
 
-    int iY1 = di;
-    int iX1 = di;
-    int iYY = di;
-    int iXY = di;
-    int iXX = di;
+    size_t iY1 = (size_t)di;
+    size_t iX1 = (size_t)di;
+    size_t iYY = (size_t)di;
+    size_t iXY = (size_t)di;
+    size_t iXX = (size_t)di;
 
     if (di < n) {
       if (el > 0) {
@@ -119,35 +145,38 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
           zero[anci] = di;
         }
       }
-      int jY = di;
+      size_t jY = (size_t)di;
       for (int j = 0; j < dY; j++) {
         y1[iY1] = y[jY] * invel;
-        int kY = di;
+        size_t kY = (size_t)di;
         for (int k = 0; k < dY; k++) {
+          check_interrupt_periodically(&interrupt_counter);
           yy[iYY] = y1[iY1] * y[kY];
-          iYY += npN;
-          kY += n;
+          iYY += node_count;
+          kY += (size_t)n;
         }
-        int kX = di;
+        size_t kX = (size_t)di;
         for (int k = 0; k < dX; k++) {
+          check_interrupt_periodically(&interrupt_counter);
           Xy[iXY] = y1[iY1] * X[kX];
-          iXY += npN;
-          kX += n;
+          iXY += node_count;
+          kX += (size_t)n;
         }
-        iY1 += npN;
-        jY += n;
+        iY1 += node_count;
+        jY += (size_t)n;
       }
-      int jX = di;
+      size_t jX = (size_t)di;
       for (int j = 0; j < dX; j++) {
         X1[iX1] = X[jX] * invel;
-        int kX = di;
+        size_t kX = (size_t)di;
         for (int k = 0; k < dX; k++) {
+          check_interrupt_periodically(&interrupt_counter);
           XX[iXX] = X1[iX1] * X[kX];
-          iXX += npN;
-          kX += n;
+          iXX += node_count;
+          kX += (size_t)n;
         }
-        iX1 += npN;
-        jX += n;
+        iX1 += node_count;
+        jX += (size_t)n;
       }
     } else {
       int goodchildren = 1;
@@ -165,29 +194,32 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
         ev2 = 1 / (1 + el * vec11[di]);
         for (int j = 0; j < dY; j++) {
           double tmp1 = ev * y1[iY1];
-          int kY1 = di;
+          size_t kY1 = (size_t)di;
           for (int k = 0; k < dY; k++) {
+            check_interrupt_periodically(&interrupt_counter);
             yy[iYY] -= tmp1 * y1[kY1];
-            iYY += npN;
-            kY1 += npN;
+            iYY += node_count;
+            kY1 += node_count;
           }
-          int kX1 = di;
+          size_t kX1 = (size_t)di;
           for (int k = 0; k < dX; k++) {
+            check_interrupt_periodically(&interrupt_counter);
             Xy[iXY] -= tmp1 * X1[kX1];
-            iXY += npN;
-            kX1 += npN;
+            iXY += node_count;
+            kX1 += node_count;
           }
-          iY1 += npN;
+          iY1 += node_count;
         }
         for (int j = 0; j < dX; j++) {
           double tmp1 = ev * X1[iX1];
-          int kX1 = di;
+          size_t kX1 = (size_t)di;
           for (int k = 0; k < dX; k++) {
+            check_interrupt_periodically(&interrupt_counter);
             XX[iXX] -= tmp1 * X1[kX1];
-            iXX += npN;
-            kX1 += npN;
+            iXX += node_count;
+            kX1 += node_count;
           }
-          iX1 += npN;
+          iX1 += node_count;
         }
       } else {
         logd[di] += log(el);
@@ -196,55 +228,66 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
         iY1 = 0;
         iX1 = 0;
         for (int j = 0; j < dY; j++) {
-          double tmp1 = fac * y1[d0 + iY1];
-          int kY1 = 0;
+          double tmp1 = fac * y1[(size_t)d0 + iY1];
+          size_t kY1 = 0;
           for (int k = 0; k < dY; k++) {
-            yy[iYY] += tmp1 * y1[d0 + kY1] - y1[d0 + iY1] * y1[di + kY1] - y1[di + iY1] * y1[d0 + kY1];
-            iYY += npN;
-            kY1 += npN;
+            check_interrupt_periodically(&interrupt_counter);
+            yy[iYY] += tmp1 * y1[(size_t)d0 + kY1] -
+                y1[(size_t)d0 + iY1] * y1[(size_t)di + kY1] -
+                y1[(size_t)di + iY1] * y1[(size_t)d0 + kY1];
+            iYY += node_count;
+            kY1 += node_count;
           }
-          int kX1 = 0;
+          size_t kX1 = 0;
           for (int k = 0; k < dX; k++) {
-            Xy[iXY] += tmp1 * X1[d0 + kX1] - y1[d0 + iY1] * X1[di + kX1] - y1[di + iY1] * X1[d0 + kX1];
-            iXY += npN;
-            kX1 += npN;
+            check_interrupt_periodically(&interrupt_counter);
+            Xy[iXY] += tmp1 * X1[(size_t)d0 + kX1] -
+                y1[(size_t)d0 + iY1] * X1[(size_t)di + kX1] -
+                y1[(size_t)di + iY1] * X1[(size_t)d0 + kX1];
+            iXY += node_count;
+            kX1 += node_count;
           }
-          iY1 += npN;
+          iY1 += node_count;
         }
         for (int j = 0; j < dX; j++) {
-          double tmp1 = fac * X1[d0 + iX1];
-          int kX1 = 0;
+          double tmp1 = fac * X1[(size_t)d0 + iX1];
+          size_t kX1 = 0;
           for (int k = 0; k < dX; k++) {
-            XX[iXX] += tmp1 * X1[d0 + kX1] - X1[d0 + iX1] * X1[di + kX1] - X1[di + iX1] * X1[d0 + kX1];
-            iXX += npN;
-            kX1 += npN;
+            check_interrupt_periodically(&interrupt_counter);
+            XX[iXX] += tmp1 * X1[(size_t)d0 + kX1] -
+                X1[(size_t)d0 + iX1] * X1[(size_t)di + kX1] -
+                X1[(size_t)di + iX1] * X1[(size_t)d0 + kX1];
+            iXX += node_count;
+            kX1 += node_count;
           }
-          iX1 += npN;
+          iX1 += node_count;
         }
       }
       if (goodchildren) {
-        iY1 = di;
+        iY1 = (size_t)di;
         for (int j = 0; j < dY; j++) {
           y1[iY1] *= ev2;
-          iY1 += npN;
+          iY1 += node_count;
         }
-        iX1 = di;
+        iX1 = (size_t)di;
         for (int j = 0; j < dX; j++) {
           X1[iX1] *= ev2;
-          iX1 += npN;
+          iX1 += node_count;
         }
         vec11[di] *= ev2;
       } else {
         invel = 1 / el;
         iY1 = 0;
         for (int j = 0; j < dY; j++) {
-          y1[di + iY1] = y1[zero[di] + iY1] * invel;
-          iY1 += npN;
+          y1[(size_t)di + iY1] =
+              y1[(size_t)zero[di] + iY1] * invel;
+          iY1 += node_count;
         }
         iX1 = 0;
         for (int j = 0; j < dX; j++) {
-          X1[di + iX1] = X1[zero[di] + iX1] * invel;
-          iX1 += npN;
+          X1[(size_t)di + iX1] =
+              X1[(size_t)zero[di] + iX1] * invel;
+          iX1 += node_count;
         }
         vec11[di] = invel;
       }
@@ -258,24 +301,27 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
       iXX = 0;
       iXY = 0;
       for (int j = 0; j < dY; j++) {
-        y1[anci + iY1] += y1[di + iY1];
+        y1[(size_t)anci + iY1] += y1[(size_t)di + iY1];
         for (int k = 0; k < dY; k++) {
-          yy[anci + iYY] += yy[di + iYY];
-          iYY += npN;
+          check_interrupt_periodically(&interrupt_counter);
+          yy[(size_t)anci + iYY] += yy[(size_t)di + iYY];
+          iYY += node_count;
         }
         for (int k = 0; k < dX; k++) {
-          Xy[anci + iXY] += Xy[di + iXY];
-          iXY += npN;
+          check_interrupt_periodically(&interrupt_counter);
+          Xy[(size_t)anci + iXY] += Xy[(size_t)di + iXY];
+          iXY += node_count;
         }
-        iY1 += npN;
+        iY1 += node_count;
       }
       for (int j = 0; j < dX; j++) {
-        X1[anci + iX1] += X1[di + iX1];
+        X1[(size_t)anci + iX1] += X1[(size_t)di + iX1];
         for (int k = 0; k < dX; k++) {
-          XX[anci + iXX] += XX[di + iXX];
-          iXX += npN;
+          check_interrupt_periodically(&interrupt_counter);
+          XX[(size_t)anci + iXX] += XX[(size_t)di + iXX];
+          iXX += node_count;
         }
-        iX1 += npN;
+        iX1 += node_count;
       }
       vec11[anci] += vec11[di];
     }
@@ -283,35 +329,40 @@ void threepoint_l1ou(int *Npo, int *npo, int *pNpo, int *dYpo, int *dXpo,
 
   output[0] = logd[r];
   output[1] = vec11[r];
-  int p = 2;
-  int ikXY = r;
+  size_t p = 2U;
+  size_t ikXY = (size_t)r;
   for (int j = 0; j < dY; j++) {
-    output[p + j] = y1[ikXY];
-    ikXY += npN;
+    check_interrupt_periodically(&interrupt_counter);
+    output[p + (size_t)j] = y1[ikXY];
+    ikXY += node_count;
   }
-  p += dY;
-  ikXY = r;
-  for (int j = 0; j < dY2; j++) {
+  p += dy;
+  ikXY = (size_t)r;
+  for (size_t j = 0; j < dY2; j++) {
+    check_interrupt_periodically(&interrupt_counter);
     output[p + j] = yy[ikXY];
-    ikXY += npN;
+    ikXY += node_count;
   }
   p += dY2;
-  ikXY = r;
+  ikXY = (size_t)r;
   for (int j = 0; j < dX; j++) {
-    output[p + j] = X1[ikXY];
-    ikXY += npN;
+    check_interrupt_periodically(&interrupt_counter);
+    output[p + (size_t)j] = X1[ikXY];
+    ikXY += node_count;
   }
-  p += dX;
-  ikXY = r;
-  for (int j = 0; j < dX2; j++) {
+  p += dx;
+  ikXY = (size_t)r;
+  for (size_t j = 0; j < dX2; j++) {
+    check_interrupt_periodically(&interrupt_counter);
     output[p + j] = XX[ikXY];
-    ikXY += npN;
+    ikXY += node_count;
   }
   p += dX2;
-  ikXY = r;
-  for (int j = 0; j < dXY; j++) {
+  ikXY = (size_t)r;
+  for (size_t j = 0; j < dXY; j++) {
+    check_interrupt_periodically(&interrupt_counter);
     output[p + j] = Xy[ikXY];
-    ikXY += npN;
+    ikXY += node_count;
   }
 
 }

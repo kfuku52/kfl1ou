@@ -12,21 +12,56 @@ validate_l1ou_tree <- function(tree, require.positive.edges=FALSE,
     }
     if(is.null(tree$Nnode) || length(tree$Nnode) != 1L ||
        !is.numeric(tree$Nnode) || !is.finite(tree$Nnode) ||
-       tree$Nnode < 1L || tree$Nnode != as.integer(tree$Nnode)){
+       tree$Nnode < 1L || tree$Nnode != floor(tree$Nnode) ||
+       tree$Nnode > .Machine$integer.max - length(tree$tip.label)){
         stop("tree must contain a valid positive number of internal nodes.")
     }
-    n.nodes <- length(tree$tip.label) + as.integer(tree$Nnode)
+    n.tips <- length(tree$tip.label)
+    n.nodes <- n.tips + as.integer(tree$Nnode)
     if(!is.matrix(tree$edge) || ncol(tree$edge) != 2L ||
        !is.numeric(tree$edge) || any(!is.finite(tree$edge)) ||
-       any(tree$edge != as.integer(tree$edge)) ||
+       any(tree$edge != floor(tree$edge)) ||
        any(tree$edge < 1L | tree$edge > n.nodes) ||
        nrow(tree$edge) != n.nodes - 1L ||
        anyDuplicated(tree$edge[, 2L])){
         stop("tree contains an invalid or disconnected edge matrix.")
     }
     roots <- setdiff(unique(tree$edge[, 1L]), tree$edge[, 2L])
-    if(length(roots) != 1L){
+    if(length(roots) != 1L || roots[[1L]] <= n.tips){
         stop("tree must contain one directed root node.")
+    }
+    if(any(tree$edge[, 1L] <= n.tips)){
+        stop("tree tips must be leaves and cannot be parent nodes.")
+    }
+    internal.nodes <- seq.int(n.tips + 1L, n.nodes)
+    if(any(!internal.nodes %in% tree$edge[, 1L])){
+        stop("every internal tree node must have at least one child.")
+    }
+    child.groups <- split(
+        as.integer(tree$edge[, 2L]), as.character(tree$edge[, 1L])
+    )
+    children <- vector("list", n.nodes)
+    children[as.integer(names(child.groups))] <- unname(child.groups)
+    visited <- rep(FALSE, n.nodes)
+    queue <- integer(n.nodes)
+    head <- tail <- 1L
+    queue[[tail]] <- as.integer(roots[[1L]])
+    visited[queue[[tail]]] <- TRUE
+    while(head <= tail){
+        parent <- queue[[head]]
+        head <- head + 1L
+        descendants <- children[[parent]]
+        if(is.null(descendants)) next
+        if(any(visited[descendants])){
+            stop("tree topology contains a directed cycle.")
+        }
+        visited[descendants] <- TRUE
+        indices <- seq.int(tail + 1L, length.out=length(descendants))
+        queue[indices] <- descendants
+        tail <- tail + length(descendants)
+    }
+    if(!all(visited)){
+        stop("tree contains nodes disconnected from its directed root.")
     }
     if(is.null(tree$edge.length)){
         stop("the tree has no branch lengths.")
@@ -48,6 +83,29 @@ validate_l1ou_tree <- function(tree, require.positive.edges=FALSE,
         stop("tree root.edge must be NULL or one finite non-negative number.")
     }
     invisible(tree)
+}
+
+validate_shift_configuration <- function(tree, shift.configuration,
+                                         name="shift.configuration"){
+    if(is.null(shift.configuration) || length(shift.configuration) == 0L){
+        return(integer())
+    }
+    if(!is.numeric(shift.configuration) ||
+       anyNA(shift.configuration) ||
+       any(!is.finite(shift.configuration)) ||
+       any(shift.configuration != floor(shift.configuration)) ||
+       any(shift.configuration < 1L |
+           shift.configuration > nrow(tree$edge)) ||
+       anyDuplicated(shift.configuration)){
+        stop(
+            name,
+            " must contain unique, finite integer edge indices between 1 and ",
+            nrow(tree$edge), "."
+        )
+    }
+    result <- as.integer(shift.configuration)
+    names(result) <- names(shift.configuration)
+    result
 }
 
 as_l1ou_trait_matrix <- function(Y){
@@ -1091,12 +1149,9 @@ get_configuration_in_sol_path <- function(sol.path, index, Y, tidx=1){
 convert_shifts2regions <-function(tree, shift.configuration, shift.values){
 
     validate_l1ou_tree(tree, require.positive.edges=FALSE)
-    if(!is.numeric(shift.configuration) ||
-       any(!is.finite(shift.configuration)) ||
-       any(shift.configuration != as.integer(shift.configuration)) ||
-       any(shift.configuration < 1L | shift.configuration > Nedge(tree))){
-        stop("shift.configuration must contain valid integer edge indices.")
-    }
+    shift.configuration <- validate_shift_configuration(
+        tree, shift.configuration
+    )
     if(!is.numeric(shift.values) || any(!is.finite(shift.values)) ||
        length(shift.configuration) != length(shift.values)){
         stop("shift.values must contain one finite numeric value per shift edge.")
@@ -1342,9 +1397,31 @@ plot.l1ou <- function (x, palette = NA,
 
     ##A dummy plot just to get the plotting order
     plot.phylo(tree, plot=FALSE)
-    ape_plot_env = getFromNamespace(".PlotPhyloEnv", "ape")
-    lastPP = get("last_plot.phylo", envir = ape_plot_env)
-    o = order(lastPP$yy[seq_along(tree$tip.label)])
+    lastPP <- tryCatch({
+        ape.namespace <- asNamespace("ape")
+        if(!exists(".PlotPhyloEnv", envir=ape.namespace, inherits=FALSE)){
+            NULL
+        } else{
+            ape.plot.env <- get(
+                ".PlotPhyloEnv", envir=ape.namespace, inherits=FALSE
+            )
+            if(!exists("last_plot.phylo", envir=ape.plot.env, inherits=FALSE)){
+                NULL
+            } else{
+                get("last_plot.phylo", envir=ape.plot.env, inherits=FALSE)
+            }
+        }
+    }, error=function(e) NULL)
+    o <- if(!is.null(lastPP) && length(lastPP$yy) >= length(tree$tip.label)){
+        order(lastPP$yy[seq_along(tree$tip.label)])
+    } else{
+        warning(
+            "ape did not expose plotting coordinates; using tree tip order ",
+            "for the trait bars.",
+            call.=FALSE
+        )
+        seq_along(tree$tip.label)
+    }
     par.new.default <- par()$new ##just to be careful with the global variable
     par(new=TRUE)
 

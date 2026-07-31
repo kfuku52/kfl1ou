@@ -40,7 +40,9 @@ the observed likelihood ratio without a bootstrap p-value.}
 \item{root.model}{ancestral-root model.}
 
 \item{alpha.structure}{alpha structure for the full model. The default allows
-one alpha per trait, making the diagonal model nested in the full model.}
+one alpha per trait, making the diagonal model nested in the full model.
+A shared-alpha alternative is non-nested relative to the trait-specific-alpha
+diagonal fit and therefore requires parametric-bootstrap calibration.}
 
 \item{likelihood.engine}{likelihood engine for the full model.}
 
@@ -76,9 +78,11 @@ alternatives are explicitly marked as sensitivity analyses.
 }
 \description{
 Fits a diagonal innovation-covariance null model and a full covariance model
-to the same shift configuration. A parametric-bootstrap likelihood-ratio test
-is used because small phylogenetic samples and covariance optimization can
-make a simple chi-squared reference distribution inaccurate. Zero
-off-diagonal covariances are interior points of the positive-definite
-covariance parameter space, not boundary parameters.
+to the same shift configuration. With trait-specific adaptation rates in
+both fits, the diagonal model is nested in the full model and the bootstrap
+calibrates its likelihood-ratio statistic. A shared-alpha full model is not
+nested in the trait-specific-alpha null; in that case the reported deviance
+difference is calibrated only by the parametric bootstrap. Regularized full
+covariance fits are reported as sensitivity comparisons rather than
+conventional likelihood-ratio tests.
 }

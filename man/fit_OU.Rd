@@ -30,7 +30,10 @@ fit_OU(
 \arguments{
 \item{tree}{ultrametric tree of class phylo, with branch lengths, and edges in postorder.}
 
-\item{Y}{trait vector/matrix without missing entries. The row names of the data must be in the same order as the tip labels.}
+\item{Y}{trait vector/matrix. Multivariate matrices may contain trait-specific
+missing entries, provided every tip has at least one observed trait. For a
+univariate response, drop tips with missing values before fitting. Row names
+must be in the same order as the tip labels.}
 
 \item{shift.configuration}{shift positions, i.e. vector of indices of the edges where the shifts occur.}
 
@@ -91,6 +94,12 @@ BIC gives the usual Bayesian information criterion, here penalizing each shift a
 mBIC is the modified BIC proposed by Ho and Ané (2014).
 pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
 pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+
+When \code{cr.regimes} is supplied, the model is refitted under the equality
+constraints. Returned fitted values, residuals, optima, likelihoods, and
+variance parameters all correspond to that constrained model. pBIC for such
+convergent constraints is a heuristic extension of the unconstrained pBIC
+derivation; compare it with AICc/BIC and bootstrap support.
 }
 \examples{
 

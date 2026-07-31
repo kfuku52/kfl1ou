@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <Rcpp.h>
 
@@ -10,10 +12,29 @@ typedef Matrix<REALSXP> NumericMatrix;
 #define RASSERT(condition){if(!(condition)){throw std::range_error(std::string("internal error!@")+__FILE__);}}
 
 // [[Rcpp::plugins(cpp11)]]
+namespace {
+
+double parallel_branch_length(double left, double right) {
+    if (left == 0.0 || right == 0.0) {
+        return 0.0;
+    }
+    const double smaller = std::min(left, right);
+    const double larger = std::max(left, right);
+    return smaller / (1.0 + smaller / larger);
+}
+
+void check_interrupt_periodically(std::size_t iteration) {
+    if ((iteration & 0x3fffU) == 0U) {
+        Rcpp::checkUserInterrupt();
+    }
+}
+
+}  // namespace
+
 void one_step(const int i1, const int i2, const int e1, const int e2,
         const int counter,
         Rcpp::NumericMatrix &edgeList, //the third column contains lengths
-        Rcpp::NumericVector &tips, 
+        Rcpp::IntegerVector &tips,
         Rcpp::NumericMatrix &F, Rcpp::NumericMatrix &G, 
         Rcpp::NumericMatrix &D, Rcpp::NumericMatrix &B,
         double &rootEdge){
@@ -60,10 +81,11 @@ void one_step(const int i1, const int i2, const int e1, const int e2,
     F(_,i3) = (F(_,i1)*t2 + F(_,i2)*t1)/u;
     G(_,i3) = G(_,i1) + G(_,i2);
 
+    const double reduced_length = parallel_branch_length(t1, t2);
     if( e3>=0 )
-        edgeList(e3,2) = t3 + 1/(1/t1+1/t2);
+        edgeList(e3,2) = t3 + reduced_length;
     else
-        rootEdge = t3 + 1/(1/t1+1/t2);
+        rootEdge = t3 + reduced_length;
 
     // erase-remove idiom
     tips.erase( std::remove( tips.begin(), tips.end(), i1 ), tips.end() );
@@ -105,6 +127,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
     std::vector<int> child_count(static_cast<std::size_t>(node_count), 0);
     std::vector<int> last_child_edge(static_cast<std::size_t>(node_count), -1);
     for (int edge = 0; edge < edge_count; ++edge) {
+        check_interrupt_periodically(static_cast<std::size_t>(edge));
         const double parent_value = edgeList(edge, 0);
         const double child_value = edgeList(edge, 1);
         const double length = edgeList(edge, 2);
@@ -129,6 +152,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
 
     int root = -1;
     for (int node = 0; node < node_count; ++node) {
+        check_interrupt_periodically(static_cast<std::size_t>(node));
         if (incoming_edge[node] < 0) {
             if (node < nTips || root >= 0) {
                 Rcpp::stop("edgeList must contain exactly one internal root");
@@ -147,6 +171,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
         Rcpp::stop("edgeList must contain exactly one internal root");
     }
     for (int edge = 0; edge < edge_count; edge += 2) {
+        check_interrupt_periodically(static_cast<std::size_t>(edge));
         if (edgeList(edge, 0) != edgeList(edge + 1, 0)) {
             Rcpp::stop("sibling edges must be adjacent in postorder");
         }
@@ -157,6 +182,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
     );
     state[root] = 2;
     for (int node = 0; node < node_count; ++node) {
+        check_interrupt_periodically(static_cast<std::size_t>(node));
         int current = node;
         while (state[current] == 0) {
             state[current] = 1;
@@ -172,6 +198,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
         }
     }
 
+    Rcpp::NumericMatrix working_edge_list = Rcpp::clone(edgeList);
     Rcpp::NumericMatrix F(nTips, node_count);
     Rcpp::NumericMatrix G(nTips, node_count);
     for(int i=0; i<nTips; ++i)
@@ -180,13 +207,20 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
     Rcpp::NumericMatrix D(nTips,nTips);
     Rcpp::NumericMatrix B(nTips,nTips);
 
-    Rcpp::NumericVector tips(nTips);
+    Rcpp::IntegerVector tips(nTips);
     for(int i=0; i<tips.size(); ++i)
         tips[i] = i;
 
     int counter = 0;
-    for(int i=0; i + 1 < edgeList.nrow() && tips.size() > 1; i+=2)
-        one_step( edgeList(i,1), edgeList(i+1,1), i, i+1, counter++, edgeList, tips, F, G, D, B, rootEdge);
+    for(int i=0; i + 1 < working_edge_list.nrow() && tips.size() > 1; i+=2) {
+        check_interrupt_periodically(static_cast<std::size_t>(i));
+        one_step(
+            static_cast<int>(working_edge_list(i,1)),
+            static_cast<int>(working_edge_list(i+1,1)),
+            i, i+1, counter++, working_edge_list, tips, F, G, D, B,
+            rootEdge
+        );
+    }
 
     if (tips.size() != 1) {
         Rcpp::stop("failed to reduce the tree to a single root state");
@@ -199,6 +233,7 @@ Rcpp::List cmp_sqrt_OU_covariance(Rcpp::NumericMatrix edgeList, int nTips, doubl
     }
     
     for(int i=0; i<F.nrow(); ++i){
+        check_interrupt_periodically(static_cast<std::size_t>(i));
         D(i,counter) = F(i,tips[0])/std::sqrt(rootEdge);
         B(i,counter) = G(i,tips[0])*std::sqrt(rootEdge);
     }

@@ -137,6 +137,58 @@ predict.l1ou <- function(object, type=c("response", "optimum"), ...){
     if(type == "response") object$mu else object$optima
 }
 
+l1ou_complete_fitted_mean <- function(object){
+    Y <- as.matrix(object$Y)
+    n <- nrow(Y)
+    p <- ncol(Y)
+    if(!is.null(object$mu.complete)){
+        result <- as.matrix(object$mu.complete)
+        if(identical(dim(result), dim(Y)) && all(is.finite(result))){
+            dimnames(result) <- dimnames(Y)
+            return(result)
+        }
+    }
+    intercept <- rep(as.numeric(object$intercept), length.out=p)
+    result <- matrix(
+        rep(intercept, each=n), nrow=n, ncol=p, dimnames=dimnames(Y)
+    )
+    shifts <- validate_shift_configuration(
+        object$tree, object$shift.configuration
+    )
+    if(length(shifts)){
+        design <- object$l1ou.options$Z
+        if(is.null(design)){
+            design <- generate_design_matrix(object$tree, "simpX")
+        }
+        shift.means <- as.matrix(object$shift.means)
+        if(nrow(shift.means) != length(shifts) &&
+           ncol(shift.means) == length(shifts)){
+            shift.means <- t(shift.means)
+        }
+        if(nrow(shift.means) != length(shifts) || ncol(shift.means) != p){
+            stop("the fitted object does not contain a complete shift-mean matrix.")
+        }
+        result <- result +
+            design[, shifts, drop=FALSE] %*% shift.means
+    }
+    observed.mean <- as.matrix(object$mu)
+    observed <- is.finite(observed.mean)
+    if(any(observed)){
+        mismatch <- max(abs(result[observed] - observed.mean[observed]))
+        tolerance <- 1e-7 * max(1, max(abs(observed.mean[observed])))
+        if(!is.finite(mismatch) || mismatch > tolerance){
+            stop(
+                "the fitted mean is inconsistent with the stored shift effects; ",
+                "refit the model before simulation."
+            )
+        }
+    }
+    if(any(!is.finite(result))){
+        stop("a finite expected response could not be reconstructed for every tip.")
+    }
+    result
+}
+
 l1ou_simulation_covariance <- function(object){
     Y <- as.matrix(object$Y)
     p <- ncol(Y)
@@ -246,6 +298,8 @@ simulate_l1ou_tree_residual <- function(object){
 #'@param nsim number of simulated data sets.
 #'@param seed optional random seed.
 #'@param preserve.missing logical; retain the fitted data's missingness pattern.
+#' When false, the complete latent fitted mean is reconstructed from the stored
+#' branch effects before simulation.
 #'@param engine simulation engine. \code{"tree"} generates OU innovations
 #' directly along branches without constructing a dense covariance matrix;
 #' \code{"dense"} is retained for validation and small problems.
@@ -263,7 +317,11 @@ simulate.l1ou <- function(object, nsim=1L, seed=NULL,
     }
     engine <- match.arg(engine)
     simulations <- with_l1ou_seed(seed, {
-        mean <- as.matrix(object$mu)
+        mean <- if(isTRUE(preserve.missing)){
+            as.matrix(object$mu)
+        } else{
+            l1ou_complete_fitted_mean(object)
+        }
         missing <- is.na(as.matrix(object$Y))
         if(engine == "tree"){
             lapply(seq_len(nsim), function(i){
@@ -286,6 +344,32 @@ simulate.l1ou <- function(object, nsim=1L, seed=NULL,
     names(simulations) <- paste0("sim_", seq_len(nsim))
     class(simulations) <- c("simulated_l1ou", "list")
     simulations
+}
+
+l1ou_standardized_trait_correlation <- function(residual.matrix,
+                                                trait.covariance){
+    residual.matrix <- as.matrix(residual.matrix)
+    p <- ncol(residual.matrix)
+    trait.names <- colnames(residual.matrix)
+    empty <- matrix(
+        NA_real_, p, p, dimnames=list(trait.names, trait.names)
+    )
+    complete <- stats::complete.cases(residual.matrix)
+    if(sum(complete) < 2L) return(empty)
+    covariance <- as.matrix(trait.covariance)
+    if(!identical(dim(covariance), c(p, p)) ||
+       any(!is.finite(covariance))){
+        return(empty)
+    }
+    factor <- tryCatch(chol(covariance), error=function(e) NULL)
+    if(is.null(factor)){
+        covariance <- regularize_positive_definite(covariance, 1e-10)
+        factor <- tryCatch(chol(covariance), error=function(e) NULL)
+    }
+    if(is.null(factor)) return(empty)
+    standardized <- residual.matrix[complete, , drop=FALSE] %*%
+        backsolve(factor, diag(p))
+    stats::cor(standardized)
 }
 
 l1ou_diagnostic_mean_design <- function(model){
@@ -429,8 +513,9 @@ l1ou_residual_statistics <- function(standardized, tree, tip.score,
 #'@param seed optional deterministic simulation seed.
 #'@param min.clade.size minimum observed tips inside and outside a clade for the
 #' diffusion-rate heterogeneity statistic.
-#'@return A list containing optimizer, covariance, standardized-residual, and
-#' potential tip-outlier diagnostics.
+#'@return A list containing optimizer, covariance, standardized-residual,
+#' raw and trait-whitened residual-correlation, and potential tip-outlier
+#' diagnostics.
 #'@export
 diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
                           seed=NULL, min.clade.size=3L){
@@ -457,6 +542,13 @@ diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
         trait.covariance
     } else model$tip.trait.covariance
     tip.score <- projected$tip.score
+    raw.residual.trait.correlation <- stats::cor(
+        residual.matrix, use="pairwise.complete.obs"
+    )
+    standardized.residual.trait.correlation <-
+        l1ou_standardized_trait_correlation(
+            residual.matrix, tip.trait.covariance
+        )
     observed.statistics <- l1ou_residual_statistics(
         standardized, model$tree, tip.score, min.clade.size
     )
@@ -540,12 +632,10 @@ diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
         rate.heterogeneity.warning=is.finite(
             predictive.p.value[["clade.variance.ratio"]]
         ) && predictive.p.value[["clade.variance.ratio"]] < 0.05,
-        raw.residual.trait.correlation=stats::cor(
-            residual.matrix, use="pairwise.complete.obs"
-        ),
-        residual.trait.correlation=stats::cor(
-            residual.matrix, use="pairwise.complete.obs"
-        ),
+        raw.residual.trait.correlation=raw.residual.trait.correlation,
+        standardized.residual.trait.correlation=
+            standardized.residual.trait.correlation,
+        residual.trait.correlation=standardized.residual.trait.correlation,
         tip.outlier.score=sort(tip.score, decreasing=TRUE)
     )
     class(result) <- "l1ou_diagnostics"

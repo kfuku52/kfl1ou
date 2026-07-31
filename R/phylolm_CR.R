@@ -153,11 +153,15 @@ phylolm_CR <- function(formula, data=list(), phy,
                               You may change the bounds using options "upper.bound" and "lower.bound".\n'))
         }
         prm[[1]] = MLEvalue
-        BMest = loglik(prm, y, X)
+        X.final <- generate_prediction_vec(
+            mytree, sc, cr, alpha=MLEvalue, ageMatrix=ageMatrix
+        )
+        BMest = loglik(prm, y, X.final)
         if (model %in% OU)
             BMest$sigma2hat = 2*MLEvalue * BMest$sigma2hat # was "gamma" originally: sigma2 = 2 alpha gamma
         results <- list(coefficients=BMest$betahat, sigma2=BMest$sigma2hat, optpar=MLEvalue,
                         logLik=-BMest$n2llh/2, p=2+d, aic=2*(2+d)+BMest$n2llh, vcov = BMest$vcov)
+        X <- X.final
     }
 
     names(results$coefficients) = colnames(X)

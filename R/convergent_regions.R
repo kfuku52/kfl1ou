@@ -7,6 +7,12 @@ generate_prediction_vec  <-  function(tr,
                                       designMatrix=F,
                                       root.model="OUfixedRoot"){
 
+    shift.configuration <- validate_shift_configuration(
+        tr, shift.configuration, name="shift.configuration"
+    )
+    n.tips <- length(tr$tip.label)
+    background.weights <- rep(1, n.tips)
+
     ## In fact ageMatrix is the approximate design matrix.
     if(is.null(ageMatrix)){
         if ( is.na(alpha) ){
@@ -18,37 +24,53 @@ generate_prediction_vec  <-  function(tr,
         if(designMatrix){
             Cinvh <- t( sqrt_OU_covariance(tr, alpha=alpha, root.model=root.model)$sqrtInvSigma )
             X     <- Cinvh%*%X
+            background.weights <- drop(Cinvh %*% background.weights)
         }
-        preds <- cbind(1, X[,shift.configuration])
-        colnames(preds) <- c(0, shift.configuration)
-        Z           <- generate_design_matrix(tr, "simpX")
-        template.Z  <- cbind(1, Z[,shift.configuration])
-        colnames(template.Z) <- c(0, shift.configuration) 
+        shift.weights <- X[, shift.configuration, drop=FALSE]
     }else{
         stopifnot(ncol(ageMatrix)==length(shift.configuration))
-        stopifnot(alpha>0)
+        stopifnot(alpha>=0)
 
-        preds <- cbind(1, -expm1(-alpha * ageMatrix))
-        colnames(preds) <- c(0, shift.configuration)
-
-        template.Z  <- cbind(1, ageMatrix)
-        colnames(template.Z) <- c(0, shift.configuration) 
+        shift.weights <- -expm1(-alpha * ageMatrix)
     }
 
-    ## now the coefficients in the linear regression represent the optimum values.
-    ## rather than the shift values.
+    shift.weights <- as.matrix(shift.weights)
+    preds <- matrix(
+        0, nrow=n.tips, ncol=length(shift.configuration) + 1L,
+        dimnames=list(NULL, as.character(c(0L, shift.configuration)))
+    )
+    preds[, "0"] <- background.weights
 
-    for( i in seq_len(ncol(preds)) ){
-        for( j in seq_len(ncol(preds)) ){
-            if ( i == j )  
-                next
-            set1 <- which( template.Z[,i] > 0)
-            set2 <- which( template.Z[,j] > 0)
-            ## if edge j is an ancestor of i
-            if ( all(set1 %in% set2) ) 
-                preds[ ,j] <- preds[ ,j] - preds[ ,i]
+    ## A shift transfers its OU mean weight from the immediately preceding
+    ## selected regime to the new regime.  Subtracting it from every ancestor
+    ## double-counts nested shifts and makes the result depend on column order.
+    child.to.edge <- stats::setNames(
+        seq_len(nrow(tr$edge)), as.character(tr$edge[, 2L])
+    )
+    selected.lookup <- stats::setNames(
+        as.character(shift.configuration),
+        as.character(shift.configuration)
+    )
+    for(idx in seq_along(shift.configuration)){
+        edge <- shift.configuration[[idx]]
+        weight <- shift.weights[, idx]
+        preds[, as.character(edge)] <- preds[, as.character(edge)] + weight
+
+        parent.regime <- "0"
+        ancestor.node <- tr$edge[edge, 1L]
+        repeat{
+            ancestor.edge <- unname(child.to.edge[as.character(ancestor.node)])
+            if(length(ancestor.edge) == 0L || is.na(ancestor.edge)){
+                break
+            }
+            if(as.character(ancestor.edge) %in% names(selected.lookup)){
+                parent.regime <- as.character(ancestor.edge)
+                break
+            }
+            ancestor.node <- tr$edge[ancestor.edge, 1L]
         }
-    } 
+        preds[, parent.regime] <- preds[, parent.regime] - weight
+    }
 
     W <- numeric()
     if ( length( conv.regimes ) > 0 ){
@@ -70,32 +92,62 @@ generate_prediction_vec  <-  function(tr,
     return(W)
 }
 
-normalize_convergent_regimes <- function(regimes, shift.configuration){
+normalize_convergent_regimes <- function(regimes, shift.configuration,
+                                         require.background=FALSE){
+
+    if(!is.numeric(shift.configuration) ||
+       anyNA(shift.configuration) ||
+       any(!is.finite(shift.configuration)) ||
+       any(shift.configuration != floor(shift.configuration)) ||
+       any(shift.configuration < 1) ||
+       any(shift.configuration > .Machine$integer.max) ||
+       anyDuplicated(shift.configuration)){
+        stop("shift.configuration must contain unique, finite positive integer edge indices.")
+    }
+    shift.names <- names(shift.configuration)
+    shift.configuration <- as.integer(shift.configuration)
 
     if(is.null(regimes)){
-        if(is.null(names(shift.configuration))){
+        if(is.null(shift.names) ||
+           anyNA(shift.names) ||
+           any(!nzchar(shift.names))){
             stop("the convergent regimes must be indicated through the names of the shift.configuration vector.")
         }
-        regimes <- list()
-        cr.names <- names(shift.configuration)
-        idx <- 1L
-        for(cr in cr.names){
-            regimes[[idx]] <- sort(shift.configuration[which(cr.names == cr)])
-            idx <- idx + 1L
-        }
+        regimes <- lapply(unique(shift.names), function(regime.name){
+            sort(shift.configuration[shift.names == regime.name])
+        })
+    }
+    if(!is.list(regimes)){
+        stop("convergent regimes must be supplied as a list of edge-index vectors.")
     }
 
     regimes <- lapply(regimes, function(reg){
-        sort(unique(as.integer(reg)))
+        if(length(reg) == 0L) return(integer())
+        if(!is.numeric(reg) || anyNA(reg) || any(!is.finite(reg)) ||
+           any(reg != floor(reg)) ||
+           any(abs(reg) > .Machine$integer.max)){
+            stop("convergent regimes must contain finite integer edge indices.")
+        }
+        sort(as.integer(reg))
     })
     regimes <- regimes[vapply(regimes, length, integer(1)) > 0L]
 
+    flattened <- unlist(regimes, use.names=FALSE)
+    if(anyDuplicated(flattened)){
+        stop("each background or shift edge must appear in exactly one convergent regime.")
+    }
+    allowed <- c(0L, shift.configuration)
+    if(any(!flattened %in% allowed) ||
+       !setequal(flattened[flattened != 0L], shift.configuration)){
+        stop("convergent regimes do not match with the shift positions.")
+    }
+
     bg.idx <- which(vapply(regimes, function(reg) 0L %in% reg, logical(1)))
     if(length(bg.idx) == 0L){
+        if(isTRUE(require.background)){
+            stop('background/intercept is not included in the regimes; represent the background by "0".')
+        }
         regimes <- c(list(0L), regimes)
-    } else if(length(bg.idx) > 1L){
-        merged.bg <- sort(unique(unlist(regimes[bg.idx])))
-        regimes <- c(list(merged.bg), regimes[-bg.idx])
     } else if(bg.idx != 1L){
         regimes <- c(regimes[bg.idx], regimes[-bg.idx])
     }
@@ -468,16 +520,6 @@ convergent_error_interface_CR <- function(tr, Y, conv.regimes = list(), alpha=NA
             alpha = alpha.value,
             ageMatrix = NULL
         )
-        if(fixed.alpha){
-            preds <- ifelse(preds > 0, 1, 0)
-            colnames(preds) <- colnames(generate_prediction_vec(
-                tr,
-                shift.configuration,
-                conv.regimes,
-                alpha = alpha.value,
-                ageMatrix = NULL
-            ))
-        }
         preds
     }
 
@@ -541,9 +583,8 @@ phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed
 	    opt$fixed.alpha  <- FALSE;
 
 
-    if(fixed.alpha || opt$fixed.alpha){
-	    preds <- ifelse(preds>0,1,0)
-	    fit <-  phylolm(Y~preds-1,
+	    if(fixed.alpha || opt$fixed.alpha){
+		    fit <-  phylolm(Y~preds-1,
 			    phy  = tr,
 			    model = opt$root.model,
 			    starting.value = list(alpha=alpha),
@@ -807,19 +848,10 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
     conv.regimes <- normalize_convergent_regimes(conv.regimes, shift.configuration)
     stopifnot( length(alpha) == ncol(Y) )
 
-    nShifts    <- length( shift.configuration )
-    nShiftVals <- length( conv.regimes ) -1## conv.regimes has intercept as an optimum value
-    nTips      <- length( tree$tip.label )
-
-    alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
-    p <- nShifts +
-        (nShiftVals + 2 + alpha.df + extra_error_df(opt))*ncol(Y)
-    N <- nTips*ncol(Y)
-    df.1 <- 2*p + (2*p*(p+1))/(N-p-1) 
-    if( p > N-2)  ##  for this criterion we should have p < N.
-        return(Inf)
-    df.2 <- 0
-    score <- df.1
+    nShifts <- length(shift.configuration)
+    score <- 0
+    total.p <- 0
+    total.n <- 0
     for( i in seq_len(ncol(Y))){
         r <- get_data(tree, Y, shift.configuration, opt, i)
         trait.regimes <- map_convergent_regimes_to_trait(
@@ -837,9 +869,15 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
             input_error = r$input_error
         )
         if ( all( is.na( fit) ) ){ return(Inf) } 
-        score <- score  -2*fit$logLik + df.2
+        score <- score - 2 * fit$logLik
+        total.p <- total.p + fit$p
+        total.n <- total.n + fit$n
     }
-    return(score)
+    p <- nShifts + total.p
+    if(p > total.n - 2L){
+        return(Inf)
+    }
+    score + 2 * p + (2 * p * (p + 1)) / (total.n - p - 1)
 }
 
 ## compute the BIC score
@@ -849,21 +887,14 @@ cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
     conv.regimes <- normalize_convergent_regimes(conv.regimes, shift.configuration)
     stopifnot( length(alpha) == ncol(Y) )
 
-    nEdges     <- Nedge(tree)
     nTips      <- length(tree$tip.label)
     nShifts    <- length(shift.configuration)
-    nShiftVals <- length( conv.regimes ) - 1 
     nVariables <- ncol(Y)
 
-    df.1  <- log(nTips)*(nShiftVals)
-    score <- df.1
+    score <- log(nTips) * nShifts
     #alpha <- sigma2 <- logLik <- rep(0, nVariables)
 
-    for( i in 1:nVariables ){
-
-        alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
-        df.2 <- log(nTips) *
-            (nShifts + 2 + alpha.df + extra_error_df(opt))
+    for( i in seq_len(nVariables) ){
         r <- get_data(tree, Y, shift.configuration, opt, i)
         trait.regimes <- map_convergent_regimes_to_trait(
             conv.regimes,
@@ -880,7 +911,7 @@ cmp_BIC_CR <- function(tree, Y, conv.regimes, alpha, opt){
             input_error = r$input_error
         )
         if ( all(is.na(fit)) ){ return(Inf) } 
-        score <- score  -2*fit$logLik + df.2
+        score <- score - 2 * fit$logLik + log(fit$n) * fit$p
     }
     return( score )
 }
@@ -1027,7 +1058,7 @@ find_convergent_regimes  <-  function(tr, Y, alpha, criterion, regimes,
                                     conv.regimes=regimes, designMatrix=TRUE,
                                     root.model=root.model)
     #X   <-  X[,-1]
-    X   <- cbind(X,1)
+    X   <- cbind(X, drop(Cinvh %*% rep(1, nrow(Y))))
 
     M   <- generate_relation(tr, seq_along(regimes))
     M   <- cbind(M,0)

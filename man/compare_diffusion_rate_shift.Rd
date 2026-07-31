@@ -16,7 +16,9 @@ compare_diffusion_rate_shift(
 \arguments{
 \item{model}{fitted univariate \code{"l1ou"} model without observation error.}
 
-\item{candidate.edges}{optional rate-shift stem edges.}
+\item{candidate.edges}{optional unique integer rate-shift stem edges. The
+postorder reference edge is excluded to avoid an equivalent complementary
+rate parameterization.}
 
 \item{min.clade.size}{minimum tips inside and outside a candidate clade.}
 

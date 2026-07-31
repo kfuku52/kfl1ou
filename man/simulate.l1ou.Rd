@@ -20,7 +20,9 @@
 
 \item{seed}{optional random seed.}
 
-\item{preserve.missing}{logical; retain the fitted data's missingness pattern.}
+\item{preserve.missing}{logical; retain the fitted data's missingness pattern.
+When false, the complete latent fitted mean is reconstructed from the stored
+branch effects before simulation.}
 
 \item{engine}{simulation engine. \code{"tree"} generates OU innovations
 directly along branches without constructing a dense covariance matrix;
