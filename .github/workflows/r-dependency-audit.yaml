@@ -36,7 +36,10 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
           dependencies: '"all"'
-          extra-packages: any::curl, any::jsonlite
+          # pak can omit transitive LinkingTo-only packages when it installs
+          # pre-built binaries. Include cpp11 so the SBOM can still traverse
+          # the complete source/build dependency graph.
+          extra-packages: any::curl, any::jsonlite, any::cpp11
           needs: check
       - name: Generate CycloneDX SBOM and query OSV
         run: Rscript .github/scripts/audit-r-dependencies.R
