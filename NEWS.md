@@ -1,3 +1,8 @@
+# kfl1ou 2.5.1
+
+- Keep the CodeQL initialization and analysis actions on the same pinned
+  release so dependency updates cannot create a mixed-version analysis job.
+
 # kfl1ou 2.5.0
 
 - Correct convergent-regime design matrices for nested shifts, refit the final
