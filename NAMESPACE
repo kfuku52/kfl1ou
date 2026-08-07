@@ -53,47 +53,55 @@ export(sqrt_OU_covariance)
 export(summarize_shift_uncertainty)
 export(write_l1ou_placeholder_outputs)
 importFrom(Rcpp,evalCpp)
-importFrom(ape,Nedge)
-importFrom(ape,drop.tip)
-importFrom(ape,edgelabels)
-importFrom(ape,is.binary)
-importFrom(ape,is.ultrametric)
-importFrom(ape,multi2di)
-importFrom(ape,plot.phylo)
+importFrom(ape,
+  Nedge,
+  drop.tip,
+  edgelabels,
+  is.binary,
+  is.ultrametric,
+  multi2di,
+  plot.phylo
+)
 importFrom(grDevices,rainbow)
-importFrom(graphics,axis)
-importFrom(graphics,barplot)
-importFrom(graphics,layout)
-importFrom(graphics,mtext)
-importFrom(graphics,par)
-importFrom(stats,AIC)
-importFrom(stats,coef)
-importFrom(stats,confint)
-importFrom(stats,delete.response)
-importFrom(stats,fitted)
-importFrom(stats,formula)
-importFrom(stats,lm.fit)
-importFrom(stats,logLik)
-importFrom(stats,model.frame)
-importFrom(stats,model.matrix)
-importFrom(stats,model.response)
-importFrom(stats,nobs)
-importFrom(stats,optim)
-importFrom(stats,optimHess)
-importFrom(stats,optimize)
-importFrom(stats,predict)
-importFrom(stats,printCoefmat)
-importFrom(stats,profile)
-importFrom(stats,pt)
-importFrom(stats,quantile)
-importFrom(stats,reorder)
-importFrom(stats,residuals)
-importFrom(stats,sd)
-importFrom(stats,setNames)
-importFrom(stats,simulate)
-importFrom(stats,terms)
-importFrom(stats,var)
-importFrom(stats,vcov)
-importFrom(utils,capture.output)
-importFrom(utils,getFromNamespace)
+importFrom(graphics,
+  axis,
+  barplot,
+  layout,
+  mtext,
+  par
+)
+importFrom(stats,
+  AIC,
+  coef,
+  confint,
+  delete.response,
+  fitted,
+  formula,
+  lm.fit,
+  logLik,
+  model.frame,
+  model.matrix,
+  model.response,
+  nobs,
+  optim,
+  optimHess,
+  optimize,
+  predict,
+  printCoefmat,
+  profile,
+  pt,
+  quantile,
+  reorder,
+  residuals,
+  sd,
+  setNames,
+  simulate,
+  terms,
+  var,
+  vcov
+)
+importFrom(utils,
+  capture.output,
+  getFromNamespace
+)
 useDynLib(kfl1ou, .registration = TRUE)
