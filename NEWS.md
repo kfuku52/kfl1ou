@@ -1,3 +1,8 @@
+# kfl1ou 2.5.4
+
+- Keep CodeQL initialization and analysis on the same pinned release, and
+  group their future Dependabot updates into one pull request.
+
 # kfl1ou 2.5.3
 
 - Accelerate full multivariate OU fits with direct covariance construction,
