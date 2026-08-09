@@ -1,6 +1,7 @@
 ^\.git$
 ^\.github$
 ^\.gitignore$
+^AGENTS\.md$
 ^\.DS_Store$
 ^\.\.Rcheck$
 ^l1ou\.Rcheck$

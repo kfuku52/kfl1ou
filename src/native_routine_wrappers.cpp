@@ -134,7 +134,7 @@ Rcpp::NumericVector threepoint_l1ou_c(int N, int n, int pN, int dY, int dX,
         max_size / sizeof(double),
         static_cast<std::size_t>(R_XLEN_T_MAX)
     );
-    auto checked_product = [max_size](std::size_t left, std::size_t right) {
+    auto checked_product = [](std::size_t left, std::size_t right) {
         if (right != 0 && left > max_size / right) {
             Rcpp::stop("requested working memory is too large in threepoint_l1ou_c");
         }

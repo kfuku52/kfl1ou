@@ -73,10 +73,6 @@ and a localization-aware multivariate pBIC extension.}
 
 \item{likelihood.engine}{dense, pruning, or automatic likelihood engine.}
 
-\item{nCores}{maximum total CPU budget. Multiple optimization starts use
-fork-based workers when available; nested candidate-search workers keep
-their optimization starts sequential.}
-
 \item{optimizer.starts}{number of deterministic optimization starts.}
 
 \item{compute.hessian}{logical; calculate a numerical Hessian when practical.}
@@ -86,6 +82,10 @@ such as \code{confint(..., selection = "full")}, repeats shift selection.
 By default this is at least one and otherwise the number of fitted shifts.}
 
 \item{l1ou.options}{if provided, all the default values will be ignored.}
+
+\item{nCores}{maximum total CPU budget. Multiple optimization starts use
+fork-based workers when available; nested candidate-search workers keep
+their optimization starts sequential.}
 }
 \value{
 an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
