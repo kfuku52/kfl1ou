@@ -46,15 +46,18 @@ pruning_spd_components <- function(covariance){
 }
 
 transform_pruning_message <- function(message, transition, innovation){
+    decay <- if(is.matrix(transition)) diag(transition) else
+        as.numeric(transition)
     q <- pruning_spd_components(innovation)
     precision <- 0.5 * (message$precision + t(message$precision))
     combined <- pruning_spd_components(precision + q$inverse)
     middle <- q$inverse - q$inverse %*% combined$inverse %*% q$inverse
+    propagated <- middle * tcrossprod(decay)
     list(
-        precision=0.5 * (t(transition) %*% middle %*% transition +
-                          t(t(transition) %*% middle %*% transition)),
-        linear=drop(t(transition) %*% q$inverse %*%
-                    combined$inverse %*% message$linear),
+        precision=0.5 * (propagated + t(propagated)),
+        linear=decay * drop(
+            q$inverse %*% combined$inverse %*% message$linear
+        ),
         constant=message$constant - 0.5 * q$log.determinant -
             0.5 * combined$log.determinant +
             0.5 * drop(crossprod(
@@ -66,6 +69,8 @@ transform_pruning_message <- function(message, transition, innovation){
 
 tip_pruning_message <- function(value, transition, innovation,
                                 observation.error){
+    decay <- if(is.matrix(transition)) diag(transition) else
+        as.numeric(transition)
     observed <- !is.na(value)
     p <- length(value)
     if(!any(observed)){
@@ -73,27 +78,60 @@ tip_pruning_message <- function(value, transition, innovation,
             precision=matrix(0, p, p), linear=numeric(p), constant=0
         ))
     }
-    selection <- diag(p)[observed, , drop=FALSE]
-    covariance <- selection %*% innovation %*% t(selection)
+    covariance <- innovation[observed, observed, drop=FALSE]
     diag(covariance) <- diag(covariance) + observation.error[observed]
     components <- pruning_spd_components(covariance)
-    loading <- selection %*% transition
     y <- value[observed]
+    observed.decay <- decay[observed]
+    precision <- matrix(0, p, p)
+    precision[observed, observed] <-
+        components$inverse * tcrossprod(observed.decay)
+    linear <- numeric(p)
+    linear[observed] <- observed.decay * drop(components$inverse %*% y)
     list(
-        precision=t(loading) %*% components$inverse %*% loading,
-        linear=drop(t(loading) %*% components$inverse %*% y),
+        precision=precision,
+        linear=linear,
         constant=-0.5 * length(y) * log(2 * pi) -
             0.5 * components$log.determinant -
             0.5 * drop(crossprod(y, components$inverse %*% y))
     )
 }
 
+prepare_multivariate_pruning_tree_cache <- function(tree){
+    ordered <- ape::reorder.phylo(tree, "postorder")
+    root <- setdiff(unique(ordered$edge[, 1L]), ordered$edge[, 2L])[[1L]]
+    list(
+        n=length(ordered$tip.label),
+        nnode=ordered$Nnode,
+        edge=ordered$edge,
+        edge.length=ordered$edge.length,
+        root=root,
+        tip.label=ordered$tip.label
+    )
+}
+
+resolve_multivariate_pruning_tree_cache <- function(tree, tree.cache=NULL){
+    if(is.null(tree.cache)){
+        return(prepare_multivariate_pruning_tree_cache(tree))
+    }
+    required <- c("n", "nnode", "edge", "edge.length", "root", "tip.label")
+    if(!is.list(tree.cache) ||
+       !all(required %in% names(tree.cache)) ||
+       !identical(tree.cache$tip.label, tree$tip.label) ||
+       nrow(tree.cache$edge) != length(tree.cache$edge.length)){
+        stop("invalid cached multivariate pruning tree.")
+    }
+    tree.cache
+}
+
 # Exact Gaussian pruning likelihood for diagonal-drift multivariate OU models.
 pruning_multivariate_ou_loglik <- function(tree, residuals, alpha,
                                             trait.covariance, root.model,
-                                            observation.error=NULL){
+                                            observation.error=NULL,
+                                            tree.cache=NULL){
     residuals <- as.matrix(residuals)
-    n <- length(tree$tip.label)
+    tree.cache <- resolve_multivariate_pruning_tree_cache(tree, tree.cache)
+    n <- tree.cache$n
     p <- ncol(residuals)
     if(nrow(residuals) != n){
         stop("residuals must have one row per tree tip.")
@@ -119,22 +157,38 @@ pruning_multivariate_ou_loglik <- function(tree, residuals, alpha,
         stop("observation.error must contain finite non-negative variances.")
     }
 
-    ordered <- ape::reorder.phylo(tree, "postorder")
-    messages <- vector("list", n + ordered$Nnode)
+    messages <- vector("list", n + tree.cache$nnode)
     zero.message <- function(){
         list(precision=matrix(0, p, p), linear=numeric(p), constant=0)
     }
-    transition.for <- function(length){
-        diag(exp(-alpha * length), p)
+    edge.count <- nrow(tree.cache$edge)
+    transition.decay <- exp(-outer(tree.cache$edge.length, alpha))
+    rates <- outer(alpha, alpha, "+")
+    rate.vector <- as.vector(rates)
+    innovation.multiplier <- matrix(
+        tree.cache$edge.length, nrow=edge.count, ncol=p * p
+    )
+    positive <- rate.vector > .Machine$double.eps
+    if(any(positive)){
+        positive.rates <- rate.vector[positive]
+        innovation.multiplier[, positive] <-
+            -expm1(-outer(tree.cache$edge.length, positive.rates)) /
+            matrix(
+                rep(positive.rates, each=edge.count),
+                nrow=edge.count
+            )
     }
-    for(edge.index in seq_len(nrow(ordered$edge))){
-        parent <- ordered$edge[edge.index, 1L]
-        child <- ordered$edge[edge.index, 2L]
-        branch.length <- ordered$edge.length[[edge.index]]
-        transition <- transition.for(branch.length)
-        innovation <- ou_branch_innovation_covariance(
-            alpha, trait.covariance, branch.length
-        )
+    trait.covariance <- 0.5 * (trait.covariance + t(trait.covariance))
+    innovation.values <- sweep(
+        innovation.multiplier, 2L, as.vector(trait.covariance), "*"
+    )
+
+    for(edge.index in seq_len(edge.count)){
+        parent <- tree.cache$edge[edge.index, 1L]
+        child <- tree.cache$edge[edge.index, 2L]
+        transition <- transition.decay[edge.index, ]
+        innovation <- matrix(innovation.values[edge.index, ], p, p)
+        innovation <- 0.5 * (innovation + t(innovation))
         incoming <- if(child <= n){
             tip_pruning_message(
                 residuals[child, ], transition, innovation,
@@ -152,8 +206,7 @@ pruning_multivariate_ou_loglik <- function(tree, residuals, alpha,
         messages[[parent]]$constant <- messages[[parent]]$constant +
             incoming$constant
     }
-    root <- setdiff(unique(ordered$edge[, 1L]), ordered$edge[, 2L])[[1L]]
-    root.message <- messages[[root]]
+    root.message <- messages[[tree.cache$root]]
     if(identical(root.model, "OUfixedRoot")){
         return(root.message$constant)
     }
@@ -177,6 +230,7 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
     n <- nrow(Y)
     p <- ncol(Y)
     observed <- !is.na(as.vector(Y))
+    pruning.tree.cache <- prepare_multivariate_pruning_tree_cache(tree)
     bounds <- multivariate_alpha_bounds(tree, opt, fixed.alpha, p)
     initial.alpha <- bounds$start
     initial.design <- design.builder(initial.alpha)
@@ -187,7 +241,10 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
     q <- design.columns[[1L]]
 
     marginal.scale <- pmax(
-        multivariate_marginal_scale(tree, initial.alpha, opt$root.model, p),
+        multivariate_marginal_scale(
+            tree, initial.alpha, opt$root.model, p,
+            tree.cache=opt$multivariate.tree.cache
+        ),
         .Machine$double.eps
     )
     marginal.variance <- vapply(seq_len(p), function(j){
@@ -210,7 +267,8 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         shrinkage.lambda <- opt$regularization.lambda
         if(is.na(shrinkage.lambda)){
             shrinkage.lambda <- estimate_trait_shrinkage_lambda(
-                tree, Y, design.builder, initial.alpha, opt$root.model
+                tree, Y, design.builder, initial.alpha, opt$root.model,
+                tree.cache=opt$multivariate.tree.cache
             )
         }
     }
@@ -263,7 +321,8 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         log.likelihood <- tryCatch(
             pruning_multivariate_ou_loglik(
                 tree, residuals, decoded$alpha, decoded$trait.covariance,
-                effective.root, observation.error
+                effective.root, observation.error,
+                tree.cache=pruning.tree.cache
             ),
             error=function(e) NA_real_
         )
@@ -339,7 +398,8 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             starting.points[[start.index]] <- candidate
         }
     }
-    optimization.runs <- lapply(seq_along(starting.points), function(index){
+    optimization.runs <- l1ou_optimizer_apply(
+        seq_along(starting.points), function(index){
         result <- tryCatch(
             optim(
                 starting.points[[index]], objective, method="L-BFGS-B",
@@ -353,7 +413,7 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         )
         result$start.index <- index
         result
-    })
+    }, opt=opt)
     values <- vapply(optimization.runs, function(x) x$value, numeric(1))
     if(!any(is.finite(values))){
         stop("all optimization starts failed for the pruning OU likelihood.")

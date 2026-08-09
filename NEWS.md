@@ -1,3 +1,13 @@
+# kfl1ou 2.5.3
+
+- Accelerate full multivariate OU fits with direct covariance construction,
+  cached tree geometry, cost- and memory-aware automatic likelihood selection,
+  vectorized pruning preprocessing and diagonal message algebra, and optional
+  parallel execution of deterministic optimizer starts within the configured
+  CPU budget.
+- Extend the deterministic benchmark gate to cover automatic full-covariance
+  fits and tighten the existing exhaustive and ensemble search budgets.
+
 # kfl1ou 2.5.1
 
 - Keep the CodeQL initialization and analysis actions on the same pinned

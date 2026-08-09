@@ -10,6 +10,147 @@ simulate_improvement_traits <- function(n.tips=20L, alpha=.7, seed=1L){
   list(tree=tree, Y=Y)
 }
 
+test_that("direct multivariate OU covariance matches the contrast construction", {
+  set.seed(200)
+  tree <- reorder(ape::rcoal(18), "postorder")
+  cache <- kfl1ou:::prepare_multivariate_ou_tree_cache(tree)
+
+  cases <- list(
+    list(alpha=0, root="OUfixedRoot"),
+    list(alpha=.35, root="OUfixedRoot"),
+    list(alpha=1.1, root="OUrandomRoot")
+  )
+  for(case in cases){
+    expected.factor <- kfl1ou:::sqrt_OU_covariance(
+      tree, alpha=case$alpha, root.model=case$root,
+      check.order=FALSE, check.ultrametric=FALSE
+    )$sqrtSigma
+    expected <- tcrossprod(expected.factor)
+    direct <- kfl1ou:::multivariate_ou_base_covariance(
+      tree, case$alpha, case$root
+    )
+    cached <- kfl1ou:::multivariate_ou_base_covariance(
+      tree, case$alpha, case$root, tree.cache=cache
+    )
+    expect_equal(direct, expected, tolerance=1e-12)
+    expect_equal(cached, expected, tolerance=1e-12)
+  }
+})
+
+test_that("full covariance tree geometry is cached only during fitting", {
+  dat <- simulate_improvement_traits(n.tips=12L, alpha=.7, seed=200L)
+  fit <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.lower=.7, alpha.upper=.7,
+    optimizer.starts=1L, compute.hessian=FALSE
+  )
+  expect_null(fit$l1ou.options$multivariate.tree.cache)
+})
+
+test_that("automatic likelihood selection accounts for cost and memory", {
+  base.opt <- list(
+    likelihood.engine="auto",
+    alpha.structure="diagonal",
+    covariance.regularization="none",
+    measurement_error=FALSE,
+    auto.dense.max.bytes=512 * 1024^2
+  )
+  moderate <- matrix(0, nrow=84L, ncol=3L)
+  selection <- kfl1ou:::select_multivariate_likelihood_engine(
+    moderate, base.opt, mean.rank=1L, complete.separable=FALSE,
+    fixed.alpha=TRUE
+  )
+  expect_equal(selection$selected, "dense")
+  expect_equal(selection$reason, "estimated-dense-cost")
+  expect_true(selection$dense.working.bytes < selection$dense.max.bytes)
+
+  high.parameter <- matrix(0, nrow=25L, ncol=15L)
+  selection <- kfl1ou:::select_multivariate_likelihood_engine(
+    high.parameter, base.opt, mean.rank=1L,
+    complete.separable=FALSE, fixed.alpha=FALSE
+  )
+  expect_equal(selection$selected, "pruning")
+
+  memory.opt <- base.opt
+  memory.opt$auto.dense.max.bytes <- 1
+  selection <- kfl1ou:::select_multivariate_likelihood_engine(
+    moderate, memory.opt, mean.rank=1L,
+    complete.separable=FALSE, fixed.alpha=TRUE
+  )
+  expect_equal(selection$selected, "pruning")
+  expect_equal(selection$reason, "estimated-dense-memory")
+
+  shared.opt <- base.opt
+  shared.opt$alpha.structure <- "shared"
+  selection <- kfl1ou:::select_multivariate_likelihood_engine(
+    moderate, shared.opt, mean.rank=1L,
+    complete.separable=TRUE, fixed.alpha=FALSE
+  )
+  expect_equal(selection$selected, "matrix-normal")
+
+  explicit.opt <- base.opt
+  explicit.opt$likelihood.engine <- "pruning"
+  selection <- kfl1ou:::select_multivariate_likelihood_engine(
+    moderate, explicit.opt, mean.rank=1L,
+    complete.separable=FALSE, fixed.alpha=TRUE
+  )
+  expect_equal(selection$selected, "pruning")
+  expect_equal(selection$reason, "explicit-request")
+})
+
+test_that("optimizer starts share the configured CPU budget", {
+  calls <- integer()
+  local_mocked_bindings(
+    l1ou_supports_multicore = function() TRUE,
+    l1ou_mclapply = function(X, FUN, ..., mc.cores=1L) {
+      calls <<- c(calls, mc.cores)
+      lapply(X, FUN, ...)
+    },
+    .package = "kfl1ou"
+  )
+
+  parallel <- kfl1ou:::l1ou_optimizer_apply(
+    1:3, function(x) x * 2,
+    opt=list(nCores=2L, optimizer.parallel=TRUE)
+  )
+  expect_equal(unlist(parallel), c(2, 4, 6))
+  expect_equal(calls, 2L)
+
+  sequential <- kfl1ou:::l1ou_optimizer_apply(
+    1:3, function(x) x * 2,
+    opt=list(nCores=2L, optimizer.parallel=FALSE)
+  )
+  expect_equal(unlist(sequential), c(2, 4, 6))
+  expect_equal(calls, 2L)
+})
+
+test_that("fit_OU exposes the optimizer CPU budget", {
+  dat <- simulate_improvement_traits(n.tips=12L, alpha=.7, seed=207L)
+  cores <- integer()
+  local_mocked_bindings(
+    l1ou_supports_multicore = function() TRUE,
+    l1ou_mclapply = function(X, FUN, ..., mc.cores=1L) {
+      cores <<- c(cores, mc.cores)
+      lapply(X, FUN, ...)
+    },
+    .package = "kfl1ou"
+  )
+
+  fit <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.structure="diagonal",
+    alpha.lower=.7, alpha.upper=.7,
+    nCores=2L, optimizer.starts=2L, compute.hessian=FALSE
+  )
+  expect_equal(cores, 2L)
+  expect_equal(fit$l1ou.options$nCores, 2L)
+  expect_true(fit$l1ou.options$parallel.computing)
+  expect_error(
+    fit_OU(dat$tree, dat$Y, integer(), criterion="BIC", nCores=0L),
+    "nCores"
+  )
+})
+
 test_that("pruning likelihood equals the dense observed Gaussian likelihood", {
   set.seed(201)
   tree <- reorder(ape::rcoal(13), "postorder")
@@ -19,6 +160,7 @@ test_that("pruning likelihood equals the dense observed Gaussian likelihood", {
                       dimnames=list(tree$tip.label, c("x", "y")))
   residuals[c(2, 8), 1] <- NA
   residuals[4, 2] <- NA
+  pruning.cache <- kfl1ou:::prepare_multivariate_pruning_tree_cache(tree)
 
   for(root in c("OUfixedRoot", "OUrandomRoot")){
     alpha <- c(.35, .9)
@@ -35,7 +177,12 @@ test_that("pruning likelihood equals the dense observed Gaussian likelihood", {
     pruning <- kfl1ou:::pruning_multivariate_ou_loglik(
       tree, residuals, alpha, Omega, root, error
     )
+    pruning.cached <- kfl1ou:::pruning_multivariate_ou_loglik(
+      tree, residuals, alpha, Omega, root, error,
+      tree.cache=pruning.cache
+    )
     expect_equal(pruning, dense, tolerance=1e-8)
+    expect_equal(pruning.cached, dense, tolerance=1e-8)
   }
 })
 

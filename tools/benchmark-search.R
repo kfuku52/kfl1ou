@@ -66,21 +66,99 @@ benchmark_case <- function(name, data, strategy, max_shifts,
   )
 }
 
+benchmark_full_covariance_case <- function(max_median_seconds,
+                                           iterations = 3L) {
+  set.seed(3L)
+  tree <- reorder.phylo(rcoal(84L), "postorder")
+  Y <- matrix(
+    rnorm(84L * 3L), nrow = 84L, ncol = 3L,
+    dimnames = list(tree$tip.label, paste0("trait", seq_len(3L)))
+  )
+  run_once <- function() {
+    suppressWarnings(
+      fit_OU(
+        tree,
+        Y,
+        integer(),
+        criterion = "BIC",
+        trait.covariance = "full",
+        alpha.structure = "diagonal",
+        alpha.lower = 0.7,
+        alpha.upper = 0.7,
+        likelihood.engine = "auto",
+        optimizer.starts = 1L,
+        compute.hessian = FALSE
+      )
+    )
+  }
+
+  reference <- run_once()
+  stopifnot(
+    identical(reference$likelihood.engine, "dense"),
+    identical(
+      reference$diagnostics$engine.selection$reason,
+      "estimated-dense-cost"
+    )
+  )
+  elapsed <- numeric(iterations)
+  for (index in seq_len(iterations)) {
+    timing <- system.time(candidate <- run_once())
+    elapsed[[index]] <- unname(timing[["elapsed"]])
+    stopifnot(
+      identical(candidate$likelihood.engine, reference$likelihood.engine),
+      isTRUE(all.equal(
+        candidate$joint.logLik,
+        reference$joint.logLik,
+        tolerance = 1e-10
+      )),
+      isTRUE(all.equal(candidate$score, reference$score, tolerance = 1e-10))
+    )
+  }
+
+  median_seconds <- stats::median(elapsed)
+  if (median_seconds > max_median_seconds) {
+    stop(
+      sprintf(
+        "automatic-full-covariance median runtime %.3fs exceeds the %.3fs regression budget.",
+        median_seconds,
+        max_median_seconds
+      ),
+      call. = FALSE
+    )
+  }
+
+  data.frame(
+    benchmark = "automatic-full-covariance",
+    strategy = reference$likelihood.engine,
+    tips = length(tree$tip.label),
+    max_shifts = 0L,
+    iterations = iterations,
+    median_seconds = median_seconds,
+    max_median_seconds = max_median_seconds,
+    min_seconds = min(elapsed),
+    max_seconds = max(elapsed),
+    score = reference$score,
+    selected_shifts = reference$nShifts,
+    stringsAsFactors = FALSE
+  )
+}
+
 results <- rbind(
   benchmark_case(
     "certified-small-search",
     make_data(12L, 1L),
     "exhaustive",
     2L,
-    5
+    2
   ),
   benchmark_case(
     "ensemble-medium-search",
     make_data(30L, 2L),
     "ensemble",
     3L,
-    2
-  )
+    1
+  ),
+  benchmark_full_covariance_case(6)
 )
 
 utils::write.csv(results, "benchmark-results.csv", row.names = FALSE)

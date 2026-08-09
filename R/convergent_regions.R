@@ -1175,8 +1175,11 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 
 	if( length(run.list)>0 && opt$parallel.computing ){
 
+        worker.opt <- opt
+        worker.opt$optimizer.parallel <- FALSE
+
 		RE.list <- l1ou_mclapply( run.list, FUN=function(X){
-					    return ( cmp_model_score_CR(tr, Y, X$regimes, model$alpha, opt=opt) )
+					    return ( cmp_model_score_CR(tr, Y, X$regimes, model$alpha, opt=worker.opt) )
 			       }, mc.cores=opt$nCores)
 
 		for(idx in seq_along(RE.list) ){

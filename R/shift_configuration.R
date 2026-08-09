@@ -1056,6 +1056,7 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 
     worker.opt <- opt
     worker.opt$use.saved.scores <- TRUE
+    worker.opt$optimizer.parallel <- FALSE
     cache.initialized <- FALSE
 
     function(sc){
@@ -1096,6 +1097,9 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'@param covariance.regularization optional covariance shrinkage.
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
 #'@param likelihood.engine dense, pruning, or automatic likelihood engine.
+#'@param nCores maximum total CPU budget. Multiple optimization starts use
+#' fork-based workers when available; nested candidate-search workers keep
+#' their optimization starts sequential.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param compute.hessian logical; calculate a numerical Hessian when practical.
 #'@param fit.OU.model logical. If TRUE, it returns an object of class l1ou with all the parameters estimated.
@@ -1158,7 +1162,8 @@ configuration_ic <- function(tree, Y, shift.configuration,
                      optimizer.starts = 5,
                      compute.hessian = TRUE,
                      fit.OU.model = FALSE, 
-                     l1ou.options = NA
+                     l1ou.options = NA,
+                     nCores = 1
                    ){
 
     validate_l1ou_tree(tree, require.positive.edges=TRUE)
@@ -1177,6 +1182,21 @@ configuration_ic <- function(tree, Y, shift.configuration,
     if(!all(is.na(l1ou.options))){
         opt = l1ou.options
     }else{
+        nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
+        parallel.computing <- FALSE
+        if(nCores > 1L){
+            if(!l1ou_supports_multicore()){
+                warning(
+                    "fork-based parallel execution is unavailable; running sequentially.",
+                    immediate.=TRUE
+                )
+                nCores <- 1L
+            } else{
+                parallel.computing <- TRUE
+            }
+        }
+        opt$nCores <- nCores
+        opt$parallel.computing <- parallel.computing
         opt$criterion            <- match.arg(criterion)
         opt$root.model           <- match.arg(root.model)
         opt$quietly              <- TRUE
@@ -1239,8 +1259,9 @@ configuration_ic <- function(tree, Y, shift.configuration,
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
 
-    thread.limit <- resolve_l1ou_thread_limit(ifelse(is.null(opt$nCores), 1L, opt$nCores),
-                                              FALSE)
+    thread.limit <- resolve_l1ou_thread_limit(
+        opt$nCores, opt$parallel.computing
+    )
     return(with_l1ou_thread_limit(thread.limit, {
         s.c = correct_unidentifiability(tree, shift.configuration, opt)
         if( length(s.c) != length(shift.configuration) )
@@ -1288,6 +1309,9 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'@param covariance.regularization optional covariance shrinkage.
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
 #'@param likelihood.engine dense, pruning, or automatic likelihood engine.
+#'@param nCores maximum total CPU budget. Multiple optimization starts use
+#' fork-based workers when available; nested candidate-search workers keep
+#' their optimization starts sequential.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param compute.hessian logical; calculate a numerical Hessian when practical.
 #'@param search.max.nShifts maximum number of shifts used if a later method,
@@ -1363,7 +1387,8 @@ fit_OU <- function(tree, Y, shift.configuration,
                      optimizer.starts = 5,
                      compute.hessian = TRUE,
                      search.max.nShifts = NULL,
-                     l1ou.options = NA
+                     l1ou.options = NA,
+                     nCores = 1
                    ){
 
     validate_l1ou_tree(tree, require.positive.edges=TRUE)
@@ -1386,6 +1411,21 @@ fit_OU <- function(tree, Y, shift.configuration,
     if(!all(is.na(l1ou.options))){
         opt = l1ou.options
     }else{
+        nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
+        parallel.computing <- FALSE
+        if(nCores > 1L){
+            if(!l1ou_supports_multicore()){
+                warning(
+                    "fork-based parallel execution is unavailable; running sequentially.",
+                    immediate.=TRUE
+                )
+                nCores <- 1L
+            } else{
+                parallel.computing <- TRUE
+            }
+        }
+        opt$nCores <- nCores
+        opt$parallel.computing <- parallel.computing
         opt$criterion            <- match.arg(criterion)
         opt$root.model           <- match.arg(root.model)
         opt$quietly              <- TRUE
@@ -1456,8 +1496,9 @@ fit_OU <- function(tree, Y, shift.configuration,
     opt <- initialize_design_cache(tree, opt)
     opt <- initialize_fast_phylolm_cache(tree, opt)
 
-    thread.limit <- resolve_l1ou_thread_limit(ifelse(is.null(opt$nCores), 1L, opt$nCores),
-                                              FALSE)
+    thread.limit <- resolve_l1ou_thread_limit(
+        opt$nCores, opt$parallel.computing
+    )
     return(with_l1ou_thread_limit(thread.limit, {
         s.c = correct_unidentifiability(tree, shift.configuration, opt)
         if( length(s.c) != length(shift.configuration) )
@@ -1625,6 +1666,7 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
     model.opt <- opt
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
+    model.opt$multivariate.tree.cache <- NULL
 
     continuous.parameter.count <- sum(vapply(
         trait.results, function(x) as.numeric(x$fit$p), numeric(1)
@@ -2764,6 +2806,14 @@ l1ou_trait_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
     ))
 }
 
+l1ou_optimizer_apply <- function(X, FUN, opt=list(), ...){
+
+    allow.parallel <- !identical(opt$optimizer.parallel, FALSE)
+    l1ou_trait_apply(
+        X, FUN, opt=opt, allow.parallel=allow.parallel, ...
+    )
+}
+
 make_nested_l1ou_options <- function(opt){
 
     nested.opt <- opt
@@ -2834,6 +2884,10 @@ initialize_design_cache <- function(tree, opt){
     }
     if(is.null(opt$edge.age)){
         opt$edge.age <- tree_edge_ages(tree)
+    }
+    if(identical(opt$trait.covariance, "full") &&
+       is.null(opt$multivariate.tree.cache)){
+        opt$multivariate.tree.cache <- prepare_multivariate_ou_tree_cache(tree)
     }
     if(!is.null(opt$tree.list)){
         opt$tree.list <- lapply(opt$tree.list, function(tr){

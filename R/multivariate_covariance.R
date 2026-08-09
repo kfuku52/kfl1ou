@@ -58,12 +58,27 @@ normalize_multivariate_options <- function(opt, Y){
     opt$optimizer.starts <- l1ou_integer_argument(
         opt$optimizer.starts, "optimizer.starts", 1L
     )
+    if(is.null(opt$optimizer.parallel)){
+        opt$optimizer.parallel <- TRUE
+    }
+    opt$optimizer.parallel <- l1ou_logical_argument(
+        opt$optimizer.parallel, "optimizer.parallel"
+    )
     if(is.null(opt$compute.hessian)){
         opt$compute.hessian <- TRUE
     }
     opt$compute.hessian <- l1ou_logical_argument(
         opt$compute.hessian, "compute.hessian"
     )
+    if(is.null(opt$auto.dense.max.bytes)){
+        opt$auto.dense.max.bytes <- 512 * 1024^2
+    }
+    if(length(opt$auto.dense.max.bytes) != 1L ||
+       !is.numeric(opt$auto.dense.max.bytes) ||
+       !is.finite(opt$auto.dense.max.bytes) ||
+       opt$auto.dense.max.bytes <= 0){
+        stop("auto.dense.max.bytes must be one finite positive number.")
+    }
     if(is.null(opt$measurement_error)) opt$measurement_error <- FALSE
     opt$measurement_error <- l1ou_logical_argument(
         opt$measurement_error, "measurement_error"
@@ -75,6 +90,65 @@ normalize_multivariate_options <- function(opt, Y){
         opt$likelihood.engine <- "dense"
     }
     opt
+}
+
+select_multivariate_likelihood_engine <- function(
+        Y, opt, mean.rank, complete.separable, fixed.alpha=FALSE){
+    Y <- as.matrix(Y)
+    requested <- opt$likelihood.engine
+    observed.dimension <- sum(!is.na(Y))
+    n.traits <- ncol(Y)
+    n.alpha <- if(isTRUE(fixed.alpha)) 0L else
+        if(identical(opt$alpha.structure, "diagonal")) n.traits else 1L
+    process.parameters <- n.traits * (n.traits + 1L) / 2L + n.alpha +
+        if(isTRUE(opt$measurement_error)) n.traits else 0L
+    mean.parameters <- as.integer(mean.rank) * n.traits
+    covariance.bytes <- 8 * observed.dimension^2
+    ## Dense evaluation simultaneously holds the covariance, its symmetric
+    ## copy/factor, and several solve workspaces.  The multiplier is a
+    ## conservative working-set estimate rather than an allocation guarantee.
+    dense.working.bytes <- 6 * covariance.bytes +
+        8 * observed.dimension * (mean.parameters + 4L)
+
+    trait.factor <- sqrt(max(1, n.traits / 3))
+    parameter.factor <- sqrt(max(1, process.parameters / 10))
+    dense.dimension.limit <- max(
+        250L,
+        as.integer(floor(1500 / (trait.factor * parameter.factor)))
+    )
+    dense.within.memory <- dense.working.bytes <= opt$auto.dense.max.bytes
+    dense.within.cost <- observed.dimension <= dense.dimension.limit
+
+    if(!identical(requested, "auto")){
+        engine <- requested
+        reason <- "explicit-request"
+    } else if(isTRUE(complete.separable) &&
+              identical(opt$covariance.regularization, "none")){
+        engine <- "matrix-normal"
+        reason <- "complete-separable-profile"
+    } else if(dense.within.memory && dense.within.cost){
+        engine <- "dense"
+        reason <- "estimated-dense-cost"
+    } else{
+        engine <- "pruning"
+        reason <- if(!dense.within.memory){
+            "estimated-dense-memory"
+        } else "estimated-dense-cost"
+    }
+
+    list(
+        requested=requested,
+        selected=engine,
+        reason=reason,
+        observed.dimension=as.integer(observed.dimension),
+        traits=as.integer(n.traits),
+        mean.parameters=as.integer(mean.parameters),
+        process.parameters=as.integer(process.parameters),
+        dense.dimension.limit=dense.dimension.limit,
+        dense.covariance.bytes=as.numeric(covariance.bytes),
+        dense.working.bytes=as.numeric(dense.working.bytes),
+        dense.max.bytes=as.numeric(opt$auto.dense.max.bytes)
+    )
 }
 
 sanitize_multivariate_alpha_arguments <- function(lower, upper, starting,
@@ -143,7 +217,7 @@ shrink_trait_covariance <- function(sample.covariance, residuals,
 
 
 estimate_trait_shrinkage_lambda <- function(
-        tree, Y, design.builder, alpha, root.model){
+        tree, Y, design.builder, alpha, root.model, tree.cache=NULL){
     Y <- as.matrix(Y)
     p <- ncol(Y)
     n <- nrow(Y)
@@ -162,7 +236,9 @@ estimate_trait_shrinkage_lambda <- function(
         raw <- Y[observed, j] -
             drop(design[observed, , drop=FALSE] %*% coefficient)
         alpha.j <- rep(as.numeric(alpha), length.out=p)[[j]]
-        base <- multivariate_ou_base_covariance(tree, alpha.j, root.model)[
+        base <- multivariate_ou_base_covariance(
+            tree, alpha.j, root.model, tree.cache=tree.cache
+        )[
             observed, observed, drop=FALSE
         ]
         factor <- tryCatch(chol(base), error=function(e) NULL)
@@ -183,21 +259,57 @@ estimate_trait_shrinkage_lambda <- function(
     min(0.95, max(1e-6, lambda))
 }
 
-multivariate_ou_base_covariance <- function(tree, alpha, root.model){
-    effective.root <- if(alpha <= 0) "OUfixedRoot" else root.model
-    re <- sqrt_OU_covariance(
-        tree,
-        alpha=alpha,
-        root.model=effective.root,
-        sigma2=1,
-        check.order=FALSE,
-        check.ultrametric=FALSE
+prepare_multivariate_ou_tree_cache <- function(tree){
+    shared.time <- ape::vcv.phylo(tree)
+    shared.time <- shared.time[tree$tip.label, tree$tip.label, drop=FALSE]
+    dimnames(shared.time) <- NULL
+    tip.time <- diag(shared.time)
+    list(
+        shared.time=shared.time,
+        tip.time=tip.time,
+        tip.height=mean(tip.time)
     )
-    tcrossprod(re$sqrtSigma)
+}
+
+resolve_multivariate_ou_tree_cache <- function(tree, tree.cache=NULL){
+    if(is.null(tree.cache)){
+        return(prepare_multivariate_ou_tree_cache(tree))
+    }
+    n <- length(tree$tip.label)
+    if(!is.list(tree.cache) ||
+       !all(c("shared.time", "tip.time", "tip.height") %in% names(tree.cache)) ||
+       !identical(dim(tree.cache$shared.time), c(n, n)) ||
+       length(tree.cache$tip.time) != n){
+        stop("invalid cached multivariate OU tree geometry.")
+    }
+    tree.cache
+}
+
+multivariate_ou_base_covariance <- function(tree, alpha, root.model,
+                                             tree.cache=NULL){
+    tree.cache <- resolve_multivariate_ou_tree_cache(tree, tree.cache)
+    shared.time <- tree.cache$shared.time
+    if(alpha <= 0){
+        return(shared.time)
+    }
+
+    row.distance <- tree.cache$tip.time - shared.time
+    propagation <- exp(-alpha * row.distance - alpha * t(row.distance))
+    rate <- 2 * alpha
+    if(identical(root.model, "OUrandomRoot")){
+        if(alpha * tree.cache$tip.height <= sqrt(.Machine$double.eps)){
+            warning(
+                "OUrandomRoot covariance is numerically ill-conditioned ",
+                "because alpha is extremely small relative to tree height."
+            )
+        }
+        return(propagation / rate)
+    }
+    propagation * -expm1(-rate * shared.time) / rate
 }
 
 multivariate_ou_dense_covariance <- function(tree, alpha, trait.covariance,
-                                              root.model){
+                                              root.model, tree.cache=NULL){
     alpha <- as.numeric(alpha)
     p <- nrow(trait.covariance)
     if(length(alpha) == 1L){
@@ -209,16 +321,20 @@ multivariate_ou_dense_covariance <- function(tree, alpha, trait.covariance,
     if(length(unique(alpha)) == 1L){
         return(kronecker(
             trait.covariance,
-            multivariate_ou_base_covariance(tree, alpha[[1L]], root.model)
+            multivariate_ou_base_covariance(
+                tree, alpha[[1L]], root.model, tree.cache=tree.cache
+            )
         ))
     }
 
-    shared.time <- ape::vcv.phylo(tree)
-    shared.time <- shared.time[tree$tip.label, tree$tip.label, drop=FALSE]
-    tip.time <- diag(shared.time)
+    tree.cache <- resolve_multivariate_ou_tree_cache(tree, tree.cache)
+    shared.time <- tree.cache$shared.time
+    tip.time <- tree.cache$tip.time
     n <- length(tip.time)
     covariance <- matrix(0, nrow=n * p, ncol=n * p)
     random.root <- identical(root.model, "OUrandomRoot")
+    row.distance <- tip.time - shared.time
+    col.distance <- t(row.distance)
 
     for(i in seq_len(p)){
         for(j in seq_len(p)){
@@ -230,18 +346,15 @@ multivariate_ou_dense_covariance <- function(tree, alpha, trait.covariance,
                 }
                 block <- trait.covariance[i, j] * shared.time
             } else{
-                row.distance <- outer(tip.time, rep(1, n)) - shared.time
-                col.distance <- outer(rep(1, n), tip.time) - shared.time
                 propagation <- exp(
                     -alpha[[i]] * row.distance - alpha[[j]] * col.distance
                 )
-                ancestral.variance <- if(random.root){
-                    matrix(1, n, n)
+                block <- if(random.root){
+                    trait.covariance[i, j] / rate * propagation
                 } else{
-                    -expm1(-rate * shared.time)
+                    trait.covariance[i, j] / rate * propagation *
+                        -expm1(-rate * shared.time)
                 }
-                block <- trait.covariance[i, j] / rate * propagation *
-                    ancestral.variance
             }
             rows <- ((i - 1L) * n + 1L):(i * n)
             cols <- ((j - 1L) * n + 1L):(j * n)
@@ -252,7 +365,7 @@ multivariate_ou_dense_covariance <- function(tree, alpha, trait.covariance,
 }
 
 multivariate_tip_trait_covariance <- function(tree, alpha, trait.covariance,
-                                               root.model){
+                                               root.model, tree.cache=NULL){
     p <- nrow(trait.covariance)
     alpha <- rep(as.numeric(alpha), length.out=p)
     rates <- outer(alpha, alpha, "+")
@@ -264,9 +377,8 @@ multivariate_tip_trait_covariance <- function(tree, alpha, trait.covariance,
         }
         multiplier <- 1 / rates
     } else{
-        height <- mean(ape::node.depth.edgelength(tree)[
-            seq_along(tree$tip.label)
-        ])
+        tree.cache <- resolve_multivariate_ou_tree_cache(tree, tree.cache)
+        height <- tree.cache$tip.height
         multiplier[positive] <- -expm1(-rates[positive] * height) /
             rates[positive]
         multiplier[!positive] <- height
@@ -275,10 +387,11 @@ multivariate_tip_trait_covariance <- function(tree, alpha, trait.covariance,
     0.5 * (covariance + t(covariance))
 }
 
-multivariate_marginal_scale <- function(tree, alpha, root.model, n.traits){
+multivariate_marginal_scale <- function(tree, alpha, root.model, n.traits,
+                                        tree.cache=NULL){
     alpha <- rep(as.numeric(alpha), length.out=n.traits)
     diag(multivariate_tip_trait_covariance(
-        tree, alpha, diag(n.traits), root.model
+        tree, alpha, diag(n.traits), root.model, tree.cache=tree.cache
     ))
 }
 
@@ -327,7 +440,8 @@ multivariate_ou_observed_covariance <- function(tree, Y, alpha,
                                                  sigma2.error=NULL){
     Y <- as.matrix(Y)
     covariance <- multivariate_ou_dense_covariance(
-        tree, alpha, trait.covariance, opt$root.model
+        tree, alpha, trait.covariance, opt$root.model,
+        tree.cache=opt$multivariate.tree.cache
     )
     observation.error <- multivariate_observation_error_vector(
         Y, opt, sigma2.error
@@ -461,7 +575,8 @@ matrix_normal_ou_fit <- function(tree, Y, design.builder, opt,
 
     profile.alpha <- function(alpha){
         base.covariance <- multivariate_ou_base_covariance(
-            tree, alpha, opt$root.model
+            tree, alpha, opt$root.model,
+            tree.cache=opt$multivariate.tree.cache
         )
         covariance.chol <- tryCatch(chol(base.covariance), error=function(e) NULL)
         if(is.null(covariance.chol)){
@@ -632,12 +747,16 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         shrinkage.lambda <- opt$regularization.lambda
         if(is.na(shrinkage.lambda)){
             shrinkage.lambda <- estimate_trait_shrinkage_lambda(
-                tree, Y, design.builder, initial.alpha, opt$root.model
+                tree, Y, design.builder, initial.alpha, opt$root.model,
+                tree.cache=opt$multivariate.tree.cache
             )
         }
     }
     marginal.scale <- pmax(
-        multivariate_marginal_scale(tree, initial.alpha, opt$root.model, p),
+        multivariate_marginal_scale(
+            tree, initial.alpha, opt$root.model, p,
+            tree.cache=opt$multivariate.tree.cache
+        ),
         .Machine$double.eps
     )
     marginal.variance <- vapply(seq_len(p), function(j){
@@ -748,7 +867,8 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
             starting.points[[start.index]] <- pmin(pmax(candidate, lower), upper)
         }
     }
-    optimization.runs <- lapply(seq_along(starting.points), function(index){
+    optimization.runs <- l1ou_optimizer_apply(
+        seq_along(starting.points), function(index){
         result <- tryCatch(
             optim(
                 starting.points[[index]],
@@ -765,7 +885,7 @@ general_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
         )
         result$start.index <- index
         result
-    })
+    }, opt=opt)
     values <- vapply(optimization.runs, function(x) x$value, numeric(1))
     if(!any(is.finite(values))){
         stop("all optimization starts failed for the full trait-covariance model.")
@@ -911,21 +1031,20 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
 
     complete.separable <- identical(opt$alpha.structure, "shared") &&
         !anyNA(Y) && !isTRUE(opt$measurement_error) && is.null(opt$input_error)
-    use.matrix.normal <- identical(opt$likelihood.engine, "auto") &&
-        complete.separable &&
-        identical(opt$covariance.regularization, "none")
-    use.pruning <- identical(opt$likelihood.engine, "pruning") ||
-        (identical(opt$likelihood.engine, "auto") && !use.matrix.normal &&
-         length(Y) >= 250L)
-    fit <- if(use.matrix.normal){
+    engine.selection <- select_multivariate_likelihood_engine(
+        Y, opt, mean.rank, complete.separable,
+        fixed.alpha=!is.null(fixed.alpha) || isTRUE(opt$fixed.alpha)
+    )
+    fit <- if(identical(engine.selection$selected, "matrix-normal")){
         matrix_normal_ou_fit(tree, Y, design.builder, opt, fixed.alpha)
-    } else if(use.pruning){
+    } else if(identical(engine.selection$selected, "pruning")){
         pruning_multivariate_ou_fit(
             tree, Y, design.builder, opt, fixed.alpha
         )
     } else{
         general_multivariate_ou_fit(tree, Y, design.builder, opt, fixed.alpha)
     }
+    fit$diagnostics$engine.selection <- engine.selection
     final.design <- design.builder(fit$alpha)
     rownames(fit$coefficients) <- colnames(final.design[[1L]])
     colnames(fit$coefficients) <- colnames(Y)
@@ -933,7 +1052,8 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
     colnames(fit$trait.covariance) <- colnames(Y)
     fit$trait.correlation <- stats::cov2cor(fit$trait.covariance)
     fit$tip.trait.covariance <- multivariate_tip_trait_covariance(
-        tree, fit$alpha, fit$trait.covariance, opt$root.model
+        tree, fit$alpha, fit$trait.covariance, opt$root.model,
+        tree.cache=opt$multivariate.tree.cache
     )
     rownames(fit$tip.trait.covariance) <- colnames(Y)
     colnames(fit$tip.trait.covariance) <- colnames(Y)
@@ -1024,6 +1144,7 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
     model.opt <- opt
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
+    model.opt$multivariate.tree.cache <- NULL
     alpha <- rep(as.numeric(fit$alpha), length.out=p)
     names(alpha) <- trait.names
     sigma2 <- diag(fit$trait.covariance)

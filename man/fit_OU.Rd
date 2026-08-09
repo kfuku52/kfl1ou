@@ -24,7 +24,8 @@ fit_OU(
   optimizer.starts = 5,
   compute.hessian = TRUE,
   search.max.nShifts = NULL,
-  l1ou.options = NA
+  l1ou.options = NA,
+  nCores = 1
 )
 }
 \arguments{
@@ -71,6 +72,10 @@ and a localization-aware multivariate pBIC extension.}
 \item{regularization.lambda}{shrinkage intensity in [0,1], or \code{NA}.}
 
 \item{likelihood.engine}{dense, pruning, or automatic likelihood engine.}
+
+\item{nCores}{maximum total CPU budget. Multiple optimization starts use
+fork-based workers when available; nested candidate-search workers keep
+their optimization starts sequential.}
 
 \item{optimizer.starts}{number of deterministic optimization starts.}
 

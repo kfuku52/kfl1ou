@@ -316,10 +316,14 @@ test_that("multivariate fit can parallelize over traits", {
 test_that("parallel candidate search initializes a worker-local score cache once", {
   erase_calls <- 0L
   saved_score_flags <- logical()
+  optimizer_parallel_flags <- logical()
 
   local_mocked_bindings(
     do_backward_correction = function(tree, Y, shift.configuration, opt) {
       saved_score_flags <<- c(saved_score_flags, isTRUE(opt$use.saved.scores))
+      optimizer_parallel_flags <<- c(
+        optimizer_parallel_flags, isTRUE(opt$optimizer.parallel)
+      )
       list(score = length(shift.configuration), shift.configuration = shift.configuration)
     },
     erase_configuration_score_db = function() {
@@ -342,6 +346,7 @@ test_that("parallel candidate search initializes a worker-local score cache once
 
   expect_equal(erase_calls, 1L)
   expect_true(all(saved_score_flags))
+  expect_false(any(optimizer_parallel_flags))
   expect_equal(out$shift.configuration, 1L)
 })
 
