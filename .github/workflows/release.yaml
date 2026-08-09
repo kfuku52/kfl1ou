@@ -141,7 +141,7 @@ jobs:
           Rscript -e 'rcmdcheck::rcmdcheck(commandArgs(TRUE)[1], args = c("--no-manual", "--as-cran"), error_on = "warning")' "$tarball"
           shasum -a 256 "$tarball" > SHA256SUMS
       - name: Attest source package provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: kfl1ou_*.tar.gz
       - name: Upload source artifact
