@@ -4,7 +4,7 @@
 \alias{fit_l1ou_tree_ensemble}
 \title{Repeat shift inference across a phylogenetic tree ensemble}
 \usage{
-fit_l1ou_tree_ensemble(trees, Y, tree.weights = NULL, ...)
+fit_l1ou_tree_ensemble(trees, Y, tree.weights = NULL, nCores = 1L, ...)
 }
 \arguments{
 \item{trees}{non-empty list of phylogenetic trees with the same tip labels.}
@@ -12,6 +12,8 @@ fit_l1ou_tree_ensemble(trees, Y, tree.weights = NULL, ...)
 \item{Y}{trait vector or matrix with row names.}
 
 \item{tree.weights}{optional non-negative weights for the trees.}
+
+\item{nCores}{maximum number of tree fits evaluated concurrently.}
 
 \item{...}{arguments passed to
 \code{\link{estimate_shift_configuration}}.}

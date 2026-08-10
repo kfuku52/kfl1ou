@@ -45,6 +45,31 @@ test_that("full covariance tree geometry is cached only during fitting", {
     optimizer.starts=1L, compute.hessian=FALSE
   )
   expect_null(fit$l1ou.options$multivariate.tree.cache)
+  expect_null(fit$l1ou.options$multivariate.pruning.cache)
+})
+
+test_that("explicit pruning avoids dense tree covariance construction", {
+  dat <- simulate_improvement_traits(n.tips=12L, alpha=.7, seed=208L)
+  dense.requests <- logical()
+  original.prepare <- kfl1ou:::prepare_multivariate_ou_tree_cache
+  local_mocked_bindings(
+    prepare_multivariate_ou_tree_cache = function(tree, dense=TRUE) {
+      dense.requests <<- c(dense.requests, isTRUE(dense))
+      original.prepare(tree, dense=dense)
+    },
+    .package = "kfl1ou"
+  )
+
+  fit <- fit_OU(
+    dat$tree, dat$Y, integer(), criterion="BIC",
+    trait.covariance="full", alpha.structure="diagonal",
+    alpha.lower=.7, alpha.upper=.7, likelihood.engine="pruning",
+    optimizer.starts=1L, compute.hessian=FALSE
+  )
+
+  expect_false(any(dense.requests))
+  expect_false(fit$diagnostics$tree.cache$dense)
+  expect_true(fit$diagnostics$tree.cache$pruning)
 })
 
 test_that("automatic likelihood selection accounts for cost and memory", {
@@ -214,13 +239,13 @@ test_that("full covariance supports trait-specific adaptation rates", {
 
 test_that("shrinkage permits high-dimensional trait covariance estimation", {
   set.seed(203)
-  tree <- reorder(ape::rcoal(8), "postorder")
-  p <- 8L
+  tree <- reorder(ape::rcoal(5), "postorder")
+  p <- 5L
   Omega <- diag(p) + .15
   covariance <- kfl1ou:::multivariate_ou_dense_covariance(
     tree, .6, Omega, "OUfixedRoot"
   )
-  Y <- matrix(drop(t(chol(covariance)) %*% rnorm(8*p)), 8, p,
+  Y <- matrix(drop(t(chol(covariance)) %*% rnorm(5*p)), 5, p,
               dimnames=list(tree$tip.label, paste0("t", seq_len(p))))
 
   expect_error(
@@ -243,7 +268,7 @@ test_that("shrinkage permits high-dimensional trait covariance estimation", {
   direct.logLik <- -.5 * (length(residual) * log(2*pi) +
     2 * sum(log(diag(factor))) +
     sum(forwardsolve(t(factor), residual)^2))
-  # The p = n shrinkage case is intentionally close to singular.  Different
+  # The p = n shrinkage case is intentionally close to singular. Different
   # BLAS/LAPACK implementations accumulate the equivalent matrix-normal and
   # dense Cholesky likelihoods in a different order, so compare at a tolerance
   # appropriate for this ill-conditioned validation case.

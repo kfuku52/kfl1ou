@@ -31,9 +31,9 @@ covariance matrix is re-estimated for every proposed convergent partition.}
 \item{fixed.alpha}{indicates if the alpha parameters should be optimized during likelihood fitting.}
 
 \item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
-then it runs sequentially. Otherwise, when fork-based parallelism is
-available, \code{kfl1ou} may use up to \code{nCores} forked workers via
-\code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
+then it runs sequentially. Otherwise, \code{kfl1ou} may use up to
+\code{nCores} fork workers on Unix-like systems or socket-cluster workers on
+Windows, while BLAS/OpenMP threads are limited when supported so the
 overall computation respects this budget when possible.}
 }
 \description{
@@ -62,8 +62,8 @@ are convergent.
 
 data("lizard.traits", "lizard.tree")
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 Y <- as.matrix(lizard.traits[keep, 1, drop = FALSE])
 ## first fit a model to find individual shifts (no convergence assumed):
 fit_ind <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the current 2.4.x release line and to `main`.
+Security fixes are applied to the current 3.x release line and to `main`.
 Older releases may receive a fix only when the same change can be applied
 safely.
 

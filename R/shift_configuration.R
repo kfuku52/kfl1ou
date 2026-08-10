@@ -120,12 +120,12 @@
 #'bounds, root models, criteria, and bootstrap resampling should be reported.
 #'
 #'\code{nCores} is treated as the total CPU budget for \code{kfl1ou}, not only
-#'as the number of forked worker processes. When \code{nCores > 1} and
-#'fork-based parallelism is available, \code{kfl1ou} may use up to
-#'\code{nCores} workers via \code{mclapply}. In that case BLAS/OpenMP threads
+#'as the number of worker processes. When \code{nCores > 1}, \code{kfl1ou}
+#'may use up to \code{nCores} fork workers on Unix-like systems or socket-cluster
+#'workers on Windows. In that case BLAS/OpenMP threads
 #'are reduced to 1 per process when supported, nested \code{kfl1ou} calls are run
 #'sequentially, and the previous thread settings are restored on exit. On
-#'platforms without fork-based parallelism, \code{kfl1ou} falls back to
+#'platforms without process-based parallelism, \code{kfl1ou} falls back to
 #'sequential execution. For backward compatibility, fitted objects still use
 #'class \code{"l1ou"} and store their options in the \code{l1ou.options}
 #'component.
@@ -133,8 +133,8 @@
 #' 
 #' data(lizard.tree, lizard.traits)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' Y <- lizard.traits[keep, 1]
 #' lizard <- adjust_data(tree, Y)
 #' eModel <- estimate_shift_configuration(
@@ -150,7 +150,7 @@
 #'   eModel.par$nShifts
 #' }
 #'
-#' nEdges <- Nedge(lizard$tree) # total number of edges
+#' nEdges <- ape::Nedge(lizard$tree) # total number of edges
 #' ew <- rep(1, nEdges)  # to set default edge width of 1
 #' if (length(eModel$shift.configuration) > 0) {
 #'   ew[eModel$shift.configuration] <- 3   # widen edges with a shift
@@ -158,7 +158,7 @@
 #' plot(eModel, cex=0.5, label.offset=0.02, edge.width=ew)
 #'
 #' # example to constrain the set of candidate branches with a shift
-#' ce <- seq_len(min(5, Nedge(lizard$tree)))
+#' ce <- seq_len(min(5, ape::Nedge(lizard$tree)))
 #' eModel.ce <- estimate_shift_configuration(
 #'   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, candid.edges=ce
 #' )
@@ -319,8 +319,8 @@ estimate_shift_configuration <- function(tree, Y,
     stopifnot( nCores > 0 )
     parallel.computing <- FALSE
     if(nCores>1){
-        if(!l1ou_supports_multicore()){
-            warning("fork-based parallel execution is unavailable; running sequentially.", immediate=TRUE)
+        if(!l1ou_supports_parallel()){
+            warning("process-based parallel execution is unavailable; running sequentially.", immediate=TRUE)
             nCores <- 1
         }else{
             parallel.computing <- TRUE
@@ -331,12 +331,7 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options                   <- list()
         l1ou.options$nCores             <- nCores
         l1ou.options$parallel.computing <- parallel.computing
-        ##NOTE: The saving_score functions are unprotected. To avoid race,
-        ## I simply disable them in parallel mode until later that I figure out how to fix it.
-        if(parallel.computing)
-            l1ou.options$use.saved.scores  <- FALSE
-        else
-            l1ou.options$use.saved.scores  <- TRUE
+        l1ou.options$use.saved.scores  <- TRUE
 
         l1ou.options$max.nShifts       <- max.nShifts
         l1ou.options$criterion         <- match.arg(criterion)
@@ -392,22 +387,11 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$max.nShifts <- normalize_max_n_shifts(l1ou.options$max.nShifts, tree)
         l1ou.options$input_error <- normalize_input_error(tree, Y, l1ou.options$input_error)
     }
-    l1ou.options <- normalize_shift_search_options(l1ou.options, tree, Y)
-    if(is.null(l1ou.options$tree.scale)){
-        l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
-    }
-    l1ou.options$fixed.alpha <- isTRUE(l1ou.options$fixed.alpha) ||
-        alpha_bounds_are_fixed(
-            l1ou.options$alpha.lower.bound,
-            l1ou.options$alpha.upper.bound
-        )
-    l1ou.options$trait.covariance <- validate_trait_covariance_mode(
-        l1ou.options$trait.covariance, Y, l1ou.options$criterion
+    fit.context <- prepare_l1ou_fit_context(
+        tree, Y, l1ou.options, multivariate.missing
     )
-    l1ou.options <- normalize_multivariate_options(l1ou.options, Y)
-    check_input_error_support(l1ou.options$measurement_error, l1ou.options$input_error)
-    l1ou.options <- initialize_design_cache(tree, l1ou.options)
-    l1ou.options <- initialize_fast_phylolm_cache(tree, l1ou.options)
+    Y <- fit.context$Y
+    l1ou.options <- fit.context$options
 
     thread.limit <- resolve_l1ou_thread_limit(l1ou.options$nCores,
                                               l1ou.options$parallel.computing)
@@ -433,7 +417,9 @@ estimate_shift_configuration <- function(tree, Y,
 
         search <- resolve_shift_search_strategy(tree, l1ou.options)
         l1ou.options$effective.search.strategy <- search$strategy
-        if (l1ou.options$use.saved.scores) { erase_configuration_score_db() }
+        if(l1ou.options$use.saved.scores){
+            erase_configuration_score_cache(l1ou.options$score.cache)
+        }
 
         if(search$strategy == "exhaustive"){
             if(!isTRUE(l1ou.options$quietly)){
@@ -446,7 +432,7 @@ estimate_shift_configuration <- function(tree, Y,
                 tree, Y, configurations, l1ou.options
             )
             cached.profile <- if(l1ou.options$use.saved.scores){
-                list_investigated_configs()
+                list_investigated_configs(l1ou.options$score.cache)
             } else NULL
             if(!is.null(cached.profile) && length(cached.profile$scores)){
                 eModel$profile <- cached.profile
@@ -460,7 +446,9 @@ estimate_shift_configuration <- function(tree, Y,
                 coverage=1,
                 globally.optimal=TRUE
             )
-            if(l1ou.options$use.saved.scores) erase_configuration_score_db()
+            if(l1ou.options$use.saved.scores){
+                erase_configuration_score_cache(l1ou.options$score.cache)
+            }
             return(eModel)
         }
 
@@ -524,7 +512,7 @@ estimate_shift_configuration <- function(tree, Y,
         }
 
         cached.profile <- if(l1ou.options$use.saved.scores){
-            list_investigated_configs()
+            list_investigated_configs(l1ou.options$score.cache)
         } else NULL
         if(!is.null(cached.profile) && length(cached.profile$scores)){
             eModel$profile <- cached.profile
@@ -544,7 +532,9 @@ estimate_shift_configuration <- function(tree, Y,
             globally.optimal=FALSE
         )
 
-        if (l1ou.options$use.saved.scores) { erase_configuration_score_db() }
+        if(l1ou.options$use.saved.scores){
+            erase_configuration_score_cache(l1ou.options$score.cache)
+        }
         if ( !isTRUE(l1ou.options$quietly) &&
              !all(eModel$alpha < (alpha.upper - .Machine$double.eps)) )
 		        warning('estimated alpha is too close to its upper bound. You may want to increase alpha.upper.\n')
@@ -1057,13 +1047,9 @@ make_parallel_candidate_search <- function(tree, Y, opt){
     worker.opt <- opt
     worker.opt$use.saved.scores <- TRUE
     worker.opt$optimizer.parallel <- FALSE
-    cache.initialized <- FALSE
+    worker.opt$score.cache <- new_configuration_score_cache()
 
     function(sc){
-        if(!cache.initialized){
-            erase_configuration_score_db()
-            cache.initialized <<- TRUE
-        }
         do_backward_correction(tree, Y, sc, worker.opt)
     }
 }
@@ -1098,7 +1084,7 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
 #'@param likelihood.engine dense, pruning, or automatic likelihood engine.
 #'@param nCores maximum total CPU budget. Multiple optimization starts use
-#' fork-based workers when available; nested candidate-search workers keep
+#' process-based workers when available; nested candidate-search workers keep
 #' their optimization starts sequential.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param compute.hessian logical; calculate a numerical Hessian when practical.
@@ -1118,8 +1104,8 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #' 
 #' data(lizard.tree, lizard.traits)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' lizard <- adjust_data(tree, lizard.traits[keep, 1])
 #' eModel <- estimate_shift_configuration(
 #'   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2
@@ -1185,9 +1171,9 @@ configuration_ic <- function(tree, Y, shift.configuration,
         nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
         parallel.computing <- FALSE
         if(nCores > 1L){
-            if(!l1ou_supports_multicore()){
+            if(!l1ou_supports_parallel()){
                 warning(
-                    "fork-based parallel execution is unavailable; running sequentially.",
+                    "process-based parallel execution is unavailable; running sequentially.",
                     immediate.=TRUE
                 )
                 nCores <- 1L
@@ -1217,47 +1203,11 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$compute.hessian <- compute.hessian
         opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
-    if( is.null(opt$measurement_error) ){
-        opt$measurement_error <- FALSE
-    }
-    if( is.null(opt$quietly) ){
-        opt$quietly <- TRUE
-    }
-    if( is.null(opt$trait.covariance) ){
-        opt$trait.covariance <- "diagonal"
-    }
-    opt$multivariate.missing <- multivariate.missing
-    opt$tree.list <- if(multivariate.missing) gen_tree_array(tree, Y) else NULL
-    opt <- normalize_shift_search_options(opt, tree, Y)
-    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
-    if(identical(opt$trait.covariance, "full") &&
-       identical(opt$alpha.structure, "diagonal")){
-        alpha.bounds <- sanitize_multivariate_alpha_arguments(
-            opt$alpha.lower.bound, opt$alpha.upper.bound,
-            opt$alpha.starting.value, ncol(Y)
-        )
-        opt$alpha.lower.bound <- alpha.bounds$lower
-        opt$alpha.upper.bound <- alpha.bounds$upper
-        opt$alpha.starting.value <- alpha.bounds$starting
-    } else{
-        alpha.bounds <- sanitize_alpha_bounds(
-            opt$alpha.lower.bound, opt$alpha.upper.bound
-        )
-        opt$alpha.lower.bound <- alpha.bounds$lower
-        opt$alpha.upper.bound <- alpha.bounds$upper
-    }
-    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
-        alpha_bounds_are_fixed(
-            opt$alpha.lower.bound, opt$alpha.upper.bound
-        )
-    opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
-    opt$trait.covariance <- validate_trait_covariance_mode(
-        opt$trait.covariance, Y, opt$criterion
+    fit.context <- prepare_l1ou_fit_context(
+        tree, Y, opt, multivariate.missing
     )
-    opt <- normalize_multivariate_options(opt, Y)
-    check_input_error_support(opt$measurement_error, opt$input_error)
-    opt <- initialize_design_cache(tree, opt)
-    opt <- initialize_fast_phylolm_cache(tree, opt)
+    Y <- fit.context$Y
+    opt <- fit.context$options
 
     thread.limit <- resolve_l1ou_thread_limit(
         opt$nCores, opt$parallel.computing
@@ -1310,7 +1260,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'@param regularization.lambda shrinkage intensity in [0,1], or \code{NA}.
 #'@param likelihood.engine dense, pruning, or automatic likelihood engine.
 #'@param nCores maximum total CPU budget. Multiple optimization starts use
-#' fork-based workers when available; nested candidate-search workers keep
+#' process-based workers when available; nested candidate-search workers keep
 #' their optimization starts sequential.
 #'@param optimizer.starts number of deterministic optimization starts.
 #'@param compute.hessian logical; calculate a numerical Hessian when practical.
@@ -1338,8 +1288,8 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #' 
 #' data(lizard.tree, lizard.traits)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' lizard <- adjust_data(tree, lizard.traits[keep, 1])
 #' eModel <- estimate_shift_configuration(
 #'   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2
@@ -1414,9 +1364,9 @@ fit_OU <- function(tree, Y, shift.configuration,
         nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
         parallel.computing <- FALSE
         if(nCores > 1L){
-            if(!l1ou_supports_multicore()){
+            if(!l1ou_supports_parallel()){
                 warning(
-                    "fork-based parallel execution is unavailable; running sequentially.",
+                    "process-based parallel execution is unavailable; running sequentially.",
                     immediate.=TRUE
                 )
                 nCores <- 1L
@@ -1449,52 +1399,16 @@ fit_OU <- function(tree, Y, shift.configuration,
         } else search.max.nShifts
         opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
-    if( is.null(opt$measurement_error) ){
-        opt$measurement_error <- FALSE
-    }
-    if( is.null(opt$quietly) ){
-        opt$quietly <- TRUE
-    }
-    if( is.null(opt$trait.covariance) ){
-        opt$trait.covariance <- "diagonal"
-    }
     if(is.null(opt$max.nShifts)){
         opt$max.nShifts <- if(is.null(search.max.nShifts)){
             max(1L, length(shift.configuration))
         } else search.max.nShifts
     }
-    opt$multivariate.missing <- multivariate.missing
-    opt$tree.list <- if(multivariate.missing) gen_tree_array(tree, Y) else NULL
-    opt <- normalize_shift_search_options(opt, tree, Y)
-    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
-    if(identical(opt$trait.covariance, "full") &&
-       identical(opt$alpha.structure, "diagonal")){
-        alpha.bounds <- sanitize_multivariate_alpha_arguments(
-            opt$alpha.lower.bound, opt$alpha.upper.bound,
-            opt$alpha.starting.value, ncol(Y)
-        )
-        opt$alpha.lower.bound <- alpha.bounds$lower
-        opt$alpha.upper.bound <- alpha.bounds$upper
-        opt$alpha.starting.value <- alpha.bounds$starting
-    } else{
-        alpha.bounds <- sanitize_alpha_bounds(
-            opt$alpha.lower.bound, opt$alpha.upper.bound
-        )
-        opt$alpha.lower.bound <- alpha.bounds$lower
-        opt$alpha.upper.bound <- alpha.bounds$upper
-    }
-    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
-        alpha_bounds_are_fixed(
-            opt$alpha.lower.bound, opt$alpha.upper.bound
-        )
-    opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
-    opt$trait.covariance <- validate_trait_covariance_mode(
-        opt$trait.covariance, Y, opt$criterion
+    fit.context <- prepare_l1ou_fit_context(
+        tree, Y, opt, multivariate.missing
     )
-    opt <- normalize_multivariate_options(opt, Y)
-    check_input_error_support(opt$measurement_error, opt$input_error)
-    opt <- initialize_design_cache(tree, opt)
-    opt <- initialize_fast_phylolm_cache(tree, opt)
+    Y <- fit.context$Y
+    opt <- fit.context$options
 
     thread.limit <- resolve_l1ou_thread_limit(
         opt$nCores, opt$parallel.computing
@@ -1542,7 +1456,8 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
                     "joint logLik=", signif(model$joint.logLik, 10),
                     "; trait covariance=",
                     paste(signif(as.vector(model$trait.covariance), 6), collapse=" ")
-                )
+                ),
+                cache=opt$score.cache
             )
         }
         return(model)
@@ -1575,8 +1490,18 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
     for(i in seq_len(ncol(Y))){
         fit <- trait.results[[i]]$fit
         if(all(is.na(fit))){
-            stop("model score is NA in fit_OU_model function! 
-		 This should not happen. Please set quietly to false to see the reason.")
+            attempts <- attr(fit, "solver.attempts", exact=TRUE)
+            detail <- if(is.data.frame(attempts) && nrow(attempts)){
+                failed <- attempts[!attempts$ok, , drop=FALSE]
+                if(nrow(failed)) paste0(
+                    " Solver attempts: ",
+                    paste0(failed$solver, ": ", failed$message, collapse="; ")
+                ) else ""
+            } else ""
+            stop(paste0(
+                "all OU likelihood solvers failed for trait ", i, ".",
+                detail
+            ))
         }
 
         s.c <- trait.results[[i]]$s.c
@@ -1660,13 +1585,16 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
         add_configuration_score_to_list(
             shift.configuration,
             score,
-            paste0(c(stationary.variance, score.info$logLik), collapse=" ")
+            paste0(c(stationary.variance, score.info$logLik), collapse=" "),
+            cache=opt$score.cache
         )
     }
     model.opt <- opt
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
     model.opt$multivariate.tree.cache <- NULL
+    model.opt$multivariate.pruning.cache <- NULL
+    model.opt$score.cache <- NULL
 
     continuous.parameter.count <- sum(vapply(
         trait.results, function(x) as.numeric(x$fit$p), numeric(1)
@@ -1693,6 +1621,9 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
                      length(shift.configuration),
                  nobs                = sum(rowSums(!is.na(Y)) > 0L),
                  observed.entries    = sum(!is.na(Y)),
+                 solver.attempts     = lapply(
+                     trait.results, function(result) result$fit$solver.attempts
+                 ),
                  l1ou.options        = model.opt) 
 
     class(model) <- "l1ou"
@@ -1704,7 +1635,9 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
     shift.configuration <- correct_unidentifiability(tree, shift.configuration, opt)
 
     if(opt$use.saved.scores){ ##if it's been already computed
-        score <- get_configuration_score_from_list(shift.configuration)
+        score <- get_configuration_score_from_list(
+            shift.configuration, cache=opt$score.cache
+        )
         if(!is.na(score)){ return(score) }
     }
 
@@ -1721,7 +1654,8 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
             add_configuration_score_to_list(
                 shift.configuration,
                 score,
-                paste0("joint logLik=", signif(fit$logLik, 10))
+                paste0("joint logLik=", signif(fit$logLik, 10)),
+                cache=opt$score.cache
             )
         }
         return(score)
@@ -1748,7 +1682,8 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
     score <- res$score
     if(opt$use.saved.scores){
         add_configuration_score_to_list(shift.configuration, score,
-             paste0(c(res$sigma2/(2*res$alpha),res$logLik),collapse=" "))
+             paste0(c(res$sigma2/(2*res$alpha),res$logLik),collapse=" "),
+             cache=opt$score.cache)
     }
     return(score)
 }
@@ -2032,6 +1967,64 @@ normalize_shift_search_options <- function(opt, tree, Y){
         opt$tree.list <- gen_tree_array(tree, Y)
     }
     opt
+}
+
+
+prepare_l1ou_fit_context <- function(tree, Y, opt,
+                                     multivariate.missing=NULL){
+    Y <- as_l1ou_trait_matrix(Y)
+    if(is.null(multivariate.missing)){
+        multivariate.missing <- validate_fixed_configuration_missingness(Y)
+    }
+    if(is.null(opt$measurement_error)) opt$measurement_error <- FALSE
+    if(is.null(opt$quietly)) opt$quietly <- TRUE
+    if(is.null(opt$trait.covariance)) opt$trait.covariance <- "diagonal"
+
+    opt$multivariate.missing <- isTRUE(multivariate.missing)
+    opt$tree.list <- if(isTRUE(multivariate.missing)){
+        gen_tree_array(tree, Y)
+    } else NULL
+    opt <- normalize_shift_search_options(opt, tree, Y)
+    if(isTRUE(opt$use.saved.scores) && !is.environment(opt$score.cache)){
+        opt$score.cache <- new_configuration_score_cache()
+    }
+    if(!isTRUE(opt$use.saved.scores)) opt$score.cache <- NULL
+    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
+
+    if(identical(opt$trait.covariance, "full") &&
+       identical(opt$alpha.structure, "diagonal")){
+        alpha.bounds <- sanitize_multivariate_alpha_arguments(
+            opt$alpha.lower.bound, opt$alpha.upper.bound,
+            opt$alpha.starting.value, ncol(Y)
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+        opt$alpha.starting.value <- alpha.bounds$starting
+    } else{
+        alpha.bounds <- sanitize_alpha_bounds(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
+        opt$alpha.lower.bound <- alpha.bounds$lower
+        opt$alpha.upper.bound <- alpha.bounds$upper
+    }
+    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
+        alpha_bounds_are_fixed(
+            opt$alpha.lower.bound, opt$alpha.upper.bound
+        )
+    opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
+    opt$trait.covariance <- validate_trait_covariance_mode(
+        opt$trait.covariance, Y, opt$criterion
+    )
+    opt <- normalize_multivariate_options(opt, Y)
+    check_input_error_support(opt$measurement_error, opt$input_error)
+    opt <- initialize_design_cache(tree, opt)
+    opt <- initialize_fast_phylolm_cache(tree, opt)
+    class(opt) <- unique(c("l1ou_options", class(opt)))
+
+    structure(
+        list(tree=tree, Y=Y, options=opt),
+        class="l1ou_fit_context"
+    )
 }
 
 
@@ -2778,13 +2771,13 @@ resolve_l1ou_worker_count <- function(nCores=1L, nTasks=1L){
     if(is.na(nTasks) || nTasks < 1L){
         nTasks <- 1L
     }
-    if(!l1ou_supports_multicore()){
+    if(!l1ou_supports_parallel()){
         return(1L)
     }
     return(min(nCores, nTasks))
 }
 
-l1ou_trait_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
+l1ou_task_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
 
     if(length(X) == 0L){
         return(vector("list", 0L))
@@ -2804,6 +2797,10 @@ l1ou_trait_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
     return(with_l1ou_thread_limit(1L,
         l1ou_mclapply(X=X, FUN=FUN, ..., mc.cores=mc.cores)
     ))
+}
+
+l1ou_trait_apply <- function(X, FUN, opt=list(), allow.parallel=TRUE, ...){
+    l1ou_task_apply(X, FUN, opt=opt, allow.parallel=allow.parallel, ...)
 }
 
 l1ou_optimizer_apply <- function(X, FUN, opt=list(), ...){
@@ -2887,7 +2884,14 @@ initialize_design_cache <- function(tree, opt){
     }
     if(identical(opt$trait.covariance, "full") &&
        is.null(opt$multivariate.tree.cache)){
-        opt$multivariate.tree.cache <- prepare_multivariate_ou_tree_cache(tree)
+        opt$multivariate.tree.cache <- prepare_multivariate_ou_tree_cache(
+            tree, dense=FALSE
+        )
+    }
+    if(identical(opt$trait.covariance, "full") &&
+       is.null(opt$multivariate.pruning.cache)){
+        opt$multivariate.pruning.cache <-
+            prepare_multivariate_pruning_tree_cache(tree)
     }
     if(!is.null(opt$tree.list)){
         opt$tree.list <- lapply(opt$tree.list, function(tr){
@@ -3355,6 +3359,34 @@ cmp_pBIC <- function(tree, Y, shift.configuration, opt){
 my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=FALSE,
                                  alpha=0, input_error=NULL, prepared.tree=NULL){
 
+    solver.attempts <- list()
+    run.solver.attempt <- function(name, task){
+        tryCatch({
+            value <- task()
+            solver.attempts[[length(solver.attempts) + 1L]] <<- list(
+                solver=name, ok=TRUE, message=""
+            )
+            value
+        }, error=function(error){
+            solver.attempts[[length(solver.attempts) + 1L]] <<- list(
+                solver=name, ok=FALSE, message=conditionMessage(error)
+            )
+            NULL
+        })
+    }
+    attach.solver.attempts <- function(fit){
+        attempts <- if(length(solver.attempts)){
+            do.call(rbind, lapply(solver.attempts, as.data.frame,
+                                  stringsAsFactors=FALSE))
+        } else data.frame(solver=character(), ok=logical(), message=character())
+        if(is.list(fit)){
+            fit$solver.attempts <- attempts
+            return(fit)
+        }
+        attr(fit, "solver.attempts") <- attempts
+        fit
+    }
+
     if(recmp.preds){
         Z <- generate_design_matrix(tree, type="orgX", alpha=alpha)
     }else{
@@ -3377,15 +3409,18 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
         zero.error <- stats::setNames(
             numeric(length(tree$tip.label)), tree$tip.label
         )
-        return(dense_known_input_error_gls_fit(
-            tree, Y, preds, model=opt$root.model,
-            lower.bound=0, upper.bound=0, starting.value=0,
-            quietly=opt$quietly, input_error=zero.error,
-            coefficient_names=paste0("preds", seq_len(ncol(preds)))
-        ))
+        fit <- run.solver.attempt("fixed-brownian-dense", function(){
+            dense_known_input_error_gls_fit(
+                tree, Y, preds, model=opt$root.model,
+                lower.bound=0, upper.bound=0, starting.value=0,
+                quietly=opt$quietly, input_error=zero.error,
+                coefficient_names=paste0("preds", seq_len(ncol(preds)))
+            )
+        })
+        if(!is.null(fit)) return(attach.solver.attempts(fit))
     }
     if( can_use_dense_joint_input_error_fit(opt$measurement_error, input_error) ){
-        fit <- try(
+        fit <- run.solver.attempt("dense-joint-measurement-error", function(){
             dense_joint_input_measurement_error_gls_fit(
                 tree,
                 Y,
@@ -3397,15 +3432,12 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
                 quietly = opt$quietly,
                 input_error = input_error,
                 coefficient_names = paste0("preds", seq_len(ncol(preds)))
-            ),
-            silent = opt$quietly
-        )
-        if(!inherits(fit, "try-error")){
-            return(fit)
-        }
+            )
+        })
+        if(!is.null(fit)) return(attach.solver.attempts(fit))
     }
     if( can_use_dense_input_error_fit(opt$measurement_error, input_error) ){
-        fit <- try(
+        fit <- run.solver.attempt("dense-known-input-error", function(){
             dense_known_input_error_gls_fit(
                 tree,
                 Y,
@@ -3417,12 +3449,9 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
                 quietly = opt$quietly,
                 input_error = input_error,
                 coefficient_names = paste0("preds", seq_len(ncol(preds)))
-            ),
-            silent = opt$quietly
-        )
-        if(!inherits(fit, "try-error")){
-            return(fit)
-        }
+            )
+        })
+        if(!is.null(fit)) return(attach.solver.attempts(fit))
     }
 
     if( isFALSE(opt$measurement_error) &&
@@ -3430,11 +3459,10 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
         !recmp.preds &&
         opt$root.model %in% c("OUfixedRoot", "OUrandomRoot") &&
         !is.null(prepared.tree) ){
-        fit <- try(fast_phylolm_ou_fit(prepared.tree, Y, preds, opt),
-                   silent = opt$quietly)
-        if(!inherits(fit, "try-error")){
-            return(fit)
-        }
+        fit <- run.solver.attempt("fast-ou", function(){
+            fast_phylolm_ou_fit(prepared.tree, Y, preds, opt)
+        })
+        if(!is.null(fit)) return(attach.solver.attempts(fit))
     }
 
     prev.val <- getOption("warn")
@@ -3459,16 +3487,18 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
     if( !is.null(input_error) ){
         fit.args$input_error <- input_error
     }
-    fit <- try(do.call(phylolm, fit.args), silent = opt$quietly)
+    fit <- run.solver.attempt("bundled-phylolm", function(){
+        do.call(phylolm, fit.args)
+    })
     options(warn = prev.val )
 
-    if(inherits(fit, "try-error")){
+    if(is.null(fit)){
         if(!opt$quietly){
             warning( paste0( "the OU likelihood solver returned an error with a shift configuration
                             of size ", length(shift.configuration), ". You may
                             want to change alpha.upper/alpha.lower!") )
         }
-        return(NA)
+        return(attach.solver.attempts(NA_real_))
     }
     fixed.alpha <- !is.na(opt$alpha.lower.bound) &&
         !is.na(opt$alpha.upper.bound) &&
@@ -3478,7 +3508,7 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
         fit$p <- max(0L, as.integer(fit$p) - 1L)
         if(!is.null(fit$logLik)) fit$aic <- 2 * fit$p - 2 * fit$logLik
     }
-    return(fit)
+    return(attach.solver.attempts(fit))
 }
 
 

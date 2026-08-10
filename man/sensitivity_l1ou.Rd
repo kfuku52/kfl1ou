@@ -10,7 +10,8 @@ sensitivity_l1ou(
   alpha.upper = NULL,
   criteria = NULL,
   selection = c("conditional", "full"),
-  keep.fits = FALSE
+  keep.fits = FALSE,
+  nCores = 1L
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ sensitivity_l1ou(
 \item{selection}{condition on the fitted shifts or repeat shift discovery.}
 
 \item{keep.fits}{retain successful models in an attribute.}
+
+\item{nCores}{maximum number of sensitivity-grid cells evaluated concurrently.}
 }
 \value{
 Data frame with scores, likelihoods, shift counts, alpha estimates,

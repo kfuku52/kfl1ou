@@ -14,14 +14,17 @@ requests are welcome.
 4. Run the package tests and check generated files:
 
    ```sh
-   Rscript -e 'devtools::test()'
-   Rscript -e 'Rcpp::compileAttributes("."); roxygen2::roxygenise(".")'
-   git diff --exit-code
-   R CMD build .
-   R CMD check --as-cran kfl1ou_*.tar.gz
+   make bootstrap  # first checkout, or after dependency changes
+   make test
+   make generated
+   make metadata
+   make check       # quick local R CMD check
+   make check-full  # before submitting
    ```
 
-5. Update `NEWS.md` when behavior visible to users changes.
+5. Update `NEWS.md` when behavior visible to users changes. Every push must also
+   bump the version in `DESCRIPTION`; `make metadata` checks the corresponding
+   citation, release-notes, and security-policy metadata.
 
 The continuous-integration matrix checks the supported R floor, current R on
 Linux, macOS and Windows, coverage, generated files, dependency changes, and

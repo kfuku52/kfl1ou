@@ -259,30 +259,49 @@ estimate_trait_shrinkage_lambda <- function(
     min(0.95, max(1e-6, lambda))
 }
 
-prepare_multivariate_ou_tree_cache <- function(tree){
-    shared.time <- ape::vcv.phylo(tree)
-    shared.time <- shared.time[tree$tip.label, tree$tip.label, drop=FALSE]
-    dimnames(shared.time) <- NULL
-    tip.time <- diag(shared.time)
+prepare_multivariate_ou_tree_cache <- function(tree, dense=TRUE){
+    n <- length(tree$tip.label)
+    tip.time <- tree_node_depths(tree)[seq_len(n)]
+    shared.time <- NULL
+    if(isTRUE(dense)){
+        shared.time <- ape::vcv.phylo(tree)
+        shared.time <- shared.time[tree$tip.label, tree$tip.label, drop=FALSE]
+        dimnames(shared.time) <- NULL
+        tip.time <- diag(shared.time)
+    }
     list(
         shared.time=shared.time,
         tip.time=tip.time,
-        tip.height=mean(tip.time)
+        tip.height=mean(tip.time),
+        dense=isTRUE(dense)
     )
 }
 
-resolve_multivariate_ou_tree_cache <- function(tree, tree.cache=NULL){
+resolve_multivariate_ou_tree_cache <- function(tree, tree.cache=NULL,
+                                                require.shared=TRUE){
     if(is.null(tree.cache)){
-        return(prepare_multivariate_ou_tree_cache(tree))
+        return(prepare_multivariate_ou_tree_cache(
+            tree, dense=isTRUE(require.shared)
+        ))
     }
     n <- length(tree$tip.label)
     if(!is.list(tree.cache) ||
        !all(c("shared.time", "tip.time", "tip.height") %in% names(tree.cache)) ||
-       !identical(dim(tree.cache$shared.time), c(n, n)) ||
-       length(tree.cache$tip.time) != n){
+       length(tree.cache$tip.time) != n ||
+       (!is.null(tree.cache$shared.time) &&
+        !identical(dim(tree.cache$shared.time), c(n, n)))){
         stop("invalid cached multivariate OU tree geometry.")
     }
+    if(isTRUE(require.shared) && is.null(tree.cache$shared.time)){
+        return(prepare_multivariate_ou_tree_cache(tree, dense=TRUE))
+    }
     tree.cache
+}
+
+ensure_dense_multivariate_ou_tree_cache <- function(tree, tree.cache=NULL){
+    resolve_multivariate_ou_tree_cache(
+        tree, tree.cache=tree.cache, require.shared=TRUE
+    )
 }
 
 multivariate_ou_base_covariance <- function(tree, alpha, root.model,
@@ -377,7 +396,9 @@ multivariate_tip_trait_covariance <- function(tree, alpha, trait.covariance,
         }
         multiplier <- 1 / rates
     } else{
-        tree.cache <- resolve_multivariate_ou_tree_cache(tree, tree.cache)
+        tree.cache <- resolve_multivariate_ou_tree_cache(
+            tree, tree.cache, require.shared=FALSE
+        )
         height <- tree.cache$tip.height
         multiplier[positive] <- -expm1(-rates[positive] * height) /
             rates[positive]
@@ -1035,6 +1056,15 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
         Y, opt, mean.rank, complete.separable,
         fixed.alpha=!is.null(fixed.alpha) || isTRUE(opt$fixed.alpha)
     )
+    requires.dense.tree.cache <-
+        engine.selection$selected %in% c("matrix-normal", "dense") ||
+        (identical(opt$covariance.regularization, "shrinkage") &&
+         is.na(opt$regularization.lambda))
+    if(requires.dense.tree.cache){
+        opt$multivariate.tree.cache <- ensure_dense_multivariate_ou_tree_cache(
+            tree, opt$multivariate.tree.cache
+        )
+    }
     fit <- if(identical(engine.selection$selected, "matrix-normal")){
         matrix_normal_ou_fit(tree, Y, design.builder, opt, fixed.alpha)
     } else if(identical(engine.selection$selected, "pruning")){
@@ -1045,6 +1075,10 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
         general_multivariate_ou_fit(tree, Y, design.builder, opt, fixed.alpha)
     }
     fit$diagnostics$engine.selection <- engine.selection
+    fit$diagnostics$tree.cache <- list(
+        dense=!is.null(opt$multivariate.tree.cache$shared.time),
+        pruning=!is.null(opt$multivariate.pruning.cache)
+    )
     final.design <- design.builder(fit$alpha)
     rownames(fit$coefficients) <- colnames(final.design[[1L]])
     colnames(fit$coefficients) <- colnames(Y)
@@ -1145,6 +1179,8 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
     model.opt$prepared.tree <- NULL
     model.opt$prepared.tree.list <- NULL
     model.opt$multivariate.tree.cache <- NULL
+    model.opt$multivariate.pruning.cache <- NULL
+    model.opt$score.cache <- NULL
     alpha <- rep(as.numeric(fit$alpha), length.out=p)
     names(alpha) <- trait.names
     sigma2 <- diag(fit$trait.covariance)

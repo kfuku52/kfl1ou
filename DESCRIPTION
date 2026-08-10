@@ -1,5 +1,5 @@
 Package: kfl1ou
-Version: 2.5.4
+Version: 3.0.0
 Date: 2026-08-10
 Title: Tools for Detecting Past Changes in the Expected Mean Trait Values and
     Studying Trait Evolution from Comparative Data
@@ -25,9 +25,9 @@ BugReports: https://github.com/kfuku52/kfl1ou/issues
 Encoding: UTF-8
 NeedsCompilation: yes
 Depends:
-    R (>= 4.1.0),
-    ape (>= 4.0)
+    R (>= 4.1.0)
 Imports:
+    ape (>= 4.0),
     Rcpp
 LinkingTo: Rcpp
 Suggests:

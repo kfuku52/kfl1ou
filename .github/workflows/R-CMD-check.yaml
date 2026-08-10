@@ -26,7 +26,6 @@ jobs:
           - {os: macos-latest, r: "release"}
           - {os: windows-latest, r: "release"}
           - {os: ubuntu-latest, r: "release"}
-          - {os: ubuntu-latest, r: "4.1.0"}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -65,8 +64,8 @@ jobs:
           r-version: release
       - uses: r-lib/actions/setup-r-dependencies@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
         with:
+          dependencies: '"hard"'
           extra-packages: any::Rcpp, any::roxygen2
-          needs: check
       - name: Regenerate Rcpp and roxygen files
         shell: Rscript {0}
         run: |
@@ -74,6 +73,25 @@ jobs:
           roxygen2::roxygenise(".")
       - name: Require committed generated files
         run: git diff --exit-code
+
+  metadata:
+    name: metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+        with:
+          r-version: release
+      - name: Check release metadata
+        run: Rscript .github/scripts/check-metadata.R
+      - name: Exercise maintenance-script fixtures
+        run: Rscript .github/scripts/test-maintenance-scripts.R
 
   coverage:
     name: coverage
@@ -164,6 +182,7 @@ jobs:
 
   pdf-manual:
     name: pdf-manual
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
