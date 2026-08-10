@@ -230,7 +230,9 @@ pruning_multivariate_ou_fit <- function(tree, Y, design.builder, opt,
     n <- nrow(Y)
     p <- ncol(Y)
     observed <- !is.na(as.vector(Y))
-    pruning.tree.cache <- prepare_multivariate_pruning_tree_cache(tree)
+    pruning.tree.cache <- resolve_multivariate_pruning_tree_cache(
+        tree, opt$multivariate.pruning.cache
+    )
     bounds <- multivariate_alpha_bounds(tree, opt, fixed.alpha, p)
     initial.alpha <- bounds$start
     initial.design <- design.builder(initial.alpha)

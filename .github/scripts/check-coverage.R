@@ -1,16 +1,11 @@
+source(file.path(".github", "scripts", "ci-helpers.R"), local=TRUE)
+
 coverage <- covr::package_coverage(quiet = FALSE)
 coverage_data <- as.data.frame(coverage)
 
 saveRDS(coverage, "coverage.rds")
 utils::write.csv(coverage_data, "coverage.csv", row.names = FALSE)
 covr::to_cobertura(coverage, filename = "coverage.xml")
-
-coverage_percent <- function(data) {
-  if (!nrow(data)) {
-    return(NA_real_)
-  }
-  100 * mean(data$value > 0)
-}
 
 overall <- as.numeric(covr::percent_coverage(coverage))
 namespace <- trimws(readLines("NAMESPACE", warn=FALSE))
@@ -59,7 +54,11 @@ file_floors <- c(
   "R/rate_heterogeneity.R" = 80,
   "R/model_uncertainty.R" = 79,
   "R/measurement_error.R" = 74,
-  "R/shift_configuration.R" = 80
+  "R/shift_configuration.R" = 80,
+  "R/multivariate_covariance.R" = 85,
+  "R/pruning_likelihood.R" = 75,
+  "R/convergent_regions.R" = 85,
+  "R/model_api.R" = 85
 )
 file_results <- data.frame(
   file = names(file_floors),
@@ -159,10 +158,6 @@ changed_coverage <- function(data, base_sha) {
 patch <- changed_coverage(coverage_data, Sys.getenv("BASE_SHA"))
 overall_floor <- 80.5
 patch_floor <- 80
-
-format_percent <- function(value) {
-  if (is.na(value)) "not applicable" else sprintf("%.2f%%", value)
-}
 
 summary_lines <- c(
   "# Coverage summary",

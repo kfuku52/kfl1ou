@@ -1,3 +1,21 @@
+# kfl1ou 3.0.0
+
+- Move `ape` from `Depends` to `Imports`, so attaching kfl1ou no longer
+  modifies the user's search path; examples now qualify user-facing ape calls.
+- Add reusable fit contexts, request-local configuration-score caches, lazy
+  multivariate tree caches, and shared task execution with socket-cluster
+  support on Windows.
+- Improve optimizer and bootstrap diagnostics while avoiding dense tip-by-tip
+  covariance construction for explicit pruning fits that do not require it.
+- Add a one-command development workflow, dependency bootstrap instructions,
+  metadata consistency checks, CI-script fixtures, relative benchmark
+  regression gates, and extended scheduled benchmarks.
+- Reduce redundant CI work and make documentation, coverage, dependency-audit,
+  benchmark, and release checks use only the dependency sets they require.
+- Shorten the high-dimensional covariance regression fixture while preserving
+  its defining condition, and expand coverage gates around performance-critical
+  likelihood and orchestration code.
+
 # kfl1ou 2.5.4
 
 - Keep CodeQL initialization and analysis on the same pinned release, and
@@ -12,6 +30,11 @@
   CPU budget.
 - Extend the deterministic benchmark gate to cover automatic full-covariance
   fits and tighten the existing exhaustive and ensemble search budgets.
+
+# kfl1ou 2.5.2
+
+- Record and verify release provenance metadata consistently across package,
+  citation, security, and release automation files.
 
 # kfl1ou 2.5.1
 

@@ -63,11 +63,11 @@ The place where the bars start corresponds to the mean of the original trait val
 
 data(lizard.traits, lizard.tree)
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 Y <- lizard.traits[keep, 1]
 eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
-nEdges <- Nedge(tree)
+nEdges <- ape::Nedge(tree)
 ew <- rep(1,nEdges) 
 if (length(eModel$shift.configuration) > 0) {
   ew[eModel$shift.configuration] <- 3

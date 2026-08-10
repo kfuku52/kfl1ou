@@ -30,12 +30,12 @@
 #'@examples
 #'
 #' data(lizard.tree)
-#' example_tree <- drop.tip(
+#' example_tree <- ape::drop.tip(
 #'   lizard.tree,
 #'   lizard.tree$tip.label[-seq_len(15)]
 #' )
 #' res <- sqrt_OU_covariance(example_tree) # alpha not provided: so BM model.
-#' Sigma <- vcv(example_tree)
+#' Sigma <- ape::vcv.phylo(example_tree)
 #' dimnames(Sigma) <- NULL
 #' all.equal(res$sqrtSigma %*% t(res$sqrtSigma), Sigma) # TRUE
 #' all.equal(res$sqrtInvSigma %*% t(res$sqrtInvSigma), solve(Sigma)) # TRUE
@@ -43,7 +43,7 @@
 #' 
 #' ##Here's the example from "Eric A. Stone. 2011." (See references)
 #'
-#' tr <-  read.tree(text="((((Homo:.21,Pongo:.21):.28,Macaca:.49):.13,Ateles:.62):.38,Galago:1);") 
+#' tr <- ape::read.tree(text="((((Homo:.21,Pongo:.21):.28,Macaca:.49):.13,Ateles:.62):.38,Galago:1);")
 #' RE <- sqrt_OU_covariance(tr) 
 #' B <- round( RE$sqrtSigma, digits=3)
 #' D <- round( RE$sqrtInvSigma, digits=3)
@@ -54,8 +54,8 @@
 #' ##Here is the examples on how to get the contrasts using sqrt_OU_covariance
 #' data(lizard.tree, lizard.traits)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' lizard <- adjust_data(tree, lizard.traits[keep, 1])
 #' eModel <- fit_OU(lizard$tree, lizard$Y, shift.configuration=1L, criterion="AICc")
 #' theta <- eModel$intercept + convert_shifts2regions(eModel$tree,
@@ -68,7 +68,7 @@
 #' # `covInverseSqrtf` is the transposed square root of the inverse
 #' # covariance matrix for the fixed-root model.
 #' # `covSqrtf` represents the square root of the covariance matrix for FixedRoot model.
-#'  Y  <- rTraitCont(eModel$tree, "OU", theta=theta,
+#'  Y  <- ape::rTraitCont(eModel$tree, "OU", theta=theta,
 #'                                      alpha=eModel$alpha,
 #'                                      sigma=sqrt(eModel$sigma2), root.value=eModel$intercept)
 #'  contrast    <-  covInverseSqrtf%*%(Y - eModel$mu)

@@ -17,16 +17,20 @@ later (`GPL (>= 3)` in `DESCRIPTION`). The full license text is available in
 [LICENSE](LICENSE), and provenance notes for this fork are summarized in
 [NOTICE](NOTICE).
 
-## Install using the devtools package
+## Install from GitHub
+
 From within R:
 ```r
-install.packages("devtools")
-library(devtools)
-install_github("kfuku52/kfl1ou")
+install.packages("pak")
+pak::pkg_install("kfuku52/kfl1ou")
 ```
 Windows users will first need to install [Rtools](https://cran.r-project.org/bin/windows/Rtools/).
 
-## Install without the devtools package
+For a development checkout, clone the repository and run `make bootstrap` once;
+the contributor workflow then provides `make test`, `make check`, and
+`make check-full`.
+
+## Install without pak
 
 To resolve hard dependencies, first install the following packages from CRAN.
 From within R:

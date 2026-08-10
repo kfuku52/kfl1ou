@@ -1,23 +1,4 @@
-dependency.fields <- c("Depends", "Imports", "LinkingTo", "Suggests", "Enhances")
-
-description.field <- function(description, field) {
-  if(field %in% names(description)) description[[field]] else NULL
-}
-
-parse.dependencies <- function(value) {
-  if(is.null(value) || !length(value) || is.na(value) || !nzchar(value)){
-    return(character())
-  }
-  entries <- trimws(unlist(strsplit(value, ",", fixed=TRUE)))
-  packages <- trimws(sub("\\s*\\(.*$", "", entries))
-  sort(unique(setdiff(packages[nzchar(packages)], "R")))
-}
-
-description.dependencies <- function(description, fields=dependency.fields) {
-  sort(unique(unlist(lapply(fields, function(field) {
-    parse.dependencies(description.field(description, field))
-  }))))
-}
+source(file.path(".github", "scripts", "ci-helpers.R"), local=TRUE)
 
 project.description <- read.dcf("DESCRIPTION")[1, , drop=TRUE]
 direct.dependencies <- description.dependencies(as.list(project.description))
@@ -156,14 +137,7 @@ serialized.bom <- jsonlite::fromJSON(
   "r-dependency-sbom.cdx.json",
   simplifyVector=FALSE
 )
-invalid.dependency.arrays <- vapply(
-  serialized.bom$dependencies,
-  function(dependency) !is.list(dependency$dependsOn),
-  logical(1)
-)
-if(any(invalid.dependency.arrays)){
-  stop("CycloneDX dependsOn values must serialize as JSON arrays.", call.=FALSE)
-}
+validate_cyclonedx_bom(serialized.bom)
 
 queries <- lapply(records, function(record) {
   list(
@@ -171,7 +145,7 @@ queries <- lapply(records, function(record) {
     version=record$version
   )
 })
-query.osv.batch <- function(batch.queries) {
+query.osv.batch <- function(batch.queries, attempts=3L) {
   payload <- jsonlite::toJSON(
     list(queries=unname(batch.queries)),
     auto_unbox=TRUE,
@@ -182,15 +156,24 @@ query.osv.batch <- function(batch.queries) {
     httpheader=c("Content-Type"="application/json"),
     timeout=60
   )
-  response <- curl::curl_fetch_memory(
-    "https://api.osv.dev/v1/querybatch",
-    handle=handle
-  )
-  if(response$status_code != 200L){
-    stop(
-      "OSV query failed with HTTP status ", response$status_code,
-      call.=FALSE
+  last.error <- NULL
+  response <- NULL
+  for(attempt in seq_len(attempts)){
+    response <- tryCatch(
+      curl::curl_fetch_memory(
+        "https://api.osv.dev/v1/querybatch", handle=handle
+      ),
+      error=function(error){
+        last.error <<- conditionMessage(error)
+        NULL
+      }
     )
+    if(!is.null(response) && response$status_code == 200L) break
+    if(!is.null(response)) last.error <- paste("HTTP status", response$status_code)
+    if(attempt < attempts) Sys.sleep(attempt)
+  }
+  if(is.null(response) || response$status_code != 200L){
+    stop("OSV batch query failed: ", last.error, call.=FALSE)
   }
   result <- jsonlite::fromJSON(
     rawToChar(response$content),
@@ -202,44 +185,7 @@ query.osv.batch <- function(batch.queries) {
   result$results
 }
 
-osv.results <- rep(list(list(vulns=list())), length(queries))
-pending.indices <- seq_along(queries)
-pending.queries <- queries
-seen.tokens <- rep(list(character()), length(queries))
-page.round <- 0L
-while(length(pending.indices)){
-  page.round <- page.round + 1L
-  if(page.round > 100L){
-    stop("OSV pagination exceeded 100 rounds.", call.=FALSE)
-  }
-  page.results <- query.osv.batch(pending.queries)
-  next.indices <- integer()
-  next.queries <- list()
-  for(batch.index in seq_along(page.results)){
-    record.index <- pending.indices[[batch.index]]
-    page <- page.results[[batch.index]]
-    page.vulnerabilities <- if(is.null(page$vulns)) list() else page$vulns
-    osv.results[[record.index]]$vulns <- c(
-      osv.results[[record.index]]$vulns,
-      page.vulnerabilities
-    )
-    token <- page$next_page_token
-    if(!is.null(token) && length(token) == 1L && nzchar(token)){
-      if(token %in% seen.tokens[[record.index]]){
-        stop("OSV returned a repeated pagination token.", call.=FALSE)
-      }
-      seen.tokens[[record.index]] <- c(
-        seen.tokens[[record.index]], token
-      )
-      next.indices <- c(next.indices, record.index)
-      next.query <- queries[[record.index]]
-      next.query$page_token <- token
-      next.queries[[length(next.queries) + 1L]] <- next.query
-    }
-  }
-  pending.indices <- next.indices
-  pending.queries <- next.queries
-}
+osv.results <- collect_osv_pages(queries, query.osv.batch)
 
 vulnerability.ids <- sort(unique(unlist(lapply(osv.results, function(result) {
   vulnerabilities <- result$vulns

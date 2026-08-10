@@ -8,6 +8,7 @@ on:
     paths:
       - DESCRIPTION
       - .github/scripts/audit-r-dependencies.R
+      - .github/scripts/ci-helpers.R
       - .github/workflows/r-dependency-audit.yaml
   schedule:
     - cron: "23 3 * * 1"

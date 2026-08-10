@@ -209,6 +209,7 @@ test_that("bootstrap validates arguments and falls back from unsupported forks",
 
   local_mocked_bindings(
     l1ou_supports_multicore = function() FALSE,
+    l1ou_supports_socket_cluster = function() FALSE,
     estimate_shift_configuration = function(...) {
       list(shift.configuration = integer())
     },

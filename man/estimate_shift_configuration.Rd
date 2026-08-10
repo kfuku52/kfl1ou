@@ -194,12 +194,12 @@ rates can remain weakly identified from tip data alone; sensitivity to alpha
 bounds, root models, criteria, and bootstrap resampling should be reported.
 
 \code{nCores} is treated as the total CPU budget for \code{kfl1ou}, not only
-as the number of forked worker processes. When \code{nCores > 1} and
-fork-based parallelism is available, \code{kfl1ou} may use up to
-\code{nCores} workers via \code{mclapply}. In that case BLAS/OpenMP threads
+as the number of worker processes. When \code{nCores > 1}, \code{kfl1ou}
+may use up to \code{nCores} fork workers on Unix-like systems or socket-cluster
+workers on Windows. In that case BLAS/OpenMP threads
 are reduced to 1 per process when supported, nested \code{kfl1ou} calls are run
 sequentially, and the previous thread settings are restored on exit. On
-platforms without fork-based parallelism, \code{kfl1ou} falls back to
+platforms without process-based parallelism, \code{kfl1ou} falls back to
 sequential execution. For backward compatibility, fitted objects still use
 class \code{"l1ou"} and store their options in the \code{l1ou.options}
 component.
@@ -208,8 +208,8 @@ component.
 
 data(lizard.tree, lizard.traits)
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 Y <- lizard.traits[keep, 1]
 lizard <- adjust_data(tree, Y)
 eModel <- estimate_shift_configuration(
@@ -225,7 +225,7 @@ if (interactive()) {
   eModel.par$nShifts
 }
 
-nEdges <- Nedge(lizard$tree) # total number of edges
+nEdges <- ape::Nedge(lizard$tree) # total number of edges
 ew <- rep(1, nEdges)  # to set default edge width of 1
 if (length(eModel$shift.configuration) > 0) {
   ew[eModel$shift.configuration] <- 3   # widen edges with a shift
@@ -233,7 +233,7 @@ if (length(eModel$shift.configuration) > 0) {
 plot(eModel, cex=0.5, label.offset=0.02, edge.width=ew)
 
 # example to constrain the set of candidate branches with a shift
-ce <- seq_len(min(5, Nedge(lizard$tree)))
+ce <- seq_len(min(5, ape::Nedge(lizard$tree)))
 eModel.ce <- estimate_shift_configuration(
   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2, candid.edges=ce
 )

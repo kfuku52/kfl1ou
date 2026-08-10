@@ -139,6 +139,27 @@ test_that("configuration score storage rejects NaN and remains ordered", {
   )
 })
 
+test_that("request-local configuration score caches are isolated", {
+  first <- kfl1ou:::new_configuration_score_cache()
+  second <- kfl1ou:::new_configuration_score_cache()
+
+  kfl1ou:::add_configuration_score_to_list(c(3L, 1L), 2, "first", first)
+  kfl1ou:::add_configuration_score_to_list(integer(), 1, "empty", first)
+  kfl1ou:::add_configuration_score_to_list(c(1L, 3L), 4, "second", second)
+
+  expect_equal(kfl1ou:::get_configuration_score_from_list(c(1L, 3L), first), 2)
+  expect_equal(kfl1ou:::get_configuration_score_from_list(c(1L, 3L), second), 4)
+  expect_true(is.na(kfl1ou:::get_configuration_score_from_list(integer(), second)))
+  expect_equal(
+    kfl1ou:::list_investigated_configs(first)$configurations,
+    list(c(1L, 3L), integer())
+  )
+
+  kfl1ou:::erase_configuration_score_cache(first)
+  expect_length(kfl1ou:::list_investigated_configs(first)$scores, 0L)
+  expect_equal(kfl1ou:::get_configuration_score_from_list(c(1L, 3L), second), 4)
+})
+
 test_that("covariance kernel preserves its input edge matrix", {
   edge_list <- cbind(
     ancestor = c(3, 3, 4, 4),

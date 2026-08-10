@@ -264,7 +264,7 @@ test_that("all explicit candidate edges reach the univariate sparse path", {
   suppressWarnings(estimate_shift_configuration(
     dat$tree, dat$Y,
     max.nShifts=1L,
-    candid.edges=seq_len(Nedge(dat$tree)),
+    candid.edges=seq_len(ape::Nedge(dat$tree)),
     search.strategy="lasso",
     ensemble.replicates=0L,
     optimizer.starts=1L,
@@ -273,7 +273,7 @@ test_that("all explicit candidate edges reach the univariate sparse path", {
   ))
 
   expect_gt(length(seen), 0L)
-  expect_true(all(seen == Nedge(dat$tree)))
+  expect_true(all(seen == ape::Nedge(dat$tree)))
 })
 
 

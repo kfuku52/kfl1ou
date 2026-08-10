@@ -313,22 +313,19 @@ test_that("multivariate fit can parallelize over traits", {
   expect_gte(calls, 1L)
 })
 
-test_that("parallel candidate search initializes a worker-local score cache once", {
-  erase_calls <- 0L
+test_that("parallel candidate search uses a request-local score cache", {
   saved_score_flags <- logical()
   optimizer_parallel_flags <- logical()
+  worker.caches <- list()
 
   local_mocked_bindings(
     do_backward_correction = function(tree, Y, shift.configuration, opt) {
       saved_score_flags <<- c(saved_score_flags, isTRUE(opt$use.saved.scores))
+      worker.caches[[length(worker.caches) + 1L]] <<- opt$score.cache
       optimizer_parallel_flags <<- c(
         optimizer_parallel_flags, isTRUE(opt$optimizer.parallel)
       )
       list(score = length(shift.configuration), shift.configuration = shift.configuration)
-    },
-    erase_configuration_score_db = function() {
-      erase_calls <<- erase_calls + 1L
-      invisible(NULL)
     },
     l1ou_mclapply = function(X, FUN, ..., mc.cores = 1L) {
       lapply(X, FUN, ...)
@@ -344,15 +341,30 @@ test_that("parallel candidate search initializes a worker-local score cache once
     opt = opt
   )
 
-  expect_equal(erase_calls, 1L)
   expect_true(all(saved_score_flags))
+  expect_true(all(vapply(worker.caches, is.environment, logical(1))))
+  expect_identical(worker.caches[[1L]], worker.caches[[2L]])
   expect_false(any(optimizer_parallel_flags))
   expect_equal(out$shift.configuration, 1L)
 })
 
+test_that("task execution can use socket workers without fork support", {
+  skip_if_not(kfl1ou:::l1ou_supports_socket_cluster())
+  local_mocked_bindings(
+    l1ou_supports_multicore = function() FALSE,
+    .package = "kfl1ou"
+  )
+
+  result <- kfl1ou:::l1ou_mclapply(
+    1:3, function(value, increment) value + increment,
+    increment=2, mc.cores=2L
+  )
+  expect_equal(unlist(result), 3:5)
+})
+
 test_that("candidate collection orders repeated shifts by numeric frequency", {
   dat <- small_lizard_data(n_tips = 12, traits = 1:2)
-  n_edges <- Nedge(dat$tree)
+  n_edges <- ape::Nedge(dat$tree)
   n_traits <- ncol(dat$Y)
   n_solutions <- 12L
   coeffs <- matrix(0, nrow = n_edges * n_traits, ncol = n_solutions)

@@ -253,7 +253,7 @@ compare_trait_covariance <- function(
             }
             list(value=value, error=error.message)
         }
-        records <- if(nCores > 1L && l1ou_supports_multicore()){
+        records <- if(nCores > 1L && l1ou_supports_parallel()){
             with_l1ou_thread_limit(1L, l1ou_mclapply(
                 seq_along(simulations), one.replicate, mc.cores=nCores
             ))
@@ -485,10 +485,11 @@ print.l1ou_shift_uncertainty <- function(x, ...){
 #'@param model fitted \code{"l1ou"} object containing a search profile.
 #'@param delta.max largest score difference retained from the best model.
 #'@param max.models optional cap on the number of retained models.
+#'@param nCores maximum number of model refits evaluated concurrently.
 #'@return A list containing normalized weights, refitted models, averaged tip
 #' means and optima, averaged process parameters, and edge-inclusion weights.
 #'@export
-model_average_l1ou <- function(model, delta.max=10, max.models=Inf){
+model_average_l1ou <- function(model, delta.max=10, max.models=Inf, nCores=1L){
     check_l1ou_object(model)
     if(isTRUE(model$convergent)){
         stop(paste0(
@@ -505,6 +506,7 @@ model_average_l1ou <- function(model, delta.max=10, max.models=Inf){
         (max.models < 1 || max.models != floor(max.models)))){
         stop("max.models must be at least one or Inf.")
     }
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
     profile <- model$profile
     if(is.null(profile) || is.null(profile$scores) ||
        is.null(profile$configurations)){
@@ -532,20 +534,19 @@ model_average_l1ou <- function(model, delta.max=10, max.models=Inf){
     }
     opt <- make_nested_l1ou_options(model$l1ou.options)
     opt$use.saved.scores <- FALSE
-    failure.messages <- character(length(configurations))
-    fits <- lapply(seq_along(configurations), function(i){
+    records <- l1ou_task_apply(seq_along(configurations), function(i){
         configuration <- configurations[[i]]
         tryCatch(
-            fit_OU(
-                model$tree, model$Y, configuration,
-                l1ou.options=opt
-            ),
+            list(fit=fit_OU(
+                model$tree, model$Y, configuration, l1ou.options=opt
+            ), error=""),
             error=function(e){
-                failure.messages[[i]] <<- conditionMessage(e)
-                NULL
+                list(fit=NULL, error=conditionMessage(e))
             }
         )
-    })
+    }, opt=list(nCores=nCores))
+    fits <- lapply(records, `[[`, "fit")
+    failure.messages <- vapply(records, `[[`, character(1), "error")
     successful <- !vapply(fits, is.null, logical(1))
     if(!any(successful)) stop("all candidate-model refits failed.")
     fits <- fits[successful]
@@ -643,13 +644,15 @@ print.l1ou_model_average <- function(x, ...){
 #'@param trees non-empty list of phylogenetic trees with the same tip labels.
 #'@param Y trait vector or matrix with row names.
 #'@param tree.weights optional non-negative weights for the trees.
+#'@param nCores maximum number of tree fits evaluated concurrently.
 #'@param ... arguments passed to
 #' \code{\link{estimate_shift_configuration}}.
 #'@return A tree-ensemble object containing fits, partition weights, mean tip
 #' co-assignment probabilities, pairwise adjusted Rand indices, and the number
 #' of zero-weight trees excluded before fitting.
 #'@export
-fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
+fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL,
+                                   nCores=1L, ...){
     if(inherits(trees, "phylo")) trees <- list(trees)
     if(!is.list(trees) || !length(trees)){
         stop("trees must be a non-empty list of phylogenetic trees.")
@@ -673,21 +676,29 @@ fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL, ...){
         stop("tree.weights must be finite, non-negative, and have positive sum.")
     }
     tree.weights <- tree.weights / total.weight
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
     active <- which(tree.weights > 0)
     excluded.zero.weight <- length(trees) - length(active)
-    errors <- character(length(active))
-    fits <- lapply(seq_along(active), function(j){
+    arguments <- list(...)
+    records <- l1ou_task_apply(seq_along(active), function(j){
         i <- active[[j]]
         tree <- reorder(trees[[i]], "postorder")
         response <- Y[tree$tip.label, , drop=FALSE]
         tryCatch(
-            estimate_shift_configuration(tree, response, ...),
+            list(
+                fit=do.call(
+                    estimate_shift_configuration,
+                    c(list(tree=tree, Y=response), arguments)
+                ),
+                error=""
+            ),
             error=function(e){
-                errors[[j]] <<- conditionMessage(e)
-                NULL
+                list(fit=NULL, error=conditionMessage(e))
             }
         )
-    })
+    }, opt=list(nCores=nCores))
+    fits <- lapply(records, `[[`, "fit")
+    errors <- vapply(records, `[[`, character(1), "error")
     successful <- !vapply(fits, is.null, logical(1))
     if(!any(successful)){
         stop("shift inference failed on every positive-weight tree.")
@@ -759,6 +770,7 @@ print.l1ou_tree_ensemble <- function(x, ...){
 #'@param criteria information criteria to compare.
 #'@param selection condition on the fitted shifts or repeat shift discovery.
 #'@param keep.fits retain successful models in an attribute.
+#'@param nCores maximum number of sensitivity-grid cells evaluated concurrently.
 #'@return Data frame with scores, likelihoods, shift counts, alpha estimates,
 #' and errors for every sensitivity-grid cell.
 #'@export
@@ -768,9 +780,11 @@ sensitivity_l1ou <- function(
         alpha.upper=NULL,
         criteria=NULL,
         selection=c("conditional", "full"),
-        keep.fits=FALSE){
+        keep.fits=FALSE,
+        nCores=1L){
     check_l1ou_object(model)
     selection <- match.arg(selection)
+    nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
     root.models <- match.arg(
         root.models, c("OUfixedRoot", "OUrandomRoot"), several.ok=TRUE
     )
@@ -797,9 +811,7 @@ sensitivity_l1ou <- function(
         criterion=criteria,
         stringsAsFactors=FALSE
     )
-    fits <- vector("list", nrow(grid))
-    errors <- character(nrow(grid))
-    for(i in seq_len(nrow(grid))){
+    records <- l1ou_task_apply(seq_len(nrow(grid)), function(i){
         common <- list(
             tree=model$tree,
             Y=model$Y,
@@ -816,8 +828,8 @@ sensitivity_l1ou <- function(
             optimizer.starts=model$l1ou.options$optimizer.starts,
             compute.hessian=FALSE
         )
-        fits[[i]] <- tryCatch({
-            if(selection == "full"){
+        tryCatch({
+            fit <- if(selection == "full"){
                 do.call(
                     estimate_shift_configuration,
                     c(common, list(
@@ -834,11 +846,13 @@ sensitivity_l1ou <- function(
                     ))
                 )
             }
+            list(fit=fit, error="")
         }, error=function(e){
-            errors[[i]] <<- conditionMessage(e)
-            NULL
+            list(fit=NULL, error=conditionMessage(e))
         })
-    }
+    }, opt=list(nCores=nCores))
+    fits <- lapply(records, `[[`, "fit")
+    errors <- vapply(records, `[[`, character(1), "error")
     result <- transform(
         grid,
         score=vapply(fits, function(fit){

@@ -4,7 +4,7 @@
 \alias{model_average_l1ou}
 \title{Information-criterion model averaging over evaluated shift configurations}
 \usage{
-model_average_l1ou(model, delta.max = 10, max.models = Inf)
+model_average_l1ou(model, delta.max = 10, max.models = Inf, nCores = 1L)
 }
 \arguments{
 \item{model}{fitted \code{"l1ou"} object containing a search profile.}
@@ -12,6 +12,8 @@ model_average_l1ou(model, delta.max = 10, max.models = Inf)
 \item{delta.max}{largest score difference retained from the best model.}
 
 \item{max.models}{optional cap on the number of retained models.}
+
+\item{nCores}{maximum number of model refits evaluated concurrently.}
 }
 \value{
 A list containing normalized weights, refitted models, averaged tip

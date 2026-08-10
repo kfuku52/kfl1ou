@@ -843,12 +843,59 @@ l1ou_supports_multicore <- function(){
     return(.Platform$OS.type != "windows" && requireNamespace("parallel", quietly=TRUE))
 }
 
+l1ou_supports_socket_cluster <- function(){
+    requireNamespace("parallel", quietly=TRUE)
+}
+
+l1ou_supports_parallel <- function(){
+    l1ou_supports_multicore() || l1ou_supports_socket_cluster()
+}
+
 l1ou_mclapply <- function(X, FUN, ..., mc.cores=1L){
-    if( mc.cores <= 1L || !l1ou_supports_multicore() ){
+    if(mc.cores <= 1L){
         return(lapply(X, FUN, ...))
     }
-    parallel_mclapply <- getFromNamespace("mclapply", "parallel")
-    return(parallel_mclapply(X=X, FUN=FUN, ..., mc.cores=mc.cores))
+    if(l1ou_supports_multicore()){
+        parallel_mclapply <- getFromNamespace("mclapply", "parallel")
+        return(parallel_mclapply(X=X, FUN=FUN, ..., mc.cores=mc.cores))
+    }
+    if(!l1ou_supports_socket_cluster()) return(lapply(X, FUN, ...))
+
+    cluster <- tryCatch(
+        parallel::makePSOCKcluster(mc.cores),
+        error=function(error) error
+    )
+    if(inherits(cluster, "error")){
+        warning(
+            "socket-cluster startup failed; running sequentially: ",
+            conditionMessage(cluster), call.=FALSE
+        )
+        return(lapply(X, FUN, ...))
+    }
+    on.exit(parallel::stopCluster(cluster), add=TRUE)
+    loaded <- tryCatch(
+        parallel::clusterCall(cluster, function(){
+            loadNamespace("kfl1ou")
+            TRUE
+        }),
+        error=function(error) error
+    )
+    if(inherits(loaded, "error")){
+        warning(
+            "socket-cluster initialization failed; running sequentially: ",
+            conditionMessage(loaded), call.=FALSE
+        )
+        return(lapply(X, FUN, ...))
+    }
+    dots <- list(...)
+    parallel::parLapply(
+        cluster, X,
+        function(value, task, arguments){
+            do.call(task, c(list(value), arguments))
+        },
+        task=FUN,
+        arguments=dots
+    )
 }
 
 l1ou_require_genlasso <- function(){
@@ -903,34 +950,73 @@ gen_tree_array <- function(tree, Y){
     return(tree.list)
 }
 
-add_configuration_score_to_list  <- function(shift.configuration, score, moreInfo){
-    shift.configuration = sort(shift.configuration)
-    add_configuration_score_to_db( paste0(shift.configuration, collapse=" "), 
-                                  score, moreInfo )
+new_configuration_score_cache <- function(){
+    cache <- new.env(parent=emptyenv())
+    cache$keys <- character()
+    cache$values <- list()
+    cache
 }
 
-get_configuration_score_from_list <- function(shift.configuration){
-    if(length(shift.configuration) > 0){
-        shift.configuration <- sort(shift.configuration)
-    }
-    res <- get_score_of_configuration(paste0(shift.configuration, collapse=" "))
-    if( res$valid == FALSE){
-        return(NA)
-    }
-    return(res$value)
+configuration_score_key <- function(shift.configuration){
+    paste0(sort(as.integer(shift.configuration)), collapse=" ")
 }
 
-list_investigated_configs <- function(){
-    tmpList = get_stored_config_score()
-    c.s = list()
-    c.s$scores = tmpList$scores
-    c.s$configurations = lapply(tmpList$configurations, 
-                                FUN=function(x) as.numeric(unlist(strsplit(x, split=" ")) ) ) 
-    #for( i in 1:length(c.s$scores)){
-    #    c.s$configurations[[i]] = as.numeric(unlist(strsplit(tmpList$configurations[[i]], split=" ")) )
-    #    #c.s$moreInfo      [[i]] = as.numeric(unlist(strsplit(tmpList$moreInfo      [[i]], split=" ")) )
-    #}
-    return(c.s)
+erase_configuration_score_cache <- function(cache){
+    if(!is.environment(cache)) stop("invalid configuration score cache.")
+    cache$keys <- character()
+    cache$values <- list()
+    invisible(NULL)
+}
+
+add_configuration_score_to_list <- function(shift.configuration, score,
+                                             moreInfo, cache=NULL){
+    key <- configuration_score_key(shift.configuration)
+    if(is.null(cache)){
+        return(add_configuration_score_to_db(key, score, moreInfo))
+    }
+    if(!is.environment(cache)) stop("invalid configuration score cache.")
+    if(length(score) != 1L || is.na(score)){
+        stop("configuration score cannot be NA or NaN.")
+    }
+    index <- match(key, cache$keys)
+    entry <- list(score=as.numeric(score), moreInfo=as.character(moreInfo))
+    if(is.na(index)){
+        cache$keys <- c(cache$keys, key)
+        cache$values[[length(cache$values) + 1L]] <- entry
+    } else{
+        cache$values[[index]] <- entry
+    }
+    invisible(NULL)
+}
+
+get_configuration_score_from_list <- function(shift.configuration, cache=NULL){
+    key <- configuration_score_key(shift.configuration)
+    if(is.null(cache)){
+        res <- get_score_of_configuration(key)
+        if(!isTRUE(res$valid)) return(NA_real_)
+        return(res$value)
+    }
+    if(!is.environment(cache)) stop("invalid configuration score cache.")
+    index <- match(key, cache$keys)
+    if(is.na(index)) return(NA_real_)
+    cache$values[[index]]$score
+}
+
+list_investigated_configs <- function(cache=NULL){
+    if(is.null(cache)){
+        stored <- get_stored_config_score()
+        keys <- stored$configurations
+        scores <- stored$scores
+    } else{
+        if(!is.environment(cache)) stop("invalid configuration score cache.")
+        keys <- cache$keys
+        scores <- vapply(cache$values, `[[`, numeric(1), "score")
+    }
+    configurations <- lapply(keys, function(key){
+        if(!nzchar(key)) return(integer())
+        as.integer(strsplit(key, " ", fixed=TRUE)[[1L]])
+    })
+    list(scores=scores, configurations=configurations)
 }
 
 print_out <- function(eModel, quietly){
@@ -1312,11 +1398,11 @@ half_life_to_alpha <- function(half.life){
 #' 
 #' data(lizard.traits, lizard.tree)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' Y <- lizard.traits[keep, 1]
 #' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
-#' nEdges <- Nedge(tree)
+#' nEdges <- ape::Nedge(tree)
 #' ew <- rep(1,nEdges) 
 #' if (length(eModel$shift.configuration) > 0) {
 #'   ew[eModel$shift.configuration] <- 3
@@ -1526,8 +1612,8 @@ plot.restored_l1ou <- function(x, ...){
 #' 
 #' data(lizard.traits, lizard.tree)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' Y <- lizard.traits[keep, 1]
 #' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 #' model.profile  <- profile(eModel)
@@ -1614,8 +1700,8 @@ get_shift_configuration <- function(model, nShifts){
 #' 
 #' data(lizard.traits, lizard.tree)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' Y <- lizard.traits[keep, 1]
 #' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 #' summary(eModel)

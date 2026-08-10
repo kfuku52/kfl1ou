@@ -1268,9 +1268,9 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'  covariance matrix is re-estimated for every proposed convergent partition.
 #'@param fixed.alpha indicates if the alpha parameters should be optimized during likelihood fitting.
 #'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
-#' then it runs sequentially. Otherwise, when fork-based parallelism is
-#' available, \code{kfl1ou} may use up to \code{nCores} forked workers via
-#' \code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
+#' then it runs sequentially. Otherwise, \code{kfl1ou} may use up to
+#' \code{nCores} fork workers on Unix-like systems or socket-cluster workers on
+#' Windows, while BLAS/OpenMP threads are limited when supported so the
 #' overall computation respects this budget when possible.
 #'
 #'@details \code{nCores} follows the same total-budget semantics as in
@@ -1293,8 +1293,8 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #' 
 #'data("lizard.traits", "lizard.tree")
 #'keep <- lizard.tree$tip.label[1:15]
-#'tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#'tree <- reorder(tree, "postorder")
+#'tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#'tree <- ape::reorder.phylo(tree, "postorder")
 #'Y <- as.matrix(lizard.traits[keep, 1, drop = FALSE])
 #' ## first fit a model to find individual shifts (no convergence assumed):
 #'fit_ind <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
@@ -1344,8 +1344,8 @@ estimate_convergent_regimes  <-  function(model,
     opt$nCores <- nCores
     opt$parallel.computing <- FALSE
     if( opt$nCores > 1){
-        if(!l1ou_supports_multicore()){
-            warning("fork-based parallel execution is unavailable; running sequentially.", immediate=TRUE)
+        if(!l1ou_supports_parallel()){
+            warning("process-based parallel execution is unavailable; running sequentially.", immediate=TRUE)
             opt$nCores <- 1
         }else{
 	    opt$parallel.computing <- TRUE

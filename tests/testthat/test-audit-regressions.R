@@ -394,3 +394,7 @@ test_that("threepoint native boundary validates dimensions and topology", {
     "response contains non-finite"
   )
 })
+test_that("ape is imported without being attached", {
+  expect_false("package:ape" %in% search())
+  expect_true("ape" %in% loadedNamespaces())
+})

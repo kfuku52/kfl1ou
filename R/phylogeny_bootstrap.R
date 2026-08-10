@@ -20,7 +20,7 @@
 #'@param quietly logical. If FALSE, a summary of each iteration will be printed out.
 #'@param type bootstrap type. Parametric simulation is the default for inference;
 #' \code{"residual"} retains the historical residual-resampling procedure.
-#'@param seed optional seed. Sequential and forked runs use the same replicate
+#'@param seed optional seed. Sequential and parallel runs use the same replicate
 #' seeds, and the caller's random-number state is restored on exit.
 #'
 #'
@@ -30,8 +30,8 @@
 #'
 #'
 #'@details With a supplied \code{seed}, sequential and parallel runs use the
-#'         same replicate data and are reproducible. Fork-based parallel
-#'         execution is used only on supported platforms. To change options for the analysis of
+#'         same replicate data and are reproducible. Fork workers are used on
+#'         Unix-like systems and socket clusters on Windows. To change options for the analysis of
 #'         each bootstrap replicate, like the information criterion or the
 #'         maximum allowed number of shifts, modify \code{model$l1ou.options}.
 #'         This component keeps its upstream name for backward compatibility.
@@ -49,14 +49,14 @@
 #' 
 #' data(lizard.traits, lizard.tree)
 #' keep <- lizard.tree$tip.label[1:15]
-#' tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-#' tree <- reorder(tree, "postorder")
+#' tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+#' tree <- ape::reorder.phylo(tree, "postorder")
 #' Y <- lizard.traits[keep, 1]
 #' eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=1)
 #' result <- l1ou_bootstrap_support(eModel, nItrs=1)
 #' # using only 1 replicate is vastly insufficient in general,
 #' # but used here to make the illustrative example run faster.
-#' nEdges <- Nedge(tree)
+#' nEdges <- ape::Nedge(tree)
 #' e.w <- rep(1,nEdges) 
 #' if (length(eModel$shift.configuration) > 0) {
 #'   e.w[eModel$shift.configuration] <- 3
@@ -87,8 +87,8 @@ l1ou_bootstrap_support <- function(model, nItrs=100, multicore=FALSE, nCores = 2
     multicore <- l1ou_logical_argument(multicore, "multicore")
     quietly <- l1ou_logical_argument(quietly, "quietly")
 
-    if(multicore && !l1ou_supports_multicore()){
-        warning("fork-based parallel execution is unavailable; running sequentially.", immediate.=TRUE)
+    if(multicore && !l1ou_supports_parallel()){
+        warning("process-based parallel execution is unavailable; running sequentially.", immediate.=TRUE)
         multicore = FALSE
     }
 
@@ -202,77 +202,46 @@ bootstrap_support_univariate <- function(tree, model, nItrs, multicore=FALSE, nC
 
     seed.vec <- sample(.Machine$integer.max, nItrs+1, replace=TRUE)
 
-    detection.vec = rep(0, nrow(tree$edge))
-    all.shift.configurations <- list()
     nested.opt <- make_nested_l1ou_options(model$l1ou.options)
 
     if(quietly==FALSE)
         print(paste0("iteration #:nShifts:shift configuraitons"))
 
-    valid.count <- 0
-    if(multicore == FALSE){
-        for(itr in 1:nItrs){
-            set.seed(seed.vec[[itr]])
-            YYstar = sample(YY, replace = TRUE)
-            Ystar  = as.matrix( (C.H%*%YYstar) + model$mu )
-            rownames(Ystar) <- rownames(Y)
+    one.replicate <- function(itr){
+        set.seed(seed.vec[[itr]])
+        YYstar = sample(YY, replace = TRUE)
+        Ystar  = as.matrix( (C.H%*%YYstar) + model$mu )
+        rownames(Ystar) <- rownames(Y)
 
-            eM  <-  tryCatch({
-                estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
-            }, error = function(e) {
-                if(!quietly)
-                    message("l1OU error, return NA")
-                return(NA) }  )
-            if(is_failed_bootstrap_fit(eM)) {next}
-
-            valid.count <- valid.count + 1
-
-            detection.vec[eM$shift.configuration] = detection.vec[eM$shift.configuration] + 1
-            all.shift.configurations[length(all.shift.configurations) + 1L] <-
-                list(eM$shift.configuration)
-
-            if(quietly==FALSE){
-                print(paste0("iteration ", itr, ":", length(eM$shift.configuration),":", 
-                             paste0(eM$shift.configuration, collapse=" ") ) )
+        tryCatch({
+            eM <- estimate_shift_configuration(
+                tree, Ystar, l1ou.options=nested.opt
+            )
+            if(!quietly){
+                print(paste0(
+                    "iteration ", itr, ":", length(eM$shift.configuration),
+                    ":", paste0(eM$shift.configuration, collapse=" ")
+                ))
             }
-
-        }
-        if(valid.count == 0L)
-            stop("all bootstrap replicates failed.")
-        set.seed(seed.vec[[nItrs+1]])
-        return(finalize_bootstrap_results(
-            all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs
-        ))
+            list(ok=TRUE, shifts=eM$shift.configuration, error="")
+        }, error = function(e) {
+            if(!quietly) message("l1OU error: ", conditionMessage(e))
+            list(ok=FALSE, shifts=NA, error=conditionMessage(e))
+        })
     }
-
-
-    all.shift.configurations = with_l1ou_thread_limit(1L, 
-        l1ou_mclapply(X=1:nItrs, FUN=function(itr){
-
-                     set.seed(seed.vec[[itr]])
-                     YYstar = sample(YY, replace = TRUE)
-                     Ystar  = as.matrix( (C.H%*%YYstar) + model$mu )
-                     rownames(Ystar) <- rownames(Y)
-
-                     eM  <-  tryCatch({
-                         estimate_shift_configuration(tree, Ystar, l1ou.options = nested.opt)
-                     }, error = function(e) {
-                         if(!quietly)
-                             message("l1OU error, return NA")
-                         return(NA) }  )
-
-                     if(is_failed_bootstrap_fit(eM)) {return(NA)}
-
-                     if(quietly==FALSE){
-                         print(paste0("iteration ", itr, ":", length(eM$shift.configuration),":", 
-                                      paste0(eM$shift.configuration, collapse=" ") ) )
-                     }
-                     return(eM$shift.configuration)
-           }, mc.cores = nCores))
-
+    records <- if(multicore){
+        with_l1ou_thread_limit(1L, l1ou_mclapply(
+            seq_len(nItrs), one.replicate, mc.cores=nCores
+        ))
+    } else lapply(seq_len(nItrs), one.replicate)
     set.seed(seed.vec[[nItrs+1]])
+    all.shift.configurations <- lapply(
+        records, function(record) if(isTRUE(record$ok)) record$shifts else NA
+    )
+    errors <- vapply(records, `[[`, character(1), "error")
     return(finalize_bootstrap_results(
-        all.shift.configurations, detection.vec, attempted=nItrs
+        all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs,
+        failure.messages=errors
     ))
 }
 
@@ -313,19 +282,19 @@ bootstrap_support_multivariate_full <- function(tree, model, nItrs,
                     paste0(fit$shift.configuration, collapse=" ")
                 ))
             }
-            fit$shift.configuration
+            list(ok=TRUE, shifts=fit$shift.configuration, error="")
         }, error=function(e){
             if(!quietly){
                 message("l1OU error, return NA: ", conditionMessage(e))
             }
-            NA
+            list(ok=FALSE, shifts=NA, error=conditionMessage(e))
         })
     }
 
     if(!quietly){
         print("iteration #:nShifts:shift configurations")
     }
-    all.shifts <- if(multicore){
+    records <- if(multicore){
         with_l1ou_thread_limit(1L,
             l1ou_mclapply(seq_len(nItrs), one.replicate, mc.cores=nCores)
         )
@@ -333,8 +302,13 @@ bootstrap_support_multivariate_full <- function(tree, model, nItrs,
         lapply(seq_len(nItrs), one.replicate)
     }
     set.seed(seed.vec[[nItrs + 1L]])
+    all.shifts <- lapply(
+        records, function(record) if(isTRUE(record$ok)) record$shifts else NA
+    )
+    errors <- vapply(records, `[[`, character(1), "error")
     finalize_bootstrap_results(
-        all.shifts, rep(0, nrow(tree$edge)), attempted=nItrs
+        all.shifts, rep(0, nrow(tree$edge)), attempted=nItrs,
+        failure.messages=errors
     )
 }
 
@@ -408,67 +382,39 @@ bootstrap_support_multivariate <- function(tree, model, nItrs, multicore=FALSE, 
     if(quietly==FALSE)
         print(paste0("iteration #:nShifts:shift configuraitons"))
 
-    detection.vec = rep(0, nrow(tree$edge))
-    all.shift.configurations <- list()
     nested.opt <- make_nested_l1ou_options(model$l1ou.options)
 
-    valid.count <- 0
-    if( multicore == FALSE ){
-        for(itr in 1:nItrs){
+    one.replicate <- function(itr){
+        set.seed(seed.vec[[itr]])
+        Ystar <- simulate_bootstrap_data()
 
-            set.seed(seed.vec[[itr]])
-            Ystar <- simulate_bootstrap_data()
-
-            eM  <-  tryCatch({
-                estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
-            }, error = function(e) {
-                if(!quietly)
-                    message("l1OU error, return NA")
-                return(NA) }  )
-
-            if(is_failed_bootstrap_fit(eM)) {next}
-
-            if(quietly==FALSE){
-                print(paste0("iteration ", itr, ":", length(eM$shift.configuration),":", 
-                             paste0(eM$shift.configuration, collapse=" ") ) )
-            }
-
-            valid.count  <- valid.count + 1
-            detection.vec[eM$shift.configuration] = detection.vec[eM$shift.configuration] + 1
-            all.shift.configurations[length(all.shift.configurations) + 1L] <-
-                list(eM$shift.configuration)
+        fit <- tryCatch({
+            estimate_shift_configuration(tree, Ystar, l1ou.options=nested.opt)
+        }, error = function(e) {
+            if(!quietly) message("l1OU error: ", conditionMessage(e))
+            list(ok=FALSE, shifts=NA, error=conditionMessage(e))
+        })
+        if(is.list(fit) && !is.null(fit$ok)) return(fit)
+        if(!quietly){
+            print(paste0(
+                "iteration ", itr, ":", length(fit$shift.configuration),
+                ":", paste0(fit$shift.configuration, collapse=" ")
+            ))
         }
-        if(valid.count == 0L)
-            stop("all bootstrap replicates failed.")
-        set.seed(seed.vec[[nItrs+1]])
-        return(finalize_bootstrap_results(
-            all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs
-        ))
+        list(ok=TRUE, shifts=fit$shift.configuration, error="")
     }
-
-    all.shift.configurations = with_l1ou_thread_limit(1L,
-        l1ou_mclapply(X=1:nItrs, FUN=function(itr){
-                     set.seed(seed.vec[[itr]])
-                     Ystar <- simulate_bootstrap_data()
-                     eM  <-  tryCatch({
-                         estimate_shift_configuration(tree, Ystar, l1ou.options = nested.opt)
-                     }, error = function(e) {
-                         if(!quietly)
-                             message("l1OU error, return NA")
-                         return(NA) }  )
-
-                     if(is_failed_bootstrap_fit(eM)) {return(NA)}
-
-                     if(quietly==FALSE){
-                         print(paste0("iteration ", itr, ":", length(eM$shift.configuration),":", 
-                                      paste0(eM$shift.configuration, collapse=" ") ) )
-                     }
-
-                     return(eM$shift.configuration)
-        }, mc.cores = nCores))
-
-    set.seed(seed.vec[[nItrs+1]]) ## To make sure after both mclapply and for-loop we have same seed for the reproducibility  
+    records <- if(multicore){
+        with_l1ou_thread_limit(1L, l1ou_mclapply(
+            seq_len(nItrs), one.replicate, mc.cores=nCores
+        ))
+    } else lapply(seq_len(nItrs), one.replicate)
+    set.seed(seed.vec[[nItrs+1]])
+    all.shift.configurations <- lapply(
+        records, function(record) if(isTRUE(record$ok)) record$shifts else NA
+    )
+    errors <- vapply(records, `[[`, character(1), "error")
     return(finalize_bootstrap_results(
-        all.shift.configurations, detection.vec, attempted=nItrs
+        all.shift.configurations, rep(0, nrow(tree$edge)), attempted=nItrs,
+        failure.messages=errors
     ))
 }

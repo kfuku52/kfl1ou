@@ -77,7 +77,7 @@ and a localization-aware multivariate pBIC extension.}
 \item{l1ou.options}{if provided, all the default values will be ignored.}
 
 \item{nCores}{maximum total CPU budget. Multiple optimization starts use
-fork-based workers when available; nested candidate-search workers keep
+process-based workers when available; nested candidate-search workers keep
 their optimization starts sequential.}
 }
 \value{
@@ -97,8 +97,8 @@ pBICess is a version of pBIC where the determinant term is replaced by a sum of 
 
 data(lizard.tree, lizard.traits)
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 lizard <- adjust_data(tree, lizard.traits[keep, 1])
 eModel <- estimate_shift_configuration(
   lizard$tree, lizard$Y, criterion="AICc", max.nShifts=2

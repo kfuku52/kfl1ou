@@ -33,7 +33,7 @@ do not oversubscribe the machine.}
 \item{type}{bootstrap type. Parametric simulation is the default for inference;
 \code{"residual"} retains the historical residual-resampling procedure.}
 
-\item{seed}{optional seed. Sequential and forked runs use the same replicate
+\item{seed}{optional seed. Sequential and parallel runs use the same replicate
 seeds, and the caller's random-number state is restored on exit.}
 }
 \value{
@@ -51,8 +51,8 @@ them back onto the tree. Every replicate repeats the configured shift search.
 }
 \details{
 With a supplied \code{seed}, sequential and parallel runs use the
-        same replicate data and are reproducible. Fork-based parallel
-        execution is used only on supported platforms. To change options for the analysis of
+        same replicate data and are reproducible. Fork workers are used on
+        Unix-like systems and socket clusters on Windows. To change options for the analysis of
         each bootstrap replicate, like the information criterion or the
         maximum allowed number of shifts, modify \code{model$l1ou.options}.
         This component keeps its upstream name for backward compatibility.
@@ -69,14 +69,14 @@ With a supplied \code{seed}, sequential and parallel runs use the
 
 data(lizard.traits, lizard.tree)
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 Y <- lizard.traits[keep, 1]
 eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=1)
 result <- l1ou_bootstrap_support(eModel, nItrs=1)
 # using only 1 replicate is vastly insufficient in general,
 # but used here to make the illustrative example run faster.
-nEdges <- Nedge(tree)
+nEdges <- ape::Nedge(tree)
 e.w <- rep(1,nEdges) 
 if (length(eModel$shift.configuration) > 0) {
   e.w[eModel$shift.configuration] <- 3

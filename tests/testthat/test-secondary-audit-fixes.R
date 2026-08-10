@@ -227,7 +227,7 @@ test_that("rate-shift candidates require valid non-reference clades", {
     alpha.lower = 0.5, alpha.upper = 0.5
   )
 
-  for (edge in list(0, -1, 1.5, Nedge(dat$tree))) {
+  for (edge in list(0, -1, 1.5, ape::Nedge(dat$tree))) {
     expect_error(
       compare_diffusion_rate_shift(
         fit, candidate.edges = edge, min.clade.size = 2, nsim = 0

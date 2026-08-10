@@ -23,8 +23,8 @@ prints the list of the shift configurations sorted by number of shifts and corre
 
 data(lizard.traits, lizard.tree)
 keep <- lizard.tree$tip.label[1:15]
-tree <- drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
-tree <- reorder(tree, "postorder")
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+tree <- ape::reorder.phylo(tree, "postorder")
 Y <- lizard.traits[keep, 1]
 eModel <- estimate_shift_configuration(tree, Y, criterion="AICc", max.nShifts=2)
 model.profile  <- profile(eModel)
