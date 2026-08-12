@@ -1,3 +1,7 @@
+# kfl1ou 3.0.1
+
+- Update the pinned build-provenance attestation action to version 4.2.2.
+
 # kfl1ou 3.0.0
 
 - Move `ape` from `Depends` to `Imports`, so attaching kfl1ou no longer
