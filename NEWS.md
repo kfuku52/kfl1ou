@@ -1,3 +1,8 @@
+# kfl1ou 3.0.2
+
+- Calibrate the scheduled explicit-pruning benchmark against its first
+  GitHub-hosted Ubuntu measurement while retaining a 1.6x regression ceiling.
+
 # kfl1ou 3.0.1
 
 - Update the pinned build-provenance attestation action to version 4.2.2.

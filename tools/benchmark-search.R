@@ -249,7 +249,9 @@ results <- list(
   benchmark_full_covariance_case(1.5, 6)
 )
 if(identical(benchmark_profile, "extended")) {
-  results[[length(results) + 1L]] <- benchmark_pruning_cache_case(2.5, 10)
+  # Calibrated from the first extended run on GitHub's Ubuntu runner: 12.293 s.
+  # The 20 s ceiling still fails a regression above 1.6x that observed median.
+  results[[length(results) + 1L]] <- benchmark_pruning_cache_case(12.5, 20)
 }
 results <- do.call(rbind, results)
 

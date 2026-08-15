@@ -1,6 +1,6 @@
 Package: kfl1ou
-Version: 3.0.1
-Date: 2026-08-12
+Version: 3.0.2
+Date: 2026-08-15
 Title: Tools for Detecting Past Changes in the Expected Mean Trait Values and
     Studying Trait Evolution from Comparative Data
 Authors@R: c(
