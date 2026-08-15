@@ -1,3 +1,8 @@
+# kfl1ou 3.0.4
+
+- Use the UTC calendar date for release metadata so GitHub-hosted validation
+  cannot see a future package date.
+
 # kfl1ou 3.0.3
 
 - Keep package and citation version metadata synchronized during releases.
