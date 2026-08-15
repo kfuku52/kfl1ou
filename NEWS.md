@@ -1,3 +1,7 @@
+# kfl1ou 3.0.3
+
+- Keep package and citation version metadata synchronized during releases.
+
 # kfl1ou 3.0.2
 
 - Calibrate the scheduled explicit-pruning benchmark against its first
