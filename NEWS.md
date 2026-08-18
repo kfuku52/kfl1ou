@@ -1,3 +1,7 @@
+# kfl1ou 3.0.5
+
+- Update the pinned CodeQL actions from 4.37.6 to 4.37.7.
+
 # kfl1ou 3.0.4
 
 - Use the UTC calendar date for release metadata so GitHub-hosted validation
