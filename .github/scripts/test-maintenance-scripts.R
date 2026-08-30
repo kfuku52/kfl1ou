@@ -1,5 +1,7 @@
 source(file.path(".github", "scripts", "check-metadata.R"), local = TRUE)
 source(file.path(".github", "scripts", "ci-helpers.R"), local = TRUE)
+source(file.path(".github", "scripts", "ci-scope.R"), local = TRUE)
+source(file.path("tools", "update-metadata.R"), local = TRUE)
 
 fixture <- tempfile("kfl1ou-metadata-")
 dir.create(fixture)
@@ -8,7 +10,7 @@ on.exit(unlink(fixture, recursive = TRUE, force = TRUE), add = TRUE)
 writeLines(c(
     "Package: kfl1ou",
     "Version: 9.8.7",
-    paste("Date:", Sys.Date())
+    paste("Date:", as.Date(Sys.time(), tz = "UTC"))
 ), file.path(fixture, "DESCRIPTION"))
 writeLines("version: 9.8.7", file.path(fixture, "CITATION.cff"))
 writeLines("# kfl1ou 9.8.7", file.path(fixture, "NEWS.md"))
@@ -30,6 +32,35 @@ bad_news <- tryCatch({
     FALSE
 }, error = function(error) grepl("NEWS", conditionMessage(error)))
 stopifnot(isTRUE(bad_news))
+
+stopifnot(identical(update_metadata(fixture, base.version = "9.8.7"), "9.8.8"))
+stopifnot(isTRUE(check_metadata(fixture, base_sha = "")))
+first.update <- lapply(list.files(fixture, full.names = TRUE), readLines)
+stopifnot(identical(update_metadata(fixture, base.version = "9.8.7"), "9.8.8"))
+stopifnot(identical(first.update, lapply(list.files(fixture, full.names = TRUE), readLines)))
+stopifnot(identical(update_metadata(fixture, "10.0.0"), "10.0.0"))
+stopifnot(isTRUE(check_metadata(fixture, base_sha = "")))
+before.invalid <- readLines(file.path(fixture, "DESCRIPTION"))
+invalid.version <- tryCatch({
+    update_metadata(fixture, "1.0.0")
+    FALSE
+}, error = function(error) TRUE)
+stopifnot(invalid.version,
+          identical(before.invalid, readLines(file.path(fixture, "DESCRIPTION"))))
+
+base.description <- c(Package = "kfl1ou", Version = "3.0.5", Date = "2026-08-18",
+                      Imports = "ape (>= 4.0), Rcpp")
+description <- base.description
+description[c("Version", "Date")] <- c("3.0.6", "2026-08-30")
+action.paths <- c("DESCRIPTION", "NEWS.md", "CITATION.cff",
+                  ".github/workflows/codeql.yaml")
+stopifnot(!ci_full_checks(action.paths, description, base.description))
+stopifnot(ci_full_checks(action.paths, description, base.description, "workflow_dispatch"))
+stopifnot(ci_full_checks(character(), description, base.description, "schedule"))
+stopifnot(ci_full_checks("R/model_api.R", description, base.description))
+stopifnot(ci_full_checks(".github/workflows/R-CMD-check.yaml", description, base.description))
+description["Imports"] <- "ape (>= 4.1), Rcpp"
+stopifnot(ci_full_checks(action.paths, description, base.description))
 
 stopifnot(identical(
     parse.dependencies("R (>= 4.1), ape (>= 4.0), Rcpp, ape"),

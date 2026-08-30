@@ -11,25 +11,38 @@ requests are welcome.
    coherent change.
 3. Add regression tests for fixes and tests that exercise every new branch of
    statistical code.
-4. Run the package tests and check generated files:
+4. Use a focused test while editing, then run one complete package check:
 
    ```sh
    make bootstrap  # first checkout, or after dependency changes
-   make test
+   make test FILTER=review-contracts  # only the affected test file(s)
+   make check       # all tests, without rebuilding vignettes or the PDF manual
+   make bump        # synchronize version, UTC date, citation, NEWS, security line
+   make document    # update generated files after documentation/API edits
    make generated
    make metadata
-   make check       # quick local R CMD check
    make check-full  # before submitting
    ```
 
 5. Update `NEWS.md` when behavior visible to users changes. Every push must also
-   bump the version in `DESCRIPTION`; `make metadata` checks the corresponding
-   citation, release-notes, and security-policy metadata.
+   bump the version; `make bump` updates the related metadata together and is
+   idempotent relative to `origin/main`. This also applies to dependency-only
+   updates, including Dependabot updates. Review the generated NEWS entry.
+   Use `make bump VERSION=3.1.0` when a minor or major release is appropriate.
 
 The continuous-integration matrix checks the supported R floor, current R on
 Linux, macOS and Windows, coverage, generated files, dependency changes, and
-native code. Scheduled extended checks cover R-devel, oldrel, sanitizers, and
-Valgrind.
+native code. Metadata validation runs before expensive R checks. Changes to
+package code, tests, build tools or dependencies run the complete matrix;
+metadata-only and unrelated CI-action changes run the Linux package check.
+Manual and monthly runs retain the full matrix, and releases dispatch any
+omitted checks at the verified tag before publishing. Scheduled extended
+checks cover R-devel, oldrel, sanitizers, and Valgrind.
+
+`make test` without `FILTER` runs the complete test suite. It is useful for
+debugging, but is not required immediately before `make check`, which already
+runs those tests. See [development commands](tools/README.md) for benchmarks
+and metadata maintenance.
 
 ## Statistical changes
 

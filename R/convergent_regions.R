@@ -16,9 +16,10 @@ generate_prediction_vec  <-  function(tr,
     ## In fact ageMatrix is the approximate design matrix.
     if(is.null(ageMatrix)){
         if ( is.na(alpha) ){
-            X   <-  generate_design_matrix(tr, "apprX")
+            X <- generate_design_matrix(tr, "apprX", edges=shift.configuration)
         }else{
-            X   <-  generate_design_matrix(tr, "orgX",  alpha = alpha)
+            X <- generate_design_matrix(tr, "orgX", alpha=alpha,
+                                         edges=shift.configuration)
         }
 
         if(designMatrix){
@@ -26,7 +27,7 @@ generate_prediction_vec  <-  function(tr,
             X     <- Cinvh%*%X
             background.weights <- drop(Cinvh %*% background.weights)
         }
-        shift.weights <- X[, shift.configuration, drop=FALSE]
+        shift.weights <- X
     }else{
         stopifnot(ncol(ageMatrix)==length(shift.configuration))
         stopifnot(alpha>=0)
@@ -505,6 +506,20 @@ dynamic_joint_input_measurement_error_gls_fit <- function(tree, Y, build_preds,
     )
 }
 
+convergent_alpha_arguments <- function(alpha, opt, fixed.alpha=FALSE){
+    fixed <- isTRUE(fixed.alpha) || isTRUE(opt$fixed.alpha)
+    lower <- if(fixed) alpha else opt$alpha.lower.bound
+    upper <- if(fixed) alpha else opt$alpha.upper.bound
+    if(is.null(lower) || is.na(lower)) lower <- alpha / 100
+    if(is.null(upper) || is.na(upper)) upper <- alpha
+    starting <- alpha
+    if(is.finite(starting)){
+        if(is.finite(lower)) starting <- max(starting, lower)
+        if(is.finite(upper)) starting <- min(starting, upper)
+    }
+    list(lower=lower, upper=upper, starting=starting)
+}
+
 convergent_error_interface_CR <- function(tr, Y, conv.regimes = list(), alpha=NA,
                                           fixed.alpha=FALSE, opt,
                                           shift.configuration = opt$shift.configuration,
@@ -523,9 +538,10 @@ convergent_error_interface_CR <- function(tr, Y, conv.regimes = list(), alpha=NA
         preds
     }
 
-    lower.bound <- if(fixed.alpha) alpha else alpha/100
-    upper.bound <- if(fixed.alpha) alpha else max(alpha, opt$alpha.upper.bound + .Machine$double.eps)
-    starting.value <- alpha
+    bounds <- convergent_alpha_arguments(alpha, opt, fixed.alpha)
+    lower.bound <- bounds$lower
+    upper.bound <- bounds$upper
+    starting.value <- bounds$starting
 
     if(isTRUE(opt$measurement_error)){
         if(is.null(input_error)){
@@ -596,14 +612,15 @@ phylolm_interface_CR  <-  function(tr, Y, conv.regimes = list(), alpha=NA, fixed
 	    }
 
     }else{
+	    bounds <- convergent_alpha_arguments(alpha, opt)
 	    fit <-  phylolm_CR(Y~preds-1, 
 			       phy  = tr, 
 			       model = opt$root.model,
 			       sc=shift.configuration,
 			       cr=conv.regimes,
-			       starting.value=alpha,
-			       upper.bound=max(alpha, opt$alpha.upper.bound + .Machine$double.eps),
-			       lower.bound=alpha/100
+			       starting.value=bounds$starting,
+			       upper.bound=bounds$upper,
+			       lower.bound=bounds$lower
 			       )
     }
     options(warn = prev.val)
@@ -730,7 +747,7 @@ fit_convergent_model <- function(tree, Y, shift.configuration, regimes, opt,
             alpha = alpha.seed[[trait.index]],
             opt = opt,
             shift.configuration = r$s.c,
-            input_error = r$input.error
+            input_error = r$input_error
         )
         r
     }
@@ -835,8 +852,7 @@ fit_convergent_model <- function(tree, Y, shift.configuration, regimes, opt,
     model$observed.entries <- sum(!is.na(Y))
     model$convergent.regimes <- regimes
     model$convergent <- TRUE
-    model$l1ou.options$criterion <- opt$criterion
-    model$l1ou.options$root.model <- opt$root.model
+    model$l1ou.options <- l1ou_model_options(opt)
     class(model) <- "l1ou"
     model
 }
@@ -982,11 +998,13 @@ cmp_model_score_CR <- function(tree, Y, regimes=NULL, alpha=NA, opt){
         if(isTRUE(opt$fixed.alpha) && length(alpha) > 0L && all(is.finite(alpha))){
             fixed.alpha <- as.numeric(alpha)
         }
+        score.opt <- opt
+        score.opt$compute.hessian <- FALSE
         fit <- fit_multivariate_ou_likelihood(
             tree,
             Y,
             shift.configuration,
-            opt,
+            score.opt,
             regimes=regimes,
             fixed.alpha=fixed.alpha
         )
@@ -1319,27 +1337,17 @@ estimate_convergent_regimes  <-  function(model,
         stop("fixed.alpha must be TRUE or FALSE.")
     }
     nCores <- l1ou_integer_argument(nCores, "nCores", 1L)
-    opt <- list()
+    opt <- l1ou_model_options(model$l1ou.options)
     opt$method <- match.arg(method)
     opt$criterion <- match.arg(criterion)
-    model$l1ou.options$criterion = criterion
-    opt$shift.configuration <- model$shift.configuration
-    opt$alpha.upper.bound  <- model$l1ou.options$alpha.upper.bound
-    opt$measurement_error <- isTRUE(model$l1ou.options$measurement_error)
-    opt$input_error <- model$l1ou.options$input_error
-    opt$trait.covariance <- model$l1ou.options$trait.covariance
-    if(is.null(opt$trait.covariance)){
-        opt$trait.covariance <- "diagonal"
-    }
-    opt$root.model <- model$l1ou.options$root.model
-    if(is.null(opt$root.model)){
-        opt$root.model <- "OUfixedRoot"
-    }
-    opt$multivariate.missing <- isTRUE(model$l1ou.options$multivariate.missing)
-    opt$tree.list <- model$l1ou.options$tree.list
     opt$quietly <- TRUE
-    opt$fixed.alpha <- fixed.alpha
-    opt <- initialize_design_cache(model$tree, opt)
+    opt <- prepare_l1ou_fit_context(
+        model$tree, model$Y, opt,
+        design.edges=as.integer(model$shift.configuration)
+    )$options
+    opt$shift.configuration <- as.integer(model$shift.configuration)
+    opt$fixed.alpha <- fixed.alpha || isTRUE(opt$fixed.alpha)
+    opt$convergent.fixed.alpha <- fixed.alpha
 
     opt$nCores <- nCores
     opt$parallel.computing <- FALSE
@@ -1351,7 +1359,9 @@ estimate_convergent_regimes  <-  function(model,
 	    opt$parallel.computing <- TRUE
         }
     }
-    opt$ageMatrix <- generate_design_matrix(model$tree, "apprX")[, model$shift.configuration]
+    opt$ageMatrix <- generate_design_matrix(
+        model$tree, "apprX", edges=as.integer(model$shift.configuration)
+    )
 
     thread.limit <- resolve_l1ou_thread_limit(opt$nCores, opt$parallel.computing)
     return(with_l1ou_thread_limit(thread.limit, {

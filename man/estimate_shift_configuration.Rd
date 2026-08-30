@@ -48,7 +48,9 @@ missing entries, provided every tip has at least one observed trait. The row
 names must be in the same order as the tip labels.}
 
 \item{max.nShifts}{upper bound for the number of shifts. If \code{NULL} or
-\code{"auto"}, it is set to half the number of tree edges.}
+\code{"auto"}, it is set to half the number of tree edges. Unregularized
+full covariance further limits the search to at most \code{n - p - 1}
+shifts, so the mean design leaves at least \code{p} residual degrees of freedom.}
 
 \item{criterion}{information criterion for model selection (see Details in \code{\link{configuration_ic}}).}
 
@@ -136,9 +138,12 @@ or automatic engine selection.}
 
 \item{optimizer.starts}{number of deterministic optimization starts.}
 
-\item{compute.hessian}{logical; calculate a numerical Hessian when practical.}
+\item{compute.hessian}{logical; calculate a numerical Hessian for the final
+selected model when practical. Candidate scores do not require a Hessian.}
 
-\item{l1ou.options}{if provided, all the default values will be ignored.}
+\item{l1ou.options}{if provided, all the default values will be ignored.
+Fitted objects retain reusable settings, while tree and data caches are
+rebuilt for each new public fit or search.}
 }
 \value{
 \item{Y}{input trait vector/matrix.}
@@ -171,6 +176,9 @@ likelihood. It cannot be decomposed into independent per-trait likelihoods.}
 \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 \item{score}{information criterion value of the estimated shift configuration.}
 \item{profile}{list of shift configurations sorted by their ic scores.}
+\item{search.diagnostics}{search strategy, coverage within the admissible
+configuration space, any residual-degree-of-freedom restriction, and counts
+of attempted, successful, and failed ensemble paths with failure messages.}
 \item{l1ou.options}{list of options that were used.}
 }
 \description{

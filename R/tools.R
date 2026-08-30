@@ -622,9 +622,7 @@ restore_original_tree_fit <- function(model, original.tree,
     }
     restored$shift.configuration <- restored.shift.configuration
 
-    if( !is.null(restored$l1ou.options$Z) ){
-        restored$l1ou.options$Z <- generate_design_matrix(original.tree, type="simpX")
-    }
+    restored$l1ou.options <- l1ou_model_options(restored$l1ou.options)
 
     restored$restoration <- list(
         pruned.tree = pruned.tree,
@@ -874,10 +872,11 @@ l1ou_mclapply <- function(X, FUN, ..., mc.cores=1L){
     }
     on.exit(parallel::stopCluster(cluster), add=TRUE)
     loaded <- tryCatch(
-        parallel::clusterCall(cluster, function(){
+        parallel::clusterCall(cluster, function(paths){
+            .libPaths(paths)
             loadNamespace("kfl1ou")
             TRUE
-        }),
+        }, .libPaths()),
         error=function(error) error
     )
     if(inherits(loaded, "error")){
@@ -906,11 +905,12 @@ l1ou_require_genlasso <- function(){
 
 ## This function is useful for handling missing values in multivariate regression. 
 ## It generates a list of design matrices and trees considering according to the missing values.
-gen_tree_array <- function(tree, Y){ 
+gen_tree_array <- function(tree, Y, edges=NULL){
     ## here I assume that the tree tip labels match the Y matrix rows 
     ## in the same order.
     tree.list <- list()
-    X.1 <- generate_design_matrix(tree, type="simpX")
+    selected <- if(is.null(edges)) seq_len(Nedge(tree)) else as.integer(edges)
+    X.1 <- generate_design_matrix(tree, type="simpX", edges=selected)
     rownames(X.1) <- tree$tip.label
     for(trait.idx in seq_len(ncol(Y))){
         availables <- rownames(Y)[!is.na(Y[,trait.idx])]
@@ -918,32 +918,29 @@ gen_tree_array <- function(tree, Y){
         tr <- drop.tip(tree, setdiff(tree$tip.label, availables))
         tr <- reorder(tr, "postorder")
 
-        X.2 <- generate_design_matrix(tr, type="simpX")
-        rownames(X.2) <- tr$tip.label
-
         ## when we drop some tips of a tree edges order changes so we need 
         ## to have a universal mapping for shift configurations.
         old.order <- rep(NA, Nedge(tree))
-        for(i in 1:Nedge(tree)){
-            tip.set  <- rownames(X.1)[which(X.1[,i]>0)]
-            tip.set  <- intersect(tip.set, rownames(X.2)) 
-            if(length(tip.set)==0)
-                next
-            if(length(tip.set)==1)
-                edge.set <- which(X.2[tip.set,]==1)
-            else
-                edge.set <- which(colSums(X.2[tip.set,])==length(tip.set))
-
-            if(length(edge.set) > 1)
-                e.idx    <- edge.set[ which(colSums(X.2[,edge.set])==length(tip.set)) ]
-            else
-                e.idx    <- edge.set 
-
-            stopifnot(length(e.idx)==1)
-            old.order[[i]] <- e.idx
+        for(i in seq_along(selected)){
+            tip.set <- intersect(rownames(X.1)[X.1[, i] > 0], tr$tip.label)
+            # A lost clade has no effect; one covering all observed tips is
+            # aliased with the trait's intercept after pruning the root stem.
+            if(!length(tip.set) || length(tip.set) == length(tr$tip.label)) next
+            node <- if(length(tip.set) == 1L){
+                match(tip.set, tr$tip.label)
+            } else ape::getMRCA(tr, tip.set)
+            e.idx <- which(tr$edge[, 2L] == node)
+            stopifnot(length(e.idx) == 1L)
+            old.order[[selected[[i]]]] <- e.idx
         }
         tr$old.order <- old.order
-        tr$Z <- X.2
+        tr$design.edges <- if(is.null(edges)) NULL else
+            unique(as.integer(old.order[!is.na(old.order)]))
+        tr$Z <- generate_design_matrix(
+            tr, "simpX", edges=if(is.null(edges)) seq_len(Nedge(tr)) else
+                tr$design.edges
+        )
+        rownames(tr$Z) <- tr$tip.label
         tr$edge.age <- tree_edge_ages(tr)
         tree.list[[trait.idx]]  <-  tr
     }
@@ -1002,15 +999,16 @@ get_configuration_score_from_list <- function(shift.configuration, cache=NULL){
     cache$values[[index]]$score
 }
 
-list_investigated_configs <- function(cache=NULL){
+list_investigated_configs <- function(cache=NULL, indices=NULL){
     if(is.null(cache)){
         stored <- get_stored_config_score()
         keys <- stored$configurations
         scores <- stored$scores
     } else{
         if(!is.environment(cache)) stop("invalid configuration score cache.")
-        keys <- cache$keys
-        scores <- vapply(cache$values, `[[`, numeric(1), "score")
+        if(is.null(indices)) indices <- seq_along(cache$keys)
+        keys <- cache$keys[indices]
+        scores <- vapply(cache$values[indices], `[[`, numeric(1), "score")
     }
     configurations <- lapply(keys, function(key){
         if(!nzchar(key)) return(integer())
@@ -1098,12 +1096,13 @@ correct_unidentifiability <- function(tree, shift.configuration, opt){
 
     if( length(shift.configuration) < 2)  { return(shift.configuration) }
     shift.configuration = sort(shift.configuration)
-    nTips <- nrow(opt$Z)
+    nTips <- length(tree$tip.label)
+    design <- l1ou_design_columns(tree, opt, shift.configuration)
 
     all.covered.tips <- rep(FALSE, nTips)
     keep <- rep(TRUE, length(shift.configuration))
     for(idx in seq_along(shift.configuration)){
-        covered.tips <- opt$Z[, shift.configuration[[idx]]] > 0
+        covered.tips <- design[, idx] > 0
         if( !any(covered.tips & !all.covered.tips) ){
             keep[[idx]] <- FALSE
         }
@@ -1113,9 +1112,11 @@ correct_unidentifiability <- function(tree, shift.configuration, opt){
     if( all(keep) ){ return(shift.configuration) }
 
     shift.configuration <- shift.configuration[keep]
+    design <- design[, keep, drop=FALSE]
     while ( length(shift.configuration) > 1 ) {
-        coverage <- rowSums(opt$Z[, shift.configuration, drop=FALSE] > 0) > 0
+        coverage <- rowSums(design > 0) > 0
         if( all(coverage) ){
+            design <- design[, -which.max(shift.configuration), drop=FALSE]
             shift.configuration = shift.configuration[-which.max(shift.configuration)]
         } else { break }
     }
@@ -1467,7 +1468,7 @@ plot.l1ou <- function (x, palette = NA,
 
     edgecol = rep(palette[nShifts + 1], nEdges)
     counter = 1
-    Z = model$l1ou.options$Z
+    Z <- generate_design_matrix(tree, "simpX")
     if(length(s.c) > 0)
         for (shift in sort(s.c, decreasing = T)) {
             edgecol[[shift]] = palette[[which(s.c == shift)]]

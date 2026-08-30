@@ -11,7 +11,9 @@
 #' missing entries, provided every tip has at least one observed trait. The row
 #' names must be in the same order as the tip labels.
 #'@param max.nShifts upper bound for the number of shifts. If \code{NULL} or
-#' \code{"auto"}, it is set to half the number of tree edges.
+#' \code{"auto"}, it is set to half the number of tree edges. Unregularized
+#' full covariance further limits the search to at most \code{n - p - 1}
+#' shifts, so the mean design leaves at least \code{p} residual degrees of freedom.
 #'@param criterion information criterion for model selection (see Details in \code{\link{configuration_ic}}).
 #'@param root.model ancestral state model at the root.
 #'@param candid.edges a vector of indices of candidate edges where the shifts may occur. If provided, shifts will only be allowed on these edges; otherwise all edges will be considered.
@@ -70,8 +72,11 @@
 #'@param likelihood.engine \code{"dense"}, exact Gaussian tree \code{"pruning"},
 #' or automatic engine selection.
 #'@param optimizer.starts number of deterministic optimization starts.
-#'@param compute.hessian logical; calculate a numerical Hessian when practical.
-#'@param l1ou.options if provided, all the default values will be ignored. 
+#'@param compute.hessian logical; calculate a numerical Hessian for the final
+#' selected model when practical. Candidate scores do not require a Hessian.
+#'@param l1ou.options if provided, all the default values will be ignored.
+#' Fitted objects retain reusable settings, while tree and data caches are
+#' rebuilt for each new public fit or search.
 #'@return 
 #' \item{Y}{input trait vector/matrix.}
 #' \item{tree}{input tree.}
@@ -103,6 +108,9 @@
 #' \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 #' \item{score}{information criterion value of the estimated shift configuration.}
 #' \item{profile}{list of shift configurations sorted by their ic scores.}
+#' \item{search.diagnostics}{search strategy, coverage within the admissible
+#' configuration space, any residual-degree-of-freedom restriction, and counts
+#' of attempted, successful, and failed ensemble paths with failure messages.}
 #' \item{l1ou.options}{list of options that were used.}
 #'
 #'@details
@@ -357,7 +365,6 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$covariance.candidate.iterations <-
             covariance.candidate.iterations
         l1ou.options$candid.edges <- candid.edges
-        l1ou.options$Z            <- generate_design_matrix(tree, "simpX")
         l1ou.options$grplasso.backend <- "cpp"
         l1ou.options$measurement_error <- measurement_error
         l1ou.options$input_error       <- normalize_input_error(tree, Y, input_error)
@@ -370,13 +377,7 @@ estimate_shift_configuration <- function(tree, Y,
         l1ou.options$optimizer.starts <- optimizer.starts
         l1ou.options$compute.hessian <- compute.hessian
         l1ou.options$tree.scale <- l1ou_tree_time_scale(tree)
-        ## each tree in tree.list represents a trait where the tips corresponding
-        ## to NA values in the trail have been dropped.
         l1ou.options$multivariate.missing <- multivariate.missing
-        if(multivariate.missing)
-            l1ou.options$tree.list <- gen_tree_array(tree, Y)
-        else
-            l1ou.options$tree.list <- NULL
     } else {
         if( is.null(l1ou.options$measurement_error) ){
             l1ou.options$measurement_error <- FALSE
@@ -392,6 +393,7 @@ estimate_shift_configuration <- function(tree, Y,
     )
     Y <- fit.context$Y
     l1ou.options <- fit.context$options
+    l1ou.options <- prepare_l1ou_search(tree, Y, l1ou.options)
 
     thread.limit <- resolve_l1ou_thread_limit(l1ou.options$nCores,
                                               l1ou.options$parallel.computing)
@@ -404,14 +406,14 @@ estimate_shift_configuration <- function(tree, Y,
                 scores=eModel$score,
                 configurations=list(integer())
             )
-            eModel$search.diagnostics <- list(
+            eModel$search.diagnostics <- c(list(
                 requested=l1ou.options$search.strategy,
                 strategy="none",
                 configuration.space.size=1,
                 evaluated.configurations=1L,
                 coverage=1,
                 globally.optimal=TRUE
-            )
+            ), l1ou_search_details(l1ou.options))
             return(eModel)
         }
 
@@ -431,21 +433,15 @@ estimate_shift_configuration <- function(tree, Y,
             eModel <- estimate_shift_configuration_from_candidates(
                 tree, Y, configurations, l1ou.options
             )
-            cached.profile <- if(l1ou.options$use.saved.scores){
-                list_investigated_configs(l1ou.options$score.cache)
-            } else NULL
-            if(!is.null(cached.profile) && length(cached.profile$scores)){
-                eModel$profile <- cached.profile
-            }
             eModel$.candidate.configurations <- NULL
-            eModel$search.diagnostics <- list(
+            eModel$search.diagnostics <- c(list(
                 requested=search$requested,
                 strategy=search$strategy,
                 configuration.space.size=search$configuration.space.size,
                 evaluated.configurations=length(eModel$profile$configurations),
                 coverage=1,
                 globally.optimal=TRUE
-            )
+            ), l1ou_search_details(l1ou.options))
             if(l1ou.options$use.saved.scores){
                 erase_configuration_score_cache(l1ou.options$score.cache)
             }
@@ -454,19 +450,21 @@ estimate_shift_configuration <- function(tree, Y,
 
         if(!isTRUE(l1ou.options$quietly))
             cat("Starting first sparse path (alpha=0) to find candidate configurations.\n")
+        candidate.opt <- l1ou.options
+        candidate.opt$compute.hessian <- FALSE
         if (ncol(Y) == 1) {
             eModel1 = estimate_shift_configuration_known_alpha(tree, 
-                Y, est.alpha = TRUE, opt = l1ou.options)
+                Y, est.alpha = TRUE, opt = candidate.opt)
             if(!isTRUE(l1ou.options$quietly))
                 cat("Starting second LASSO (alpha=",round(eModel1$alpha,2),") for another list of candidates.\n")
             eModel = estimate_shift_configuration_known_alpha(tree, 
-                Y, alpha = eModel1$alpha, opt = l1ou.options)
+                Y, alpha = eModel1$alpha, opt = candidate.opt)
             if (eModel$score > eModel1$score) 
                 eModel = eModel1
         }
         if (ncol(Y) > 1) {
             eModel1 = estimate_shift_configuration_known_alpha_multivariate(tree, 
-                Y, est.alpha = TRUE, opt = l1ou.options)
+                Y, est.alpha = TRUE, opt = candidate.opt)
             if(!isTRUE(l1ou.options$quietly))
                 cat("Starting second LASSO (alpha=",round(eModel1$alpha,2),") for another list of candidates.\n")
             candidate.configurations <- c(
@@ -474,19 +472,19 @@ estimate_shift_configuration <- function(tree, Y,
                 estimate_shift_configuration_known_alpha_multivariate(
                     tree, Y,
                     alpha = eModel1$alpha,
-                    opt = l1ou.options,
+                    opt = candidate.opt,
                     candidate.only = TRUE
                 )
             )
             eModel = estimate_shift_configuration_from_candidates(
                 tree, Y,
                 candidate.configurations = candidate.configurations,
-                opt = l1ou.options
+                opt = candidate.opt
             )
             if(is_full_trait_covariance(l1ou.options, Y) &&
                l1ou.options$covariance.candidate.iterations > 1L){
                 for(iteration in 2:l1ou.options$covariance.candidate.iterations){
-                    iterative.opt <- l1ou.options
+                    iterative.opt <- candidate.opt
                     iterative.opt$sparse.reference.configuration <-
                         eModel$shift.configuration
                     additional <- estimate_shift_configuration_known_alpha_multivariate(
@@ -503,7 +501,7 @@ estimate_shift_configuration <- function(tree, Y,
                     eModel <- estimate_shift_configuration_from_candidates(
                         tree, Y,
                         candidate.configurations=candidate.configurations,
-                        opt=l1ou.options
+                        opt=candidate.opt
                     )
                 }
             }
@@ -511,16 +509,20 @@ estimate_shift_configuration <- function(tree, Y,
                 eModel = eModel1
         }
 
-        cached.profile <- if(l1ou.options$use.saved.scores){
-            list_investigated_configs(l1ou.options$score.cache)
-        } else NULL
-        if(!is.null(cached.profile) && length(cached.profile$scores)){
-            eModel$profile <- cached.profile
+        if(is_full_trait_covariance(l1ou.options, Y) &&
+           isTRUE(l1ou.options$compute.hessian)){
+            profile <- eModel$profile
+            eModel <- fit_OU_model(tree, Y, eModel$shift.configuration, l1ou.options)
+            eModel$profile <- profile
         }
+        eModel$l1ou.options$compute.hessian <- l1ou.options$compute.hessian
+        eModel$profile <- merge_l1ou_profiles(list(
+            l1ou.options$search.state$profile, eModel$profile
+        ))
         eModel$.candidate.configurations <- NULL
         evaluated <- if(is.null(eModel$profile$configurations)) 0L else
             length(eModel$profile$configurations)
-        eModel$search.diagnostics <- list(
+        eModel$search.diagnostics <- c(list(
             requested=search$requested,
             strategy=search$strategy,
             configuration.space.size=search$configuration.space.size,
@@ -530,7 +532,7 @@ estimate_shift_configuration <- function(tree, Y,
                 min(1, evaluated / search$configuration.space.size)
             } else NA_real_,
             globally.optimal=FALSE
-        )
+        ), l1ou_search_details(l1ou.options))
 
         if(l1ou.options$use.saved.scores){
             erase_configuration_score_cache(l1ou.options$score.cache)
@@ -580,7 +582,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     # last contrast: is about intercept, or ancestral state, should not be penalized.
     #YY  = as.matrix(Cinvh%*%Y)
     YY  = (Cinvh%*%Y)
-    YY  = YY[-nrow(YY), ] 
+    YY  = YY[-nrow(YY), , drop=FALSE]
 
     XX  = Cinvh%*%X
 
@@ -588,7 +590,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     keep.columns <- setdiff(seq_len(nP), to.be.removed)
     XX  = as.matrix(XX[, keep.columns, drop=FALSE])
     # NOTE: refer to the above note about whitening.
-    XX  = XX[-nrow(XX), ]
+    XX  = XX[-nrow(XX), , drop=FALSE]
 
     capture.output(
         sol.path <- run_univariate_sparse_path(XX, YY, opt)
@@ -604,11 +606,10 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     if(identical(opt$effective.search.strategy, "ensemble")){
         subsamples <- ensemble_row_subsamples(nrow(XX), opt)
         for(rows in subsamples){
-            subsampled.path <- tryCatch(
-                suppressWarnings(run_univariate_sparse_path(
+            subsampled.path <- run_l1ou_ensemble_path(
+                function() run_univariate_sparse_path(
                     XX[rows, , drop=FALSE], YY[rows, , drop=FALSE], opt
-                )),
-                error=function(e) NULL
+                ), opt, traits=1L, rows=rows
             )
             if(is.null(subsampled.path)) next
             padded <- matrix(0, nrow(subsampled.path$beta), nP)
@@ -628,10 +629,7 @@ estimate_shift_configuration_known_alpha <- function(tree, Y, alpha=0, est.alpha
     )
     eModel  = fit_OU_model(tree, Y, result$shift.configuration, opt)
     eModel$.candidate.configurations <- result$candidate.configurations
-    eModel$profile <- list(
-        scores=result$scores,
-        configurations=result$evaluated.configurations
-    )
+    eModel$profile <- result$profile
 
     if(!opt$quietly){
         print(eModel)
@@ -757,7 +755,7 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
 
     grpX.col.nZero.idx = which(colSums(abs(grpX))!=0)
     grpX.nCol          = ncol(grpX)
-    grpX               = grpX[,grpX.col.nZero.idx]
+    grpX               = grpX[,grpX.col.nZero.idx, drop=FALSE]
     grpIdx             = grpIdx[grpX.col.nZero.idx]
 
     pad.group.solution <- function(solution){
@@ -782,12 +780,11 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     if(identical(opt$effective.search.strategy, "ensemble")){
         subsamples <- ensemble_row_subsamples(nrow(grpX), opt)
         for(rows in subsamples){
-            subsampled <- tryCatch(
-                suppressWarnings(run_grplasso(
+            subsampled <- run_l1ou_ensemble_path(
+                function() run_grplasso(
                     grpX[rows, , drop=FALSE], grpY[rows],
                     nVariables, grpIdx, opt
-                )),
-                error=function(e) NULL
+                ), opt, traits=nVariables, rows=rows
             )
             if(is.null(subsampled)) next
             subsampled <- pad.group.solution(subsampled)
@@ -808,10 +805,7 @@ estimate_shift_configuration_known_alpha_multivariate <- function(tree, Y, alpha
     result  = evaluate_candidate_configurations(tree, Y, candidate.configurations, opt=opt)
     eModel  = fit_OU_model(tree, Y, result$shift.configuration, opt=opt)
     eModel$.candidate.configurations <- result$candidate.configurations
-    eModel$profile <- list(
-        scores=result$scores,
-        configurations=result$evaluated.configurations
-    )
+    eModel$profile <- result$profile
 
     if(!opt$quietly){
         print(eModel)
@@ -860,34 +854,30 @@ estimate_shift_configuration_from_candidates <- function(tree, Y, candidate.conf
     }
 
     scores <- vapply(all.res, function(x) x$score, numeric(1))
+    profile <- record_candidate_results(all.res, opt)
     result <- all.res[[which.min(scores)]]
     eModel <- fit_OU_model(tree, Y, result$shift.configuration, opt)
     eModel$.candidate.configurations <- candidate.configurations
-    evaluated.configurations <- lapply(all.res, `[[`, "shift.configuration")
-    keys <- vapply(evaluated.configurations, paste, collapse=",",
-                   FUN.VALUE=character(1))
-    keep <- !duplicated(keys)
-    eModel$profile <- list(
-        scores=scores[keep],
-        configurations=evaluated.configurations[keep]
-    )
+    eModel$profile <- profile
     eModel
 }
 
 
 
-generate_design_matrix <- function(tree, type="apprX", alpha){
+generate_design_matrix <- function(tree, type="apprX", alpha,
+                                    edges=seq_len(Nedge(tree))){
     stopifnot( is.ultrametric(tree) )
     stopifnot( sum( seq_along(tree$tip.label) %in% tree$edge[,1]) == 0)
 
     nTips  = length(tree$tip.label)
-    nEdges = Nedge(tree)
+    edges <- as.integer(edges)
+    if(!length(edges)) return(matrix(0, nTips, 0L))
 
     children <- tree_children_edges(tree)
     root2tip <- tree_root_to_tip_edge_paths(tree, children=children)
-    X  = matrix(0, nTips, nEdges)
+    X  = matrix(0, nTips, length(edges))
     for(i in seq_len(nTips)){
-        X[i, root2tip[[i]]] = 1
+        X[i, ] <- edges %in% root2tip[[i]]
     }
 
     if(type == "simpX"){
@@ -896,7 +886,7 @@ generate_design_matrix <- function(tree, type="apprX", alpha){
 
     depths <- tree_node_depths(tree, children=children)
     Tval <- max(depths[seq_len(nTips)])
-    edge.values <- Tval - depths[tree$edge[, 1]]
+    edge.values <- Tval - depths[tree$edge[edges, 1]]
 
     if(type == "orgX"){
         edge.values <- -expm1(-alpha * edge.values)
@@ -974,7 +964,8 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
                     shift.configuration=best.shift.configuration,
                     candidate.configurations=candidate.configurations,
                     scores=numeric(),
-                    evaluated.configurations=list()))
+                    evaluated.configurations=list(),
+                    profile=list(scores=numeric(), configurations=list())))
     }
 
     search_ith_config <- make_parallel_candidate_search(tree, Y, opt)
@@ -1003,9 +994,11 @@ evaluate_candidate_configurations <- function(tree, Y, candidate.configurations,
         }
     }
 
+    profile <- record_candidate_results(all.res, opt)
     return ( list(score=min.score,
                   shift.configuration=best.shift.configuration,
                   candidate.configurations=candidate.configurations,
+                  profile=profile,
                   scores=vapply(all.res, `[[`, numeric(1), "score"),
                   evaluated.configurations=lapply(
                       all.res, `[[`, "shift.configuration"
@@ -1038,19 +1031,27 @@ do_backward_correction <- function(tree, Y, shift.configuration, opt){
 
 make_parallel_candidate_search <- function(tree, Y, opt){
 
-    if(!isTRUE(opt$parallel.computing)){
-        return(function(sc){
-            do_backward_correction(tree, Y, sc, opt)
-        })
-    }
-
     worker.opt <- opt
     worker.opt$use.saved.scores <- TRUE
-    worker.opt$optimizer.parallel <- FALSE
-    worker.opt$score.cache <- new_configuration_score_cache()
+    if(isTRUE(opt$parallel.computing) || !is.environment(opt$score.cache)){
+        worker.opt$score.cache <- new_configuration_score_cache()
+        if(is.environment(opt$score.cache)){
+            worker.opt$score.cache$keys <- opt$score.cache$keys
+            worker.opt$score.cache$values <- opt$score.cache$values
+        }
+    }
+    if(isTRUE(opt$parallel.computing)) worker.opt$optimizer.parallel <- FALSE
 
     function(sc){
-        do_backward_correction(tree, Y, sc, worker.opt)
+        before <- length(worker.opt$score.cache$keys)
+        result <- do_backward_correction(tree, Y, sc, worker.opt)
+        added <- which(seq_along(worker.opt$score.cache$keys) > before)
+        profile <- list_investigated_configs(worker.opt$score.cache, added)
+        result$profile <- merge_l1ou_profiles(list(
+            profile,
+            list(scores=result$score, configurations=list(result$shift.configuration))
+        ))
+        result
     }
 }
 
@@ -1189,7 +1190,6 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$alpha.starting.value <- alpha.starting.value
         opt$alpha.upper.bound    <- alpha.upper
         opt$alpha.lower.bound    <- alpha.lower
-        opt$Z                    <- generate_design_matrix(tree, "simpX")
         opt$multivariate.missing <- multivariate.missing
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
@@ -1204,7 +1204,7 @@ configuration_ic <- function(tree, Y, shift.configuration,
         opt$tree.scale <- l1ou_tree_time_scale(tree)
     }
     fit.context <- prepare_l1ou_fit_context(
-        tree, Y, opt, multivariate.missing
+        tree, Y, opt, multivariate.missing, design.edges=shift.configuration
     )
     Y <- fit.context$Y
     opt <- fit.context$options
@@ -1382,7 +1382,6 @@ fit_OU <- function(tree, Y, shift.configuration,
         opt$alpha.starting.value <- alpha.starting.value
         opt$alpha.upper.bound    <- alpha.upper
         opt$alpha.lower.bound    <- alpha.lower
-        opt$Z                    <- generate_design_matrix(tree, "simpX")
         opt$multivariate.missing <- multivariate.missing
         opt$use.saved.scores     <- FALSE
         opt$measurement_error    <- measurement_error
@@ -1405,7 +1404,7 @@ fit_OU <- function(tree, Y, shift.configuration,
         } else search.max.nShifts
     }
     fit.context <- prepare_l1ou_fit_context(
-        tree, Y, opt, multivariate.missing
+        tree, Y, opt, multivariate.missing, design.edges=shift.configuration
     )
     Y <- fit.context$Y
     opt <- fit.context$options
@@ -1420,7 +1419,9 @@ fit_OU <- function(tree, Y, shift.configuration,
                         s.c, "provides an alternative equivalent configuration with fewer shifts."))
         opt$shift.configuration <- shift.configuration
 
-         eModel = fit_OU_model(tree, Y, shift.configuration, opt)
+         base.opt <- opt
+         if(!is.null(cr.regimes)) base.opt$compute.hessian <- FALSE
+         eModel = fit_OU_model(tree, Y, shift.configuration, base.opt)
          if(!is.null(cr.regimes) ){
             opt$shift.configuration <- shift.configuration
             cr.score <- cmp_model_score_CR(tree, Y, regimes=cr.regimes,
@@ -1545,9 +1546,9 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
             visible.idx <- which(!is.na(augmented.s.c))
             if(length(visible.idx) > 0){
                 for(local.idx in seq_along(visible.idx)){
-                    affected <- opt$Z[
-                        , shift.configuration[visible.idx[[local.idx]]]
-                    ] > 0
+                    affected <- drop(l1ou_design_columns(
+                        tree, opt, shift.configuration[visible.idx[[local.idx]]]
+                    )) > 0
                     effect <- optimum.effects[[local.idx]]
                     if(is.finite(effect)){
                         optima.tmp[affected] <- optima.tmp[affected] + effect
@@ -1589,12 +1590,7 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
             cache=opt$score.cache
         )
     }
-    model.opt <- opt
-    model.opt$prepared.tree <- NULL
-    model.opt$prepared.tree.list <- NULL
-    model.opt$multivariate.tree.cache <- NULL
-    model.opt$multivariate.pruning.cache <- NULL
-    model.opt$score.cache <- NULL
+    model.opt <- l1ou_model_options(opt)
 
     continuous.parameter.count <- sum(vapply(
         trait.results, function(x) as.numeric(x$fit$p), numeric(1)
@@ -1643,8 +1639,10 @@ cmp_model_score <-function(tree, Y, shift.configuration, opt){
 
     Y  <- as.matrix(Y)
     if(is_full_trait_covariance(opt, Y)){
+        score.opt <- opt
+        score.opt$compute.hessian <- FALSE
         fit <- fit_multivariate_ou_likelihood(
-            tree, Y, shift.configuration, opt
+            tree, Y, shift.configuration, score.opt
         )
         score <- multivariate_full_information_score(
             fit, length(shift.configuration), opt$criterion,
@@ -1961,17 +1959,14 @@ normalize_shift_search_options <- function(opt, tree, Y){
     opt$group.support.threshold <- normalize_group_support_threshold(
         opt$group.support.threshold, ncol(Y)
     )
-    if(is.null(opt$Z)) opt$Z <- generate_design_matrix(tree, "simpX")
     if(is.null(opt$multivariate.missing)) opt$multivariate.missing <- anyNA(Y)
-    if(isTRUE(opt$multivariate.missing) && is.null(opt$tree.list)){
-        opt$tree.list <- gen_tree_array(tree, Y)
-    }
     opt
 }
 
 
 prepare_l1ou_fit_context <- function(tree, Y, opt,
-                                     multivariate.missing=NULL){
+                                     multivariate.missing=NULL,
+                                     design.edges=NULL){
     Y <- as_l1ou_trait_matrix(Y)
     if(is.null(multivariate.missing)){
         multivariate.missing <- validate_fixed_configuration_missingness(Y)
@@ -1980,16 +1975,19 @@ prepare_l1ou_fit_context <- function(tree, Y, opt,
     if(is.null(opt$quietly)) opt$quietly <- TRUE
     if(is.null(opt$trait.covariance)) opt$trait.covariance <- "diagonal"
 
+    # Public callers may reuse options from a fit to a different tree or data.
+    # Never carry observation- or tree-dependent state across this boundary.
+    opt <- l1ou_model_options(opt)
     opt$multivariate.missing <- isTRUE(multivariate.missing)
     opt$tree.list <- if(isTRUE(multivariate.missing)){
-        gen_tree_array(tree, Y)
+        gen_tree_array(tree, Y, edges=design.edges)
     } else NULL
     opt <- normalize_shift_search_options(opt, tree, Y)
     if(isTRUE(opt$use.saved.scores) && !is.environment(opt$score.cache)){
         opt$score.cache <- new_configuration_score_cache()
     }
     if(!isTRUE(opt$use.saved.scores)) opt$score.cache <- NULL
-    if(is.null(opt$tree.scale)) opt$tree.scale <- l1ou_tree_time_scale(tree)
+    opt$tree.scale <- l1ou_tree_time_scale(tree)
 
     if(identical(opt$trait.covariance, "full") &&
        identical(opt$alpha.structure, "diagonal")){
@@ -2007,17 +2005,16 @@ prepare_l1ou_fit_context <- function(tree, Y, opt,
         opt$alpha.lower.bound <- alpha.bounds$lower
         opt$alpha.upper.bound <- alpha.bounds$upper
     }
-    opt$fixed.alpha <- isTRUE(opt$fixed.alpha) ||
-        alpha_bounds_are_fixed(
-            opt$alpha.lower.bound, opt$alpha.upper.bound
-        )
+    opt$fixed.alpha <- alpha_bounds_are_fixed(
+        opt$alpha.lower.bound, opt$alpha.upper.bound
+    )
     opt$input_error <- normalize_input_error(tree, Y, opt$input_error)
     opt$trait.covariance <- validate_trait_covariance_mode(
         opt$trait.covariance, Y, opt$criterion
     )
     opt <- normalize_multivariate_options(opt, Y)
     check_input_error_support(opt$measurement_error, opt$input_error)
-    opt <- initialize_design_cache(tree, opt)
+    opt <- initialize_design_cache(tree, opt, design.edges=design.edges)
     opt <- initialize_fast_phylolm_cache(tree, opt)
     class(opt) <- unique(c("l1ou_options", class(opt)))
 
@@ -2874,10 +2871,19 @@ cached_weighted_design_matrix <- function(Z, edge.age, type=c("apprX", "orgX"), 
     sweep(Z, 2, scales, FUN="*")
 }
 
-initialize_design_cache <- function(tree, opt){
+initialize_design_cache <- function(tree, opt, design.edges=NULL){
 
-    if(is.null(opt$Z)){
-        opt$Z <- generate_design_matrix(tree, "simpX")
+    identity <- l1ou_tree_identity(tree)
+    if(!identical(opt$.tree.identity, identity)){
+        opt[c("Z", "design.edges", "edge.age", "multivariate.tree.cache",
+              "multivariate.pruning.cache", "prepared.tree",
+              "prepared.tree.list")] <- NULL
+        opt$.tree.identity <- identity
+    }
+    if(is.null(opt$Z) || !identical(opt$design.edges, design.edges)){
+        edges <- if(is.null(design.edges)) seq_len(Nedge(tree)) else design.edges
+        opt$Z <- generate_design_matrix(tree, "simpX", edges=edges)
+        opt$design.edges <- design.edges
     }
     if(is.null(opt$edge.age)){
         opt$edge.age <- tree_edge_ages(tree)
@@ -3320,7 +3326,7 @@ cmp_mBIC_df <- function(tree, shift.configuration, opt){
 
         all.covered.tips = rep(FALSE, nTips)
         for(eIdx in shift.configuration){
-            covered.tips = opt$Z[,eIdx] > 0
+            covered.tips <- drop(l1ou_design_columns(tree, opt, eIdx)) > 0
             nUniqueTips  = sum(covered.tips & !all.covered.tips)
             all.covered.tips = all.covered.tips | covered.tips
             ## this must not happen if the input is an 
@@ -3388,19 +3394,18 @@ my_phylolm_interface <- function(tree, Y, shift.configuration, opt, recmp.preds=
     }
 
     if(recmp.preds){
-        Z <- generate_design_matrix(tree, type="orgX", alpha=alpha)
+        Z <- generate_design_matrix(tree, type="orgX", alpha=alpha,
+                                    edges=shift.configuration)
     }else{
         if(opt$multivariate.missing){
-            if(is.null(tree$Z))
-                stop("internal error: in multivariate.missing mode but tree$Z is null.")
-            Z <- tree$Z
+            Z <- l1ou_design_columns(tree, tree, shift.configuration)
         }else{
-            Z <- opt$Z 
+            Z <- l1ou_design_columns(tree, opt, shift.configuration)
         }
     }
 
 
-    preds = cbind(1, Z[ ,shift.configuration])
+    preds <- cbind(1, Z)
     fixed.bm.boundary <- isFALSE(opt$measurement_error) &&
         is.null(input_error) && identical(opt$root.model, "OUfixedRoot") &&
         !is.na(opt$alpha.lower.bound) && !is.na(opt$alpha.upper.bound) &&

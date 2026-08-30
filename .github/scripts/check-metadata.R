@@ -17,7 +17,7 @@ check_metadata <- function(root = ".", base_sha = Sys.getenv("BASE_SHA", "")) {
     description <- read.dcf(description_path)[1L, ]
     version <- unname(description[["Version"]])
     package_date <- as.Date(unname(description[["Date"]]))
-    if (is.na(package_date) || package_date > Sys.Date()) {
+    if (is.na(package_date) || package_date > as.Date(Sys.time(), tz = "UTC")) {
         metadata_fail("DESCRIPTION Date must be valid and must not be in the future.")
     }
 
@@ -61,9 +61,11 @@ check_metadata <- function(root = ".", base_sha = Sys.getenv("BASE_SHA", "")) {
                 writeLines(old_description, old_file)
                 old_version <- unname(read.dcf(old_file)[1L, "Version"])
                 if (identical(version, old_version)) {
-                    metadata_fail(sprintf(
-                        "Version %s is unchanged from BASE_SHA %s.", version, base_sha
-                    ))
+                    metadata_fail(sprintf(paste0(
+                        "Version %s is unchanged from BASE_SHA %s. ",
+                        "Run `make bump BASE=origin/main` to synchronize release metadata, ",
+                        "including dependency-only updates."
+                    ), version, base_sha))
                 }
             }
         }

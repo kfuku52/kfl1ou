@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "11 4 1 * *"
   workflow_dispatch:
 
 permissions: read-all
@@ -15,6 +17,7 @@ concurrency:
 
 jobs:
   R-CMD-check:
+    needs: metadata
     runs-on: ${{ matrix.config.os }}
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
     timeout-minutes: 40
@@ -22,10 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config:
-          - {os: macos-latest, r: "release"}
-          - {os: windows-latest, r: "release"}
-          - {os: ubuntu-latest, r: "release"}
+        config: ${{ fromJSON(needs.metadata.outputs.matrix) }}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -51,6 +51,8 @@ jobs:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
   generated-files:
+    needs: metadata
+    if: needs.metadata.outputs.full == 'true'
     name: generated-files
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -78,6 +80,9 @@ jobs:
     name: metadata
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      matrix: ${{ steps.scope.outputs.matrix }}
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
 
@@ -91,9 +96,16 @@ jobs:
       - name: Check release metadata
         run: Rscript .github/scripts/check-metadata.R
       - name: Exercise maintenance-script fixtures
-        run: Rscript .github/scripts/test-maintenance-scripts.R
+        run: |
+          Rscript .github/scripts/test-maintenance-scripts.R
+          python3 .github/scripts/test-release-checks.py
+      - name: Select required compatibility coverage
+        id: scope
+        run: Rscript .github/scripts/ci-scope.R
 
   coverage:
+    needs: metadata
+    if: needs.metadata.outputs.full == 'true'
     name: coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -126,9 +138,11 @@ jobs:
             coverage-summary.md
             public-api-coverage.csv
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
 
   minimum-testthat:
+    needs: metadata
+    if: needs.metadata.outputs.full == 'true'
     name: minimum-testthat
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -158,6 +172,8 @@ jobs:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
   hard-dependencies-only:
+    needs: metadata
+    if: needs.metadata.outputs.full == 'true'
     name: hard-dependencies-only
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -182,7 +198,8 @@ jobs:
 
   pdf-manual:
     name: pdf-manual
-    if: github.event_name != 'pull_request'
+    needs: metadata
+    if: github.event_name != 'pull_request' && needs.metadata.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -202,10 +219,11 @@ jobs:
           name: pdf-manual
           path: kfl1ou-manual.pdf
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   dependency-review:
     name: dependency-review
+    needs: metadata
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10

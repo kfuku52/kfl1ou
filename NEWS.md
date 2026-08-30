@@ -1,3 +1,31 @@
+# kfl1ou 3.0.6
+
+- Fix univariate ensemble subsampling and report attempted, successful and failed
+  paths instead of silently discarding dimension errors.
+- Preserve every evaluated configuration across serial, fork and socket search,
+  keeping candidate profiles and model-averaging weights consistent.
+- Restrict unregularized full-covariance searches to estimable mean dimensions
+  while retaining validation of explicitly requested invalid fixed models.
+- Preserve known observation errors and convergent-regime equality constraints
+  in final fits, conditional refits, error profiles and diffusion-rate comparisons.
+  Full sensitivity and bootstrap selection retain candidate-generation settings
+  and repeat convergence discovery for convergent inputs.
+- Use the fitted OU mean design for residual diagnostics, preserve failed alpha
+  profile rows, and retain parameter names in parametric confidence intervals.
+- Make Gaussian simulation invariant to variance scale, including tiny positive
+  and positive-semidefinite covariances.
+- Rebuild tree-dependent state when options are reused, keep caches out of fitted
+  options, and construct only selected-edge designs for fixed configurations.
+- Skip Hessians during candidate scoring and intermediate fits, retaining them
+  for the final selected fit. Reuse diagnostic factors, precision blocks and
+  clade designs, and guard dense allocation by the full response dimension.
+- Add focused test commands, quick checks without vignette rebuilding, an
+  idempotent metadata update command, and benchmarks that install and identify
+  the current checkout before timing it.
+- Gate expensive CI on metadata validation and relevant changes, retain full
+  scheduled/manual compatibility coverage, and require omitted checks before
+  releasing a tag.
+
 # kfl1ou 3.0.5
 
 - Update the pinned CodeQL actions from 4.37.6 to 4.37.7.

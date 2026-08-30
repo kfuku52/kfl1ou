@@ -103,13 +103,7 @@ scan_branch_rate_models <- function(model, Y=NULL, candidate.edges=NULL,
     tree <- model$tree
     y <- if(is.null(Y)) as.numeric(model$Y[, 1L]) else as.numeric(Y[, 1L])
     Z <- generate_design_matrix(tree, "simpX")
-    model.shifts <- validate_shift_configuration(
-        tree, model$shift.configuration
-    )
-    design <- cbind(
-        intercept=1,
-        Z[, model.shifts, drop=FALSE]
-    )
+    design <- l1ou_model_mean_design_blocks(model)[[1L]]
     sizes <- colSums(Z > 0)
     if(is.null(candidate.edges)){
         candidate.edges <- which(

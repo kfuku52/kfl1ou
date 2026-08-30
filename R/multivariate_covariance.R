@@ -1017,7 +1017,7 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
     shift.configuration <- as.integer(shift.configuration)
     design.builder <- if(is.null(regimes)){
         function(alpha){
-            rep(list(cbind(1, opt$Z[, shift.configuration, drop=FALSE])),
+            rep(list(cbind(1, l1ou_design_columns(tree, opt, shift.configuration))),
                 ncol(Y))
         }
     } else{
@@ -1161,9 +1161,9 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
             shift.means[identifiable] / scales[identifiable]
         for(trait.index in seq_len(p)){
             for(shift.index in seq_along(shift.configuration)){
-                affected <- opt$Z[
-                    , shift.configuration[[shift.index]]
-                ] > 0
+                affected <- drop(l1ou_design_columns(
+                    tree, opt, shift.configuration[[shift.index]]
+                )) > 0
                 effect <- shift.values[shift.index, trait.index]
                 if(is.finite(effect)){
                     optima[affected, trait.index] <-
@@ -1175,12 +1175,7 @@ fit_full_covariance_l1ou_model <- function(tree, Y, shift.configuration, opt){
         }
     }
 
-    model.opt <- opt
-    model.opt$prepared.tree <- NULL
-    model.opt$prepared.tree.list <- NULL
-    model.opt$multivariate.tree.cache <- NULL
-    model.opt$multivariate.pruning.cache <- NULL
-    model.opt$score.cache <- NULL
+    model.opt <- l1ou_model_options(opt)
     alpha <- rep(as.numeric(fit$alpha), length.out=p)
     names(alpha) <- trait.names
     sigma2 <- diag(fit$trait.covariance)
@@ -1349,9 +1344,7 @@ fit_full_covariance_convergent_model <- function(tree, Y, shift.configuration,
     model$joint.logLik <- fit$logLik
     model$convergent.regimes <- regimes
     model$convergent <- TRUE
-    model$l1ou.options$criterion <- opt$criterion
-    model$l1ou.options$root.model <- opt$root.model
-    model$l1ou.options$trait.covariance <- "full"
+    model$l1ou.options <- l1ou_model_options(opt)
     class(model) <- "l1ou"
     model
 }
@@ -1372,8 +1365,10 @@ full_covariance_sparse_inputs <- function(tree, Y, alpha, est.alpha, opt){
     reference.configuration <- if(is.null(opt$sparse.reference.configuration)){
         integer()
     } else as.integer(opt$sparse.reference.configuration)
+    reference.opt <- opt
+    reference.opt$compute.hessian <- FALSE
     reference.fit <- fit_multivariate_ou_likelihood(
-        tree, Y, reference.configuration, opt, fixed.alpha=fixed.alpha
+        tree, Y, reference.configuration, reference.opt, fixed.alpha=fixed.alpha
     )
     covariance <- multivariate_ou_observed_covariance(
         tree, Y, fixed.alpha, reference.fit$trait.covariance, opt,

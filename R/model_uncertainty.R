@@ -768,7 +768,9 @@ print.l1ou_tree_ensemble <- function(x, ...){
 #'@param root.models root-state models to compare.
 #'@param alpha.upper positive upper bounds to compare.
 #'@param criteria information criteria to compare.
-#'@param selection condition on the fitted shifts or repeat shift discovery.
+#'@param selection condition on the fitted shifts and convergence constraints,
+#' or repeat shift discovery with the original candidate-generation settings.
+#' Full selection also repeats convergence discovery for a convergent input.
 #'@param keep.fits retain successful models in an attribute.
 #'@param nCores maximum number of sensitivity-grid cells evaluated concurrently.
 #'@return Data frame with scores, likelihoods, shift counts, alpha estimates,
@@ -812,40 +814,15 @@ sensitivity_l1ou <- function(
         stringsAsFactors=FALSE
     )
     records <- l1ou_task_apply(seq_len(nrow(grid)), function(i){
-        common <- list(
-            tree=model$tree,
-            Y=model$Y,
+        overrides <- list(
             criterion=grid$criterion[[i]],
             root.model=grid$root.model[[i]],
-            alpha.upper=grid$alpha.upper[[i]],
-            measurement_error=isTRUE(model$l1ou.options$measurement_error),
-            input_error=model$l1ou.options$input_error,
-            trait.covariance=model$l1ou.options$trait.covariance,
-            alpha.structure=model$l1ou.options$alpha.structure,
-            covariance.regularization=model$l1ou.options$covariance.regularization,
-            regularization.lambda=model$l1ou.options$regularization.lambda,
-            likelihood.engine=model$l1ou.options$likelihood.engine,
-            optimizer.starts=model$l1ou.options$optimizer.starts,
-            compute.hessian=FALSE
+            alpha.upper.bound=grid$alpha.upper[[i]],
+            compute.hessian=FALSE, quietly=TRUE
         )
         tryCatch({
-            fit <- if(selection == "full"){
-                do.call(
-                    estimate_shift_configuration,
-                    c(common, list(
-                        max.nShifts=model$l1ou.options$max.nShifts,
-                        search.strategy=model$l1ou.options$search.strategy,
-                        quietly=TRUE
-                    ))
-                )
-            } else{
-                do.call(
-                    fit_OU,
-                    c(common, list(
-                        shift.configuration=as.integer(model$shift.configuration)
-                    ))
-                )
-            }
+            fit <- refit_l1ou_model(model, selection=selection,
+                                     overrides=overrides)
             list(fit=fit, error="")
         }, error=function(e){
             list(fit=NULL, error=conditionMessage(e))

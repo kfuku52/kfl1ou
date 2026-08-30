@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  actions: read
+  actions: write
   attestations: write
   checks: read
   contents: write
@@ -79,6 +79,30 @@ jobs:
             "benchmark"
             "cran-dependency-audit"
           )
+          # Metadata-only main updates may intentionally omit platform jobs.
+          # Dispatch full checks at the verified release tag when coverage is
+          # missing or skipped; never treat skipped coverage as release success.
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs?per_page=100" \
+            > "${RUNNER_TEMP}/release-initial-checks.json"
+          for workflow in R-CMD-check.yaml codeql.yaml benchmarks.yaml r-dependency-audit.yaml; do
+            case "$workflow" in
+              R-CMD-check.yaml) names='["ubuntu-latest (release)","windows-latest (release)","macos-latest (release)","generated-files","metadata","coverage","minimum-testthat","hard-dependencies-only","pdf-manual"]' ;;
+              codeql.yaml) names='["C and C++"]' ;;
+              benchmarks.yaml) names='["benchmark"]' ;;
+              r-dependency-audit.yaml) names='["cran-dependency-audit"]' ;;
+            esac
+            missing=$(jq --argjson names "$names" '
+              [.[].check_runs[]] as $runs |
+              any($names[]; . as $name |
+                [$runs[] | select(.name == $name)] |
+                sort_by(.started_at // .completed_at // "") | last |
+                . == null or .conclusion == "skipped")
+            ' "${RUNNER_TEMP}/release-initial-checks.json")
+            if [[ "$missing" == true ]]; then
+              gh workflow run "$workflow" --ref "$RELEASE_TAG"
+            fi
+          done
           deadline=$((SECONDS + 3000))
           while true; do
             gh api --paginate --slurp \
@@ -97,6 +121,7 @@ jobs:
               ' "${RUNNER_TEMP}/release-check-runs.json")
               case "$state" in
                 completed:success) ;;
+                completed:skipped) pending+=("${check_name}=${state}") ;;
                 completed:*) failed+=("${check_name}=${state}") ;;
                 *) pending+=("${check_name}=${state}") ;;
               esac
@@ -113,7 +138,7 @@ jobs:
               exit 1
             fi
             printf 'Waiting for required checks: %s\n' "${pending[*]}"
-            sleep 20
+            sleep 60
           done
       - uses: r-lib/actions/setup-pandoc@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
       - uses: r-lib/actions/setup-r@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2

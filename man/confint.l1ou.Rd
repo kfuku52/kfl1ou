@@ -31,7 +31,8 @@
 \item{seed}{optional random seed.}
 
 \item{selection}{whether bootstrap refits condition on the selected shift
-configuration or repeat the complete shift search. For a full search, an
+configuration and convergence constraints or repeat the complete shift
+search, including convergence discovery for convergent inputs. For a full search, an
 original shift coefficient is recorded as zero when its exact edge is not
 selected; exact-edge reselection probabilities are returned as attributes.}
 
@@ -40,7 +41,7 @@ selected; exact-edge reselection probabilities are returned as attributes.}
 \item{...}{additional arguments (currently ignored).}
 }
 \value{
-A matrix with lower and upper confidence limits. Failed bootstrap
+A matrix with parameter row names and lower and upper confidence limits. Failed bootstrap
 refits are omitted and reported in an attribute.
 }
 \description{

@@ -61,9 +61,11 @@ test_that("estimate_shift_configuration supports multivariate missing data with 
 
   expect_s3_class(est, "l1ou")
   expect_true(isTRUE(est$l1ou.options$multivariate.missing))
-  expect_length(est$l1ou.options$tree.list, 2)
-  expect_equal(length(est$l1ou.options$tree.list[[1]]$tip.label), nrow(dat$Y) - 1)
-  expect_equal(length(est$l1ou.options$tree.list[[2]]$tip.label), nrow(dat$Y) - 1)
+  expect_null(est$l1ou.options$tree.list)
+  expect_identical(is.na(est$mu), is.na(dat$Y))
+  refit <- fit_OU(dat$tree, dat$Y, est$shift.configuration,
+                  l1ou.options=est$l1ou.options)
+  expect_equal(refit$mu, est$mu, tolerance=1e-7)
   expect_length(est$sigma2_error, 2)
   expect_true(all(is.finite(est$sigma2_error)))
 })

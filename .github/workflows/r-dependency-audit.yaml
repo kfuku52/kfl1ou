@@ -54,4 +54,4 @@ jobs:
             r-dependency-sbom.cdx.json
             r-dependency-vulnerabilities.csv
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 14

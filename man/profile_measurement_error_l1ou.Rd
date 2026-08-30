@@ -17,5 +17,6 @@ Data frame of multiplier, log likelihood, score, and refit status.
 }
 \description{
 Replaces an estimated shared observation variance by a grid of fixed known
-variances, refits the selected mean model, and reports the likelihood shape.
+variances, refits the selected mean model including any convergent-regime
+equality constraints, and reports the likelihood shape.
 }

@@ -1,5 +1,12 @@
 library(ape)
 library(kfl1ou)
+source_metadata <- getOption("kfl1ou.benchmark.source")
+if (is.null(source_metadata) || !identical(
+    source_metadata$loaded.from, normalizePath(find.package("kfl1ou")))) {
+  stop("Use `make benchmark` (or Rscript tools/run-benchmark.R) to measure this checkout.",
+       call. = FALSE)
+}
+print(source_metadata)
 
 benchmark_profile <- Sys.getenv("KFL1OU_BENCHMARK_PROFILE", "smoke")
 if (!benchmark_profile %in% c("smoke", "extended")) {
@@ -64,6 +71,10 @@ benchmark_case <- function(name, data, strategy, max_shifts,
   }
 
   reference <- run_once()
+  if (strategy == "ensemble") {
+    stopifnot(reference$search.diagnostics$ensemble$successful == 6L,
+              reference$search.diagnostics$ensemble$failed == 0L)
+  }
   elapsed <- numeric(iterations)
   for (index in seq_len(iterations)) {
     timing <- system.time(candidate <- run_once())
@@ -254,9 +265,10 @@ if(identical(benchmark_profile, "extended")) {
   results[[length(results) + 1L]] <- benchmark_pruning_cache_case(12.5, 20)
 }
 results <- do.call(rbind, results)
+for (field in names(source_metadata)) results[[field]] <- source_metadata[[field]]
 
 utils::write.csv(results, "benchmark-results.csv", row.names = FALSE)
-print(results, row.names = FALSE)
+print(results[, setdiff(names(results), names(source_metadata))], row.names = FALSE)
 
 step_summary <- Sys.getenv("GITHUB_STEP_SUMMARY")
 if (nzchar(step_summary)) {

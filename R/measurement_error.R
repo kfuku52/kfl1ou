@@ -126,7 +126,8 @@ fit_l1ou_replicates <- function(
 #' Measurement-error sensitivity profile
 #'
 #' Replaces an estimated shared observation variance by a grid of fixed known
-#' variances, refits the selected mean model, and reports the likelihood shape.
+#' variances, refits the selected mean model including any convergent-regime
+#' equality constraints, and reports the likelihood shape.
 #'
 #'@param model fitted \code{"l1ou"} model.
 #'@param multipliers non-negative multipliers of the fitted shared error
@@ -155,14 +156,11 @@ profile_measurement_error_l1ou <- function(
         fixed.error <- sweep(
             base.error, 2L, multiplier * sigma.error, `+`
         )
-        opt <- make_nested_l1ou_options(model$l1ou.options)
-        opt$measurement_error <- FALSE
-        opt$input_error <- fixed.error
         tryCatch(
-            fit_OU(
-                model$tree, model$Y,
-                as.integer(model$shift.configuration),
-                l1ou.options=opt
+            refit_l1ou_model(
+                model, overrides=list(
+                    measurement_error=FALSE, input_error=fixed.error
+                )
             ),
             error=function(e) e
         )

@@ -15,8 +15,8 @@ diagnose_l1ou(
 \arguments{
 \item{model}{fitted object of class \code{"l1ou"}.}
 
-\item{max.dense.dimension}{largest observed response dimension for which a
-dense residual-whitening covariance is constructed.}
+\item{max.dense.dimension}{largest full response dimension (tips times
+traits, including missing entries) for constructing a dense covariance.}
 
 \item{nsim}{number of fitted-model predictive simulations used for absolute
 adequacy and clade-rate diagnostics. Zero skips simulation calibration.}

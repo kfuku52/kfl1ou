@@ -14,7 +14,8 @@ a matrix with one column per trait for a full-covariance diagonal-alpha fit.
 Zero may be included to inspect the Brownian-motion boundary under a fixed
 root model.}
 
-\item{keep.fits}{retain successful fitted models as an attribute.}
+\item{keep.fits}{retain position-aligned fitted models as an attribute, with
+\code{NULL} for failed grid rows.}
 }
 \value{
 A data frame containing candidate alpha values, log likelihoods,

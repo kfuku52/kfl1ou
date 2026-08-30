@@ -23,7 +23,9 @@ sensitivity_l1ou(
 
 \item{criteria}{information criteria to compare.}
 
-\item{selection}{condition on the fitted shifts or repeat shift discovery.}
+\item{selection}{condition on the fitted shifts and convergence constraints,
+or repeat shift discovery with the original candidate-generation settings.
+Full selection also repeats convergence discovery for a convergent input.}
 
 \item{keep.fits}{retain successful models in an attribute.}
 

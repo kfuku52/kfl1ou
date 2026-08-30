@@ -156,10 +156,7 @@ l1ou_complete_fitted_mean <- function(object){
         object$tree, object$shift.configuration
     )
     if(length(shifts)){
-        design <- object$l1ou.options$Z
-        if(is.null(design)){
-            design <- generate_design_matrix(object$tree, "simpX")
-        }
+        design <- generate_design_matrix(object$tree, "simpX", edges=shifts)
         shift.means <- as.matrix(object$shift.means)
         if(nrow(shift.means) != length(shifts) &&
            ncol(shift.means) == length(shifts)){
@@ -169,7 +166,7 @@ l1ou_complete_fitted_mean <- function(object){
             stop("the fitted object does not contain a complete shift-mean matrix.")
         }
         result <- result +
-            design[, shifts, drop=FALSE] %*% shift.means
+            design %*% shift.means
     }
     observed.mean <- as.matrix(object$mu)
     observed <- is.finite(observed.mean)
@@ -211,7 +208,7 @@ l1ou_simulation_covariance <- function(object){
     diag(covariance) <- diag(covariance) + error
     covariance <- 0.5 * (covariance + t(covariance))
     if(is.null(tryCatch(chol(covariance), error=function(e) NULL))){
-        covariance <- regularize_positive_definite(covariance, 1e-12)
+        covariance <- tcrossprod(l1ou_gaussian_factor(covariance))
     }
     covariance
 }
@@ -239,15 +236,29 @@ with_l1ou_seed <- function(seed, expr){
     force(expr)
 }
 
-draw_zero_mean_gaussian <- function(covariance){
+l1ou_gaussian_factor <- function(covariance){
     covariance <- 0.5 * (covariance + t(covariance))
-    if(max(abs(covariance)) <= .Machine$double.eps) return(numeric(nrow(covariance)))
-    factor <- tryCatch(chol(covariance), error=function(e) NULL)
-    if(is.null(factor)){
-        covariance <- regularize_positive_definite(covariance, 1e-12)
-        factor <- chol(covariance)
+    scale <- max(abs(covariance))
+    if(!is.finite(scale)) stop("simulation covariance must be finite.")
+    if(scale == 0) return(matrix(0, nrow(covariance), ncol(covariance)))
+    normalized <- covariance / scale
+    factor <- tryCatch(chol(normalized), error=function(e) NULL)
+    if(!is.null(factor)) return(t(factor) * sqrt(scale))
+
+    spectrum <- eigen(normalized, symmetric=TRUE)
+    tolerance <- 100 * .Machine$double.eps * nrow(covariance) *
+        max(abs(spectrum$values))
+    if(any(spectrum$values < -tolerance)){
+        stop("simulation covariance must be positive semidefinite.")
     }
-    drop(t(factor) %*% stats::rnorm(nrow(covariance)))
+    sweep(spectrum$vectors, 2L, sqrt(pmax(spectrum$values, 0)), `*`) *
+        sqrt(scale)
+}
+
+draw_zero_mean_gaussian <- function(covariance){
+    factor <- l1ou_gaussian_factor(covariance)
+    if(!any(factor != 0)) return(numeric(nrow(covariance)))
+    drop(factor %*% stats::rnorm(ncol(factor)))
 }
 
 simulate_l1ou_tree_residual <- function(object){
@@ -331,7 +342,7 @@ simulate.l1ou <- function(object, nsim=1L, seed=NULL,
             })
         } else{
             covariance <- l1ou_simulation_covariance(object)
-            factor <- t(chol(covariance))
+            factor <- l1ou_gaussian_factor(covariance)
             lapply(seq_len(nsim), function(i){
                 value <- as.vector(mean) +
                     drop(factor %*% stats::rnorm(length(mean)))
@@ -373,26 +384,7 @@ l1ou_standardized_trait_correlation <- function(residual.matrix,
 }
 
 l1ou_diagnostic_mean_design <- function(model){
-    Y <- as.matrix(model$Y)
-    n <- nrow(Y)
-    p <- ncol(Y)
-    if(isTRUE(model$convergent) && !is.null(model$convergent.regimes)){
-        states <- convergent_regime_states(
-            model$tree, as.integer(model$shift.configuration),
-            model$convergent.regimes
-        )
-        base <- stats::model.matrix(
-            ~ factor(states$tip.regime) - 1L
-        )
-    } else{
-        base <- cbind(
-            intercept=1,
-            generate_design_matrix(model$tree, "simpX")[
-                , as.integer(model$shift.configuration), drop=FALSE
-            ]
-        )
-    }
-    block_diag_matrix(rep(list(base), p))
+    block_diag_matrix(l1ou_model_mean_design_blocks(model))
 }
 
 
@@ -400,15 +392,16 @@ l1ou_diagnostic_projection <- function(model, max.dense.dimension=2000L){
     Y <- as.matrix(model$Y)
     residual <- as.vector(model$residuals)
     observed <- is.finite(residual)
-    if(sum(observed) > max.dense.dimension){
+    if(length(Y) > max.dense.dimension){
         return(list(
             standardized=NULL,
             tip.score=NULL,
             covariance=NULL,
             observed=observed,
             note=paste0(
-                "Dense residual projection skipped because ", sum(observed),
-                " observed entries exceed max.dense.dimension."
+                "Dense residual projection skipped because the full response dimension ",
+                length(Y), " exceeds max.dense.dimension (",
+                sum(observed), " observed entries)."
             )
         ))
     }
@@ -432,19 +425,20 @@ l1ou_diagnostic_projection <- function(model, max.dense.dimension=2000L){
     gradient <- drop(precision %*% residual[observed])
     observed.indices <- which(observed)
     n <- nrow(Y)
-    tip.score <- vapply(seq_len(n), function(i){
+    tip.blocks <- lapply(seq_len(n), function(i){
         global <- i + (seq_len(ncol(Y)) - 1L) * n
         local <- match(global, observed.indices, nomatch=0L)
         local <- local[local > 0L]
-        if(!length(local)) return(NA_real_)
+        if(!length(local)) return(NULL)
         precision.block <- precision[local, local, drop=FALSE]
-        solved <- tryCatch(
-            solve(precision.block, gradient[local]),
+        inverse <- tryCatch(
+            chol2inv(chol(precision.block)),
             error=function(e) NULL
         )
-        if(is.null(solved)) return(NA_real_)
-        drop(crossprod(gradient[local], solved)) / length(local)
-    }, numeric(1))
+        if(is.null(inverse)) return(NULL)
+        list(index=local, inverse=inverse)
+    })
+    tip.score <- l1ou_tip_residual_scores(gradient, tip.blocks)
     names(tip.score) <- rownames(Y)
     list(
         standardized=standardized,
@@ -452,6 +446,8 @@ l1ou_diagnostic_projection <- function(model, max.dense.dimension=2000L){
         covariance=covariance,
         observed=observed,
         factor=factor,
+        precision=precision,
+        tip.blocks=tip.blocks,
         projection=if(rank < nrow(Q)){
             Q[, (rank + 1L):nrow(Q), drop=FALSE]
         } else matrix(0, nrow(Q), 0L),
@@ -460,11 +456,20 @@ l1ou_diagnostic_projection <- function(model, max.dense.dimension=2000L){
     )
 }
 
+l1ou_tip_residual_scores <- function(gradient, blocks){
+    vapply(blocks, function(block){
+        if(is.null(block)) return(NA_real_)
+        value <- gradient[block$index]
+        drop(crossprod(value, block$inverse %*% value)) / length(value)
+    }, numeric(1))
+}
 
-l1ou_clade_variance_statistic <- function(tree, tip.score, min.clade.size=3L){
+l1ou_clade_variance_statistic <- function(tree, tip.score, min.clade.size=3L,
+                                          clade.design=NULL){
     keep <- is.finite(tip.score)
     if(sum(keep) < 2L * min.clade.size) return(NA_real_)
-    Z <- generate_design_matrix(tree, "simpX") > 0
+    Z <- if(is.null(clade.design)) generate_design_matrix(tree, "simpX") > 0 else
+        clade.design
     values <- vapply(seq_len(ncol(Z)), function(edge){
         inside <- Z[, edge] & keep
         outside <- !Z[, edge] & keep
@@ -481,7 +486,7 @@ l1ou_clade_variance_statistic <- function(tree, tip.score, min.clade.size=3L){
 
 
 l1ou_residual_statistics <- function(standardized, tree, tip.score,
-                                     min.clade.size=3L){
+                                     min.clade.size=3L, clade.design=NULL){
     standardized <- standardized[is.finite(standardized)]
     if(!length(standardized)){
         return(c(max.absolute=NA, skewness=NA, excess.kurtosis=NA,
@@ -497,7 +502,7 @@ l1ou_residual_statistics <- function(standardized, tree, tip.score,
         excess.kurtosis=abs(kurtosis),
         tail.fraction=mean(abs(standardized) > 2),
         clade.variance.ratio=l1ou_clade_variance_statistic(
-            tree, tip.score, min.clade.size
+            tree, tip.score, min.clade.size, clade.design
         )
     )
 }
@@ -506,8 +511,8 @@ l1ou_residual_statistics <- function(standardized, tree, tip.score,
 #' Diagnose numerical and residual problems in a fitted model
 #'
 #'@param model fitted object of class \code{"l1ou"}.
-#'@param max.dense.dimension largest observed response dimension for which a
-#' dense residual-whitening covariance is constructed.
+#'@param max.dense.dimension largest full response dimension (tips times
+#' traits, including missing entries) for constructing a dense covariance.
 #'@param nsim number of fitted-model predictive simulations used for absolute
 #' adequacy and clade-rate diagnostics. Zero skips simulation calibration.
 #'@param seed optional deterministic simulation seed.
@@ -549,42 +554,32 @@ diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
         l1ou_standardized_trait_correlation(
             residual.matrix, tip.trait.covariance
         )
+    clade.design <- if(length(standardized)){
+        generate_design_matrix(model$tree, "simpX") > 0
+    } else NULL
     observed.statistics <- l1ou_residual_statistics(
-        standardized, model$tree, tip.score, min.clade.size
+        standardized, model$tree, tip.score, min.clade.size, clade.design
     )
     simulated.statistics <- NULL
     predictive.p.value <- stats::setNames(
         rep(NA_real_, length(observed.statistics)), names(observed.statistics)
     )
     if(nsim > 0L && !is.null(projected$projection)){
-        covariance.full <- l1ou_simulation_covariance(model)
-        observed.index <- which(projected$observed)
-        precision <- chol2inv(projected$factor)
-        n <- nrow(Y)
+        simulation.factor <- t(projected$factor)
+        precision <- projected$precision
         simulated.statistics <- with_l1ou_seed(seed, t(replicate(nsim, {
-            residual.full <- draw_zero_mean_gaussian(covariance.full)
-            residual.obs <- residual.full[observed.index]
-            whitened <- drop(forwardsolve(
-                t(projected$factor), matrix(residual.obs, ncol=1L)
-            ))
+            whitened <- stats::rnorm(nrow(simulation.factor))
+            residual.obs <- drop(simulation.factor %*% whitened)
             simulated.standardized <- if(ncol(projected$projection)){
                 drop(crossprod(projected$projection, whitened))
             } else numeric()
             gradient <- drop(precision %*% residual.obs)
-            simulated.tip.score <- vapply(seq_len(n), function(i){
-                global <- i + (seq_len(ncol(Y)) - 1L) * n
-                local <- match(global, observed.index, nomatch=0L)
-                local <- local[local > 0L]
-                if(!length(local)) return(NA_real_)
-                block <- precision[local, local, drop=FALSE]
-                solved <- tryCatch(solve(block, gradient[local]),
-                                   error=function(e) NULL)
-                if(is.null(solved)) return(NA_real_)
-                drop(crossprod(gradient[local], solved)) / length(local)
-            }, numeric(1))
+            simulated.tip.score <- l1ou_tip_residual_scores(
+                gradient, projected$tip.blocks
+            )
             l1ou_residual_statistics(
                 simulated.standardized, model$tree, simulated.tip.score,
-                min.clade.size
+                min.clade.size, clade.design
             )
         })))
         colnames(simulated.statistics) <- names(observed.statistics)
@@ -758,12 +753,13 @@ l1ou_inference_parameters <- function(object){
 #'@param nsim number of parametric bootstrap replicates.
 #'@param seed optional random seed.
 #'@param selection whether bootstrap refits condition on the selected shift
-#' configuration or repeat the complete shift search. For a full search, an
+#' configuration and convergence constraints or repeat the complete shift
+#' search, including convergence discovery for convergent inputs. For a full search, an
 #' original shift coefficient is recorded as zero when its exact edge is not
 #' selected; exact-edge reselection probabilities are returned as attributes.
 #'@param interval percentile or basic bootstrap interval.
 #'@param ... additional arguments (currently ignored).
-#'@return A matrix with lower and upper confidence limits. Failed bootstrap
+#'@return A matrix with parameter row names and lower and upper confidence limits. Failed bootstrap
 #' refits are omitted and reported in an attribute.
 #'@export
 confint.l1ou <- function(object, parm, level=0.95,
@@ -811,22 +807,12 @@ confint.l1ou <- function(object, parm, level=0.95,
 
     nsim <- l1ou_integer_argument(nsim, "nsim", 2L)
     simulations <- simulate(object, nsim=nsim, seed=seed)
-    opt <- make_nested_l1ou_options(object$l1ou.options)
-    opt$use.saved.scores <- FALSE
     failures <- character(length(simulations))
     fits <- lapply(seq_along(simulations), function(i){
         Y <- simulations[[i]]
         tryCatch({
-            if(selection == "full"){
-                estimate_shift_configuration(
-                    object$tree, Y, l1ou.options=opt
-                )
-            } else{
-                fit_OU(
-                    object$tree, Y, as.integer(object$shift.configuration),
-                    cr.regimes=object$convergent.regimes, l1ou.options=opt
-                )
-            }
+            refit_l1ou_model(object, Y=Y, selection=selection,
+                             overrides=list(compute.hessian=FALSE))
         }, error=function(e){
             failures[[i]] <<- conditionMessage(e)
             NULL
@@ -874,6 +860,7 @@ confint.l1ou <- function(object, parm, level=0.95,
         }
         limits
     }, numeric(2)))
+    rownames(result) <- parm
     colnames(result) <- paste0(round(c(alpha, 1-alpha)*100, 1), "%")
     attr(result, "successful") <- sum(successful)
     attr(result, "failed") <- sum(!successful)
@@ -900,7 +887,8 @@ confint.l1ou <- function(object, parm, level=0.95,
 #' a matrix with one column per trait for a full-covariance diagonal-alpha fit.
 #' Zero may be included to inspect the Brownian-motion boundary under a fixed
 #' root model.
-#'@param keep.fits retain successful fitted models as an attribute.
+#'@param keep.fits retain position-aligned fitted models as an attribute, with
+#' \code{NULL} for failed grid rows.
 #'@return A data frame containing candidate alpha values, log likelihoods,
 #' relative likelihood deviances, information scores, and failure messages.
 #'@export
@@ -930,22 +918,20 @@ profile_alpha_l1ou <- function(model, alpha.grid, keep.fits=FALSE){
     fits <- vector("list", nrow(grid))
     failures <- character(nrow(grid))
     for(i in seq_len(nrow(grid))){
-        opt <- make_nested_l1ou_options(model$l1ou.options)
-        opt$alpha.lower.bound <- as.numeric(grid[i, ])
-        opt$alpha.upper.bound <- as.numeric(grid[i, ])
-        opt$alpha.starting.value <- as.numeric(grid[i, ])
-        fits[[i]] <- tryCatch(
-            fit_OU(
-                model$tree, model$Y,
-                as.integer(model$shift.configuration),
-                cr.regimes=model$convergent.regimes,
-                l1ou.options=opt
+        fits[i] <- list(tryCatch(
+            refit_l1ou_model(
+                model, overrides=list(
+                    alpha.lower.bound=as.numeric(grid[i, ]),
+                    alpha.upper.bound=as.numeric(grid[i, ]),
+                    alpha.starting.value=as.numeric(grid[i, ]),
+                    compute.hessian=FALSE
+                )
             ),
             error=function(e){
                 failures[[i]] <<- conditionMessage(e)
                 NULL
             }
-        )
+        ))
     }
     log.likelihood <- vapply(fits, function(fit){
         if(is.null(fit)) NA_real_ else as.numeric(logLik(fit))
