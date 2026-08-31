@@ -19,4 +19,5 @@ navbar:
 articles:
   - title: Inference
     contents:
+      - getting-started
       - multivariate-inference

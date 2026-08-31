@@ -11,17 +11,22 @@ vignette: >
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
 ```
 
-This workflow separates three questions that should not be conflated:
+This workflow separates three questions:
 
 1. where the adaptive optimum may have shifted;
 2. whether evolutionary innovations are correlated among traits; and
-3. how much uncertainty is introduced by model and shift selection.
+3. how much uncertainty model and shift selection introduce.
 
-Start by validating and, if desired, normalizing the data. The normalization
-factor is retained so rate parameters can be converted back to the original
-tree-time unit.
+See [getting started](getting-started.html) for input validation, observation
+error, and the interpretation of search and bootstrap diagnostics.
 
-```{r, purl=FALSE}
+## Prepare and fit correlated traits
+
+`adjust_data()` normalizes branch lengths by default. Set `normalize = FALSE`
+to keep the input time scale; otherwise the stored factor allows conversion of
+rate estimates back to that scale. Repair remains a separate, opt-in operation.
+
+```{r prepare-data, purl=FALSE}
 library(kfl1ou)
 data(lizard.tree, lizard.traits)
 
@@ -30,20 +35,25 @@ tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
 dat <- adjust_data(tree, lizard.traits[keep, 1:2], quietly = TRUE)
 ```
 
-Fit a full evolutionary innovation covariance only when there are enough
-species and residual contrasts for the number of traits. A distinct alpha for
-each trait is more flexible but also less identifiable.
+The default `trait.covariance = "diagonal"` fits separate trait likelihoods,
+with a distinct alpha for each trait. `trait.covariance = "full"` estimates a
+positive-definite evolutionary innovation covariance, `Omega`. With its
+default `alpha.structure = "shared"`, the covariance is separable:
+`Omega %x% C(alpha)`. `alpha.structure = "diagonal"` instead allows a distinct
+adaptation rate for each trait while retaining correlated innovations. A
+fully non-diagonal drift matrix is outside the implemented model.
 
-```{r, purl=FALSE}
-fit <- estimate_shift_configuration(
-  dat$tree,
-  dat$Y,
-  max.nShifts = 0,
-  criterion = "BIC",
-  trait.covariance = "full",
-  alpha.structure = "diagonal",
-  likelihood.engine = "auto",
-  optimizer.starts = 1
+The initial example fixes the configuration to zero shifts. A fixed fit does
+not discover shifts; `search.max.nShifts` specifies the limit only if a later
+method repeats shift selection. One optimizer start keeps this introductory
+example quick; the calibration examples below use the default multiple starts.
+
+```{r fixed-fit, purl=FALSE}
+fit <- fit_OU(
+  dat$tree, dat$Y, shift.configuration = integer(),
+  criterion = "BIC", trait.covariance = "full",
+  alpha.structure = "diagonal", likelihood.engine = "auto",
+  optimizer.starts = 1, search.max.nShifts = 2
 )
 
 evolutionary_vcov(fit)
@@ -51,44 +61,140 @@ fit$tip.trait.correlation
 original_time_parameters(fit)
 ```
 
-Use parametric calibration for covariance comparison and repeat the complete
-shift search when uncertainty from shift selection is scientifically relevant.
+`trait.covariance` and `trait.correlation` describe instantaneous innovations.
+`tip.trait.covariance` and `tip.trait.correlation` describe the induced marginal
+residual association at an ultrametric tip. When alpha differs among traits,
+these are not generally equal. `joint.logLik` is the joint likelihood, not a
+sum of independent trait likelihoods. Use `evolutionary_vcov()` for innovation
+covariance; `vcov()` follows R's coefficient sampling-covariance convention.
 
-The following inferential calibration is intentionally not run while building
-the vignette because hundreds of complete model searches are computationally
-expensive. Run it for a scientific analysis after choosing an adequate
-simulation count.
+## Likelihood engines, regularization and information criteria
 
-```{r calibration, eval=FALSE, purl=FALSE}
-fit <- estimate_shift_configuration(
-  dat$tree,
-  dat$Y,
-  max.nShifts = 2,
-  criterion = "BIC",
-  trait.covariance = "full",
-  alpha.structure = "diagonal",
-  likelihood.engine = "auto"
-)
+Both `"dense"` and `"pruning"` support trait-specific missing entries, known
+observation variances, estimated measurement error, and fixed or stationary
+root models. `"auto"` retains the matrix-normal profile for complete,
+unregularized shared-alpha data and chooses pruning for larger non-separable
+problems. Explicit engine requests are honored. Pruning initialization and
+`simulate(..., engine = "tree")` do not construct the full trait-by-tip
+covariance matrix.
 
-comparison <- compare_trait_covariance(
-  dat$tree, dat$Y, nboot = 200, seed = 1, nCores = 2
-)
+Full covariance needs enough residual contrasts. With n tips and p traits,
+unregularized searches cap the number of shifts at n - p - 1; explicit invalid
+fixed configurations still fail. Inspect `search.diagnostics$estimability`.
+For many traits or few contrasts, `covariance.regularization = "shrinkage"`
+can stabilize covariance estimates. `regularization.lambda` may be supplied or
+estimated from phylogenetically whitened residuals. Dense and pruning engines
+use the same correlation-penalty interpretation, including with missing data.
 
-support <- l1ou_bootstrap_support(
-  fit, nItrs = 200, type = "parametric", seed = 2,
-  multicore = TRUE, nCores = 2
-)
-summarize_shift_uncertainty(support, dat$tree)
+Full covariance supports ordinary BIC and a localization-aware multivariate
+pBIC extension. In complete, unconstrained p-trait models, adding one shift
+adds p mean parameters plus one location parameter to BIC, not always two.
+Missingness and convergence constraints require the parameter-count and sample
+size rules described by `configuration_ic()`. Multivariate pBIC is a sensitivity
+criterion with an explicit branch-location penalty. Any information criterion
+at a regularized estimate is also a sensitivity score rather than a calibrated
+marginal-likelihood approximation; report comparisons with unregularized BIC.
 
-confint(
-  fit, method = "parametric", selection = "full",
-  interval = "basic", nsim = 200, seed = 3
-)
+```{r diagnostics, purl=FALSE}
+diagnostics <- diagnose_l1ou(fit)
+diagnostics[c("convergence", "boundary", "trait.covariance.condition")]
 ```
 
-Regularized covariance estimates can stabilize difficult fits, but their BIC
-values are sensitivity scores evaluated at penalized estimates. Report both
-regularized and unregularized results, optimizer boundaries, bootstrap failure
-rates, tree/root-model sensitivity, and the candidate configurations actually
-evaluated. Exact historical shift timing is not identifiable from extant-tip
-data alone.
+Boundary estimates, ill-conditioned covariance, or unavailable diagnostics need
+investigation. `profile_alpha_l1ou()`, `profile_measurement_error_l1ou()`, and
+`sensitivity_l1ou()` help assess weak identification. For simulation-calibrated
+checks, pass an adequate `nsim` to `diagnose_l1ou()` or
+`check_rate_heterogeneity()`; `nsim = 0` skips calibration.
+
+## Covariance comparison with shift selection
+
+The remaining blocks are intentionally not run during ordinary vignette
+builds, because hundreds of complete searches are expensive. Choose the
+simulation count and search limits for the scientific question. Development
+smoke checks execute these same blocks with only a few simulations; those
+counts are insufficient for inference.
+
+```{r simulation-count, eval=FALSE, purl=FALSE}
+n_replicates <- 200L
+```
+
+`compare_trait_covariance()` never selects shifts on the observed data. Its
+`shift.configuration` defaults to no shifts, and `selection` defaults to
+`"conditional"`. To include selection in this comparison, first run the same
+**diagonal-covariance BIC search** used inside its bootstrap. Pass the selected
+configuration, search limit, root model and search strategy explicitly.
+If using observation error, pass the same error settings to both calls as well.
+
+```{r covariance-comparison, eval=FALSE, purl=FALSE}
+max_shifts <- 2L
+search_strategy <- "auto"
+root_model <- "OUfixedRoot"
+null_search <- estimate_shift_configuration(
+  dat$tree, dat$Y, max.nShifts = max_shifts, criterion = "BIC",
+  trait.covariance = "diagonal", root.model = root_model,
+  search.strategy = search_strategy
+)
+comparison <- compare_trait_covariance(
+  dat$tree, dat$Y,
+  shift.configuration = null_search$shift.configuration,
+  selection = "full", search.max.nShifts = max_shifts,
+  search.strategy = search_strategy, root.model = root_model,
+  alpha.structure = "diagonal",
+  nboot = n_replicates, seed = 1, nCores = 2
+)
+comparison[c("selection", "search.max.nShifts", "successful", "failed",
+             "failure.messages", "p.value", "p.value.mcse")]
+```
+
+Both observed-data fits use `null_search$shift.configuration`. Each null
+simulation reselects shifts with diagonal covariance and BIC, then refits both
+covariance models to that replicate's selected configuration. Thus observed
+and simulated data use the same selection rule. For a prespecified fixed
+configuration, use `selection = "conditional"` instead. A separate shift search
+using full covariance is not automatically inherited by this comparison.
+The default trait-specific-alpha full model nests the diagonal model; a
+shared-alpha full alternative is non-nested and needs bootstrap calibration.
+Regularized comparisons are reported as sensitivity analyses.
+
+## Uncertainty after a full-covariance shift search
+
+For inference under the full-covariance model itself, discover its shifts
+separately. The comparison above addresses a different selection procedure.
+This small example allows at most one shift to keep its running time manageable;
+choose a suitable limit for the scientific question and inspect search coverage.
+
+```{r correlated-search, eval=FALSE, purl=FALSE}
+fit_correlated <- estimate_shift_configuration(
+  dat$tree, dat$Y, max.nShifts = 1, criterion = "BIC",
+  trait.covariance = "full", alpha.structure = "diagonal",
+  likelihood.engine = "auto", search.strategy = "auto"
+)
+fit_correlated$search.diagnostics
+```
+
+```{r bootstrap, eval=FALSE, purl=FALSE}
+support <- l1ou_bootstrap_support(
+  fit_correlated, nItrs = n_replicates, type = "parametric", seed = 2,
+  multicore = TRUE, nCores = 2
+)
+support[c("attempted", "successful", "failed", "failure.messages")]
+summarize_shift_uncertainty(support, dat$tree)
+```
+
+```{r full-intervals, eval=FALSE, purl=FALSE}
+intervals <- confint(
+  fit_correlated, method = "parametric", selection = "full",
+  interval = "basic", nsim = n_replicates, seed = 3
+)
+intervals
+attr(intervals, "failed")
+attr(intervals, "failure.messages")
+```
+
+These resamples repeat the stored full-covariance search and its one-shift
+limit. Inspect failed refits, boundary estimates, and the effective number of
+samples per interval. Exact-edge coefficients and canonical tip partitions
+answer different questions: equivalent placements should not be interpreted
+as biological disagreement. Report tree/root-model sensitivity and which
+candidate configurations were evaluated. Exact historical shift timing is
+not identifiable from extant-tip data alone.

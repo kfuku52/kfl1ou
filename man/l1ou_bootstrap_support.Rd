@@ -58,12 +58,14 @@ With a supplied \code{seed}, sequential and parallel runs use the
         This component keeps its upstream name for backward compatibility.
         Replicates that fail during model fitting are skipped; the function
         throws an error only if all bootstrap replicates fail.
-        For multivariate data, each trait is whitened using its observed
-        marginal covariance; simulated replicates retain the original
-        trait-specific missingness pattern.
-        When \code{trait.covariance = "full"}, all observed trait-tip entries
-        are whitened and simulated jointly so the fitted cross-trait
-        evolutionary covariance is retained.
+        Parametric replicates use \code{simulate(..., engine = "tree")}
+        to generate OU innovations along branches without constructing the
+        full trait-by-tip covariance matrix. Only \code{type = "residual"}
+        uses whitening and residual resampling: each trait is whitened by
+        its observed marginal covariance in diagonal mode; full covariance
+        whitens all observed trait-tip entries jointly. Both procedures
+        retain the original trait-specific missingness pattern and use the
+        fitted cross-trait covariance when \code{trait.covariance = "full"}.
 }
 \examples{
 

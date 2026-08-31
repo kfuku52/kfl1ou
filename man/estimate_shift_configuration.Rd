@@ -86,13 +86,17 @@ ensemble path.}
 \item{ensemble.seed}{deterministic seed used for ensemble subsampling without
 changing the caller's random-number state.}
 
-\item{nCores}{maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
-then it runs sequentially. Otherwise, when fork-based parallelism is
-available, \code{kfl1ou} may use up to \code{nCores} forked workers via
-\code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
-overall computation respects this budget when possible.}
+\item{nCores}{maximum total CPU budget for \code{kfl1ou}. One runs
+sequentially; larger values allow fork workers on Unix-like systems or
+socket-cluster workers on Windows. BLAS/OpenMP threads are limited when
+supported, and nested workers run sequentially to respect this budget.}
 
-\item{rescale}{logical. If TRUE, the columns of the trait matrix are first rescaled so that all have the same l2-norm. If TRUE, the scores will be based on the rescale one.}
+\item{rescale}{logical. If TRUE, multivariate sparse-path candidate generation
+centers each trait and scales it using its input l2-norm and a common factor;
+known observation variances receive the corresponding squared scale factor.
+Candidate scores and the final fit always use the original trait units.
+Exhaustive and univariate searches do not use this rescaling. Changing it
+can change the sparse-path candidate set, but does not redefine the score.}
 
 \item{edge.length.threshold}{minimum edge length that is considered non-zero. Branches with shorter length are considered as soft polytomies, disallowing shifts on such branches.}
 
@@ -149,11 +153,13 @@ rebuilt for each new public fit or search.}
 \item{Y}{input trait vector/matrix.}
 \item{tree}{input tree.}
 \item{shift.configuration}{estimated shift positions, i.e. vector of indices of edges where the estimated shifts occur.}
-\item{shift.values}{estimates of the shift values.}
-\item{shift.means}{estimates change of the expectation of the shift values}
+\item{shift.values}{estimated changes in OU optima, with rows indexed by
+shift edges and columns by traits. Unidentifiable optimum changes, such as
+at the Brownian boundary, are NA. Empty when no shifts are fitted.}
+\item{shift.means}{estimated contributions of the shifts to expected tip
+means, with the same shift-edge and trait indexing as \code{shift.values}.}
 \item{nShifts}{estimated number of shifts.}
 \item{optima}{optimum values of the trait at tips. If the data are multivariate, this is a matrix where each row corresponds to a tip.}
-\item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
 \item{alpha}{maximum likelihood estimate(s) of the adaptation rate
 \eqn{\alpha}{alpha}. Full trait covariance uses a shared value or one value
 per trait according to \code{alpha.structure}.}
@@ -175,7 +181,11 @@ likelihood. It cannot be decomposed into independent per-trait likelihoods.}
 \item{mu}{fitted values, i.e. estimated trait means.}
 \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 \item{score}{information criterion value of the estimated shift configuration.}
-\item{profile}{list of shift configurations sorted by their ic scores.}
+\item{parameter.count}{number of estimated continuous parameters.}
+\item{information.parameter.count}{continuous parameter count plus one
+location parameter per shift, used for BIC with complete data.}
+\item{profile}{list containing aligned \code{scores} and
+\code{configurations}, sorted by information-criterion score.}
 \item{search.diagnostics}{search strategy, coverage within the admissible
 configuration space, any residual-degree-of-freedom restriction, and counts
 of attempted, successful, and failed ensemble paths with failure messages.}

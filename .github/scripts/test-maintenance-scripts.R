@@ -2,6 +2,7 @@ source(file.path(".github", "scripts", "check-metadata.R"), local = TRUE)
 source(file.path(".github", "scripts", "ci-helpers.R"), local = TRUE)
 source(file.path(".github", "scripts", "ci-scope.R"), local = TRUE)
 source(file.path("tools", "update-metadata.R"), local = TRUE)
+source(file.path("tools", "check-generated.R"), local = TRUE)
 
 fixture <- tempfile("kfl1ou-metadata-")
 dir.create(fixture)
@@ -105,5 +106,46 @@ pages <- collect_osv_pages(list(list(package="ape")), function(queries){
 stopifnot(identical(
     vapply(pages[[1L]]$vulns, `[[`, character(1), "id"), c("A", "B")
 ))
+
+# A generated file must match HEAD, even if it has already been staged.
+check_generated_fixture <- function() {
+    root <- tempfile("kfl1ou-generated-")
+    dir.create(root)
+    on.exit(unlink(root, recursive = TRUE, force = TRUE), add = TRUE)
+    git <- function(...) {
+        status <- system2("git", c("-C", shQuote(root), vapply(
+            c(...), shQuote, character(1)
+        )), stdout = TRUE, stderr = TRUE)
+        stopifnot(is.null(attr(status, "status")))
+        invisible(status)
+    }
+    git("init", "--quiet")
+    git("config", "user.name", "Generated-file fixture")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "commit.gpgsign", "false")
+    dir.create(file.path(root, "empty-hooks"))
+    git("config", "core.hooksPath", file.path(root, "empty-hooks"))
+    writeLines("export(original)", file.path(root, "NAMESPACE"))
+    git("add", "NAMESPACE")
+    git("commit", "--quiet", "-m", "Fixture baseline")
+    stopifnot(isTRUE(check_generated(root)))
+    rejects <- function() tryCatch({
+        check_generated(root)
+        FALSE
+    }, error = function(error) grepl("differ from HEAD", conditionMessage(error)))
+    writeLines("export(changed)", file.path(root, "NAMESPACE"))
+    stopifnot(rejects())
+    git("add", "NAMESPACE")
+    stopifnot(rejects())
+    git("commit", "--quiet", "-m", "Reviewed generated update")
+    stopifnot(isTRUE(check_generated(root)))
+    dir.create(file.path(root, "man"))
+    writeLines("untracked generated page", file.path(root, "man", "new.Rd"))
+    stopifnot(rejects())
+    unlink(file.path(root, "man", "new.Rd"))
+    writeLines("unrelated changes are allowed", file.path(root, "README.md"))
+    stopifnot(isTRUE(check_generated(root)))
+}
+check_generated_fixture()
 
 message("Maintenance-script fixtures passed.")

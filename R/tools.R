@@ -159,15 +159,18 @@ l1ou_logical_argument <- function(value, name){
 #'
 #' Returns a new tree and new data matrix, where the tree edges are in
 #' postorder, the data row names match the order of the tree tip labels, and
-#' common pathological inputs are validated. Tree repair is opt-in.
+#' common pathological inputs are validated. Tree repair is opt-in; uniform
+#' normalization to unit tree height is enabled by default.
 #'
 #'@param tree ultrametric tree of class phylo with branch lengths.
 #'@param Y trait vector/matrix.
-#'@param normalize logical. If TRUE, normalizes branch lengths to a unit tree height.
+#'@param normalize logical. If TRUE (the default), divides branch lengths by
+#' the tree height. Use FALSE to retain the input time unit. The division factor
+#' is stored for \code{\link{original_time_parameters}}.
 #'@param quietly logical. If FALSE, changes in tree/trait are printed.
 #'@param repair.tree logical. If TRUE, repairs non-positive branch lengths and
-#' nearly ultrametric trees before normalization. The default is FALSE so branch
-#' lengths are never changed silently.
+#' nearly ultrametric trees before normalization. The default FALSE disables
+#' repair, but does not disable the separate \code{normalize = TRUE} default.
 #'@param min.edge.length positive numeric lower bound used when repairing short
 #' or non-positive branch lengths.
 #'@param ultrametric.tolerance maximum accepted relative total branch-length
@@ -181,7 +184,10 @@ l1ou_logical_argument <- function(value, name){
 #' invariant traits.
 #'
 #'@return 
-#' \item{tree}{tree of class phylo, with the same topology as the input \code{tree} but adjusted edge order.}
+#' \item{tree}{tree of class phylo with edges in postorder. If tips were
+#' removed, this is the induced subtree on the retained tips; otherwise the
+#' input topology is preserved. Branch lengths reflect any requested repair
+#' and normalization.}
 #' \item{Y}{trait vector/matrix with adjusted row names and row order.}
 #' \item{tree.scale}{factor by which original branch lengths were divided when
 #' normalization was requested; equal to one otherwise.}

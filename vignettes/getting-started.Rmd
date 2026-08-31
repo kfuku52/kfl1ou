@@ -1,0 +1,210 @@
+---
+title: "Data preparation, shift search and uncertainty"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Data preparation, shift search and uncertainty}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE, purl=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+This guide uses a small subset of the bundled lizard data so that the examples
+run quickly. For correlated traits, continue to the
+[multivariate inference guide](multivariate-inference.html).
+
+## Prepare the tree and traits
+
+```{r prepare-data, purl=FALSE}
+library(kfl1ou)
+data(lizard.tree, lizard.traits)
+
+keep <- lizard.tree$tip.label[seq_len(12)]
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+Y <- lizard.traits[keep, 1, drop = FALSE]
+dat <- adjust_data(tree, Y, quietly = TRUE)
+dat$tree.scale
+```
+
+`adjust_data()` aligns trait rows to tip labels and orders edges in postorder.
+The defaults have three other effects:
+
+- `normalize = TRUE` divides every branch length by the tree height. The tree
+  retains that factor, and `original_time_parameters(fit)` converts alpha and
+  evolutionary variance rates back to the original time unit. Optima and
+  observation-error variances stay in trait units. Use `normalize = FALSE` to
+  keep the input time scale from the start.
+- `drop.all.missing = TRUE` removes tips with no observed trait values, returning
+  the induced subtree. Check `removed.tips`; the output need not have the same
+  tip set as the input. For multivariate data, partial missingness is retained.
+- `drop.invariant = TRUE` removes invariant columns. Check `removed.traits` and
+  use `invariant.tolerance` to control this decision.
+
+Repair is separate from normalization and is disabled by default. If a nearly
+ultrametric tree needs bounded repair, request it explicitly:
+
+```{r bounded-repair, eval=FALSE, purl=FALSE}
+repaired <- adjust_data(
+  tree, Y, normalize = FALSE, repair.tree = TRUE,
+  ultrametric.tolerance = 0.01
+)
+```
+
+Repair fails if it cannot meet the allowed relative total branch-length change.
+Review the reported change before using the fitted shift positions. If tips or
+traits are removed, subset known observation variances to the retained labels
+and columns as well.
+
+## Search and inspect what was searched
+
+```{r shift-search, fig.width=8, fig.height=6, purl=FALSE}
+fit <- estimate_shift_configuration(
+  dat$tree, dat$Y, criterion = "BIC", max.nShifts = 2,
+  search.strategy = "auto"
+)
+plot(fit)
+fit$search.diagnostics
+original_time_parameters(fit)
+```
+
+`search.strategy = "auto"` enumerates small configuration spaces and otherwise
+uses ensemble sparse paths. The other choices force `"exhaustive"`, `"lasso"`,
+or `"ensemble"`. An ensemble combines the full-data path with deterministically
+seeded subsampled paths. For multivariate sparse paths, `rescale` affects
+candidate generation; scores and returned fits remain in the original trait
+units. Exhaustive and univariate searches do not use that rescaling.
+
+The search space is bounded by candidate edges, the maximum number of shifts,
+and estimability. In particular, unregularized full covariance with n tips and
+p traits caps the search at n - p - 1 shifts. Inspect these diagnostics:
+
+| Field in `fit$search.diagnostics` | Interpretation |
+|---|---|
+| `configuration.space.size` | Size of the requested raw configuration space after restrictions. |
+| `evaluated.configurations` and `coverage` | Evaluated candidates and coverage within that space; equivalent placements can be collapsed. |
+| `globally.optimal` | Whether the discrete search enumerated the admissible space; not a guarantee of global numerical optimization or historical identifiability. |
+| `estimability` | Requested/effective shift limit and the reason for any reduction. |
+| `ensemble` | Attempted, successful and failed extra paths, with failure messages. Zero attempts are expected for an exhaustive search. |
+
+For a sparse search, model averaging is limited to evaluated candidates. A
+large failure count or low search coverage calls for investigation or broader
+search, not an interpretation of the best score as certainty.
+
+## Known and estimated observation error
+
+Known `input_error` values are **variances**, not standard deviations. They may
+be tip-specific vectors or tip-by-trait matrices. `measurement_error = TRUE`
+estimates an additional shared observation variance `sigma2_error` per trait.
+The two sources can be used separately or together:
+
+| Input | Covariance contribution |
+|---|---|
+| `input_error` only | Known tip-specific diagonal variances. |
+| `measurement_error = TRUE` only | An estimated variance per trait, shared across tips. |
+| Both | Known variances plus the estimated extra variance. |
+
+The following values are illustrative; replace them with measurement-derived
+variances for an analysis.
+
+```{r observation-error, purl=FALSE}
+known_tip_variances <- matrix(
+  0.01, nrow(dat$Y), ncol(dat$Y), dimnames = dimnames(dat$Y)
+)
+fit_with_error <- estimate_shift_configuration(
+  dat$tree, dat$Y, criterion = "BIC", max.nShifts = 1,
+  input_error = known_tip_variances, measurement_error = TRUE
+)
+fit_with_error$sigma2_error
+```
+
+For one trait the total covariance is
+`Sigma_phylo + Diag(input_error) + sigma2_error I`.
+`fit_l1ou_replicates()` instead accepts replicate-by-trait measurements and
+species labels, estimates each species mean and its sampling variance, and
+propagates that variance as known input error. Its singleton handling is an
+explicit modelling choice; inspect the returned replicate summaries.
+
+## Diagnostics and uncertainty
+
+```{r diagnostics, purl=FALSE}
+diagnostics <- diagnose_l1ou(fit)
+diagnostics[c("convergence", "boundary", "trait.covariance.condition")]
+fit$alpha
+fit$l1ou.options$alpha.upper
+
+averaged <- model_average_l1ou(fit, delta.max = 10)
+utils::head(data.frame(weight = as.numeric(averaged$partition.weights)), 5L)
+```
+
+This table shows the five largest weights over canonical tip partitions. The
+names in `averaged$partition.weights` identify the corresponding partitions.
+
+Unavailable optimizer diagnostics are `NA`, not evidence of convergence. Check
+alpha against its bounds and use `profile_alpha_l1ou()` and
+`alpha_to_half_life()` to assess weak identification. `vcov()` returns
+coefficient sampling covariance, when available; `evolutionary_vcov()` returns
+evolutionary innovation covariance.
+
+The following blocks are intentionally not run during ordinary vignette
+builds. Choose an adequate simulation count for scientific inference; the
+small counts used by development smoke checks only verify that the code runs.
+
+```{r simulation-count, eval=FALSE, purl=FALSE}
+n_replicates <- 200L
+```
+
+```{r bootstrap, eval=FALSE, purl=FALSE}
+support <- l1ou_bootstrap_support(
+  fit, nItrs = n_replicates, type = "parametric", seed = 2,
+  multicore = TRUE, nCores = 2
+)
+support[c("attempted", "successful", "failed", "failure.messages")]
+summarize_shift_uncertainty(support, dat$tree)
+```
+
+Parametric bootstrap simulates the fitted OU process directly along branches,
+including fitted observation error, and repeats the configured shift search.
+`type = "residual"` uses the historical whitening and residual-resampling
+procedure instead. Both retain trait-specific missingness. Full trait
+covariance uses joint cross-trait simulation or whitening, respectively.
+Unix-like systems use fork workers and Windows uses socket clusters; nested
+model fits respect the total CPU budget.
+
+```{r full-intervals, eval=FALSE, purl=FALSE}
+intervals <- confint(
+  fit, method = "parametric", selection = "full",
+  interval = "basic", nsim = n_replicates, seed = 3
+)
+intervals
+attr(intervals, "failed")
+attr(intervals, "failure.messages")
+```
+
+`selection = "conditional"` keeps the selected shift and convergence constraints;
+`"full"` repeats the stored search, including its shift limit, and repeats
+convergence discovery for convergent inputs. If starting from `fit_OU()` rather
+than a search result, set `search.max.nShifts` explicitly: its default is at
+least one, not an unlimited search. Exact-edge coefficient intervals and tip
+partitions answer different questions. Root-complement or other equivalent
+edge placements can describe the same partition, so bootstrap summaries and
+model averaging also report canonical partitions and tip co-assignment.
+Failed refits are omitted; report their counts and messages rather than
+silently treating the requested simulation count as the successful count.
+
+For sensitivity to tree topology, `fit_l1ou_tree_ensemble()` fits alternative
+trees with the same tip labels and combines results through tip partitions.
+Use `sensitivity_l1ou()` for root-model and alpha-bound sensitivity and
+`check_rate_heterogeneity()` for simulation-calibrated clade-rate diagnostics.
+
+## Interpretation
+
+Shift configurations describe phylogenetically consistent trait clusters;
+extant tips alone generally cannot identify exact historical shift positions,
+counts or times. OU optima, rates and observation error can be weakly identified.
+Report sensitivity to bounds, root models, information criteria and resampling.
+pBIC for unconstrained shifts follows the original l1ou derivation; its extension
+to convergent equality constraints remains heuristic. Convergent models are
+refitted under those constraints, so returned coefficients, fitted values,
+likelihoods and variance parameters describe the constrained model.

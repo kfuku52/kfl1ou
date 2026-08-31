@@ -1,3 +1,21 @@
+# kfl1ou 3.0.7
+
+- Correct documentation for default tree normalization and tip removal,
+  sparse-path rescaling, multivariate BIC parameter counts, returned fields,
+  Windows parallelism, and parametric versus residual bootstrap.
+- Fix the manual installation route to avoid requiring vignette dependencies,
+  and document the prerequisites for builds that include the guides.
+- Provide a runnable README quick start and dedicated guides for preparation,
+  observation error, search diagnostics and correlated multivariate inference.
+  Make covariance-comparison examples use matching observed and bootstrap
+  shift-selection rules with explicit configurations and search limits.
+- Repair site links to licensing, provenance and development instructions;
+  check the generated site's internal links and assets before deployment.
+- Run the documented calibration blocks with small simulation counts in the
+  existing documentation CI job, using the current checkout's installation.
+- Make generated-file checks detect staged and untracked changes relative to
+  HEAD, and align the contributor workflow with that requirement.
+
 # kfl1ou 3.0.6
 
 - Fix univariate ensemble subsampling and report attempted, successful and failed

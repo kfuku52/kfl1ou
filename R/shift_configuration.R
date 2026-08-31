@@ -35,12 +35,16 @@
 #' ensemble path.
 #'@param ensemble.seed deterministic seed used for ensemble subsampling without
 #' changing the caller's random-number state.
-#'@param nCores maximum total CPU budget for \code{kfl1ou}. If \code{nCores=1}
-#' then it runs sequentially. Otherwise, when fork-based parallelism is
-#' available, \code{kfl1ou} may use up to \code{nCores} forked workers via
-#' \code{mclapply}, while BLAS/OpenMP threads are limited when supported so the
-#' overall computation respects this budget when possible.
-#'@param rescale logical. If TRUE, the columns of the trait matrix are first rescaled so that all have the same l2-norm. If TRUE, the scores will be based on the rescale one.
+#'@param nCores maximum total CPU budget for \code{kfl1ou}. One runs
+#' sequentially; larger values allow fork workers on Unix-like systems or
+#' socket-cluster workers on Windows. BLAS/OpenMP threads are limited when
+#' supported, and nested workers run sequentially to respect this budget.
+#'@param rescale logical. If TRUE, multivariate sparse-path candidate generation
+#' centers each trait and scales it using its input l2-norm and a common factor;
+#' known observation variances receive the corresponding squared scale factor.
+#' Candidate scores and the final fit always use the original trait units.
+#' Exhaustive and univariate searches do not use this rescaling. Changing it
+#' can change the sparse-path candidate set, but does not redefine the score.
 #'@param edge.length.threshold minimum edge length that is considered non-zero. Branches with shorter length are considered as soft polytomies, disallowing shifts on such branches.
 #'@param grp.delta internal (used when the data contain multiple traits). The input lambda sequence for the group lasso, in `grplasso', will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
 #'@param grp.seq.ub (used for multiple traits). The input lambda sequence for grplasso will be lambda.max*(0.5^seq(0, grp.seq.ub, grp.delta) ).
@@ -81,11 +85,13 @@
 #' \item{Y}{input trait vector/matrix.}
 #' \item{tree}{input tree.}
 #' \item{shift.configuration}{estimated shift positions, i.e. vector of indices of edges where the estimated shifts occur.}
-#' \item{shift.values}{estimates of the shift values.}
-#' \item{shift.means}{estimates change of the expectation of the shift values}
+#' \item{shift.values}{estimated changes in OU optima, with rows indexed by
+#' shift edges and columns by traits. Unidentifiable optimum changes, such as
+#' at the Brownian boundary, are NA. Empty when no shifts are fitted.}
+#' \item{shift.means}{estimated contributions of the shifts to expected tip
+#' means, with the same shift-edge and trait indexing as \code{shift.values}.}
 #' \item{nShifts}{estimated number of shifts.}
 #' \item{optima}{optimum values of the trait at tips. If the data are multivariate, this is a matrix where each row corresponds to a tip.}
-#' \item{edge.optima}{optimum values of the trait on the edges. If the data are multivariate, this is a matrix where each row corresponds to an edge.}
 #' \item{alpha}{maximum likelihood estimate(s) of the adaptation rate
 #' \eqn{\alpha}{alpha}. Full trait covariance uses a shared value or one value
 #' per trait according to \code{alpha.structure}.}
@@ -107,7 +113,11 @@
 #' \item{mu}{fitted values, i.e. estimated trait means.}
 #' \item{residuals}{residuals. These residuals are phylogenetically correlated.}
 #' \item{score}{information criterion value of the estimated shift configuration.}
-#' \item{profile}{list of shift configurations sorted by their ic scores.}
+#' \item{parameter.count}{number of estimated continuous parameters.}
+#' \item{information.parameter.count}{continuous parameter count plus one
+#' location parameter per shift, used for BIC with complete data.}
+#' \item{profile}{list containing aligned \code{scores} and
+#' \code{configurations}, sorted by information-criterion score.}
 #' \item{search.diagnostics}{search strategy, coverage within the admissible
 #' configuration space, any residual-degree-of-freedom restriction, and counts
 #' of attempted, successful, and failed ensemble paths with failure messages.}
@@ -1095,11 +1105,26 @@ make_parallel_candidate_search <- function(tree, Y, opt){
 #'@return Information criterion value of the given shift configuration.
 #'
 #'@details
-#'AICc gives the usual small-sample size modification of AIC. 
-#'BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
+#'AICc gives the small-sample modification of AIC. BIC penalizes the fitted
+#'continuous parameters and adds one shift-location parameter per shift. With
+#'complete data and unconstrained means for p traits, an additional shift adds
+#'p mean parameters and one location parameter: p + 1 in total, or two only
+#'in the univariate case.
+#'
+#'For diagonal trait covariance with missing entries, each trait's continuous
+#'parameter penalty uses the logarithm of its observed tip count; the shift
+#'location penalty uses the logarithm of the total tip count. Full covariance
+#'uses the joint likelihood and total tip count. Convergent constraints reduce
+#'the number of independent mean parameters. Fitted models report
+#'\code{parameter.count} and \code{information.parameter.count}; a single count
+#'does not replace the trait-specific sample sizes in an incomplete diagonal fit.
+#'
 #'mBIC is the modified BIC proposed by Ho and Ané (2014).
 #'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+#'pBICess replaces the determinant term with a sum of log effective sample
+#'sizes (ESS), similar to the ESS proposed by Ané (2008).
+#'Full covariance supports BIC and a localization-aware multivariate pBIC
+#'extension. Criteria evaluated at regularized estimates are sensitivity scores.
 #' 
 #'@examples
 #' 
@@ -1272,11 +1297,8 @@ configuration_ic <- function(tree, Y, shift.configuration,
 #'@return an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
 #'
 #'@details
-#'AICc gives the usual small-sample size modification of AIC. 
-#'BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
-#'mBIC is the modified BIC proposed by Ho and Ané (2014).
-#'pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-#'pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+#'See \code{\link{configuration_ic}} for information criteria, multivariate
+#'parameter counts, and the treatment of missing observations.
 #'
 #'When \code{cr.regimes} is supplied, the model is refitted under the equality
 #'constraints. Returned fitted values, residuals, optima, likelihoods, and
@@ -1479,7 +1501,6 @@ fit_OU_model <- function(tree, Y, shift.configuration, opt){
         shift.values <- numeric()
         shift.means <- numeric()
     }
-    # edge.optima = matrix(NA, nEdges, ncol(Y))
     intercept = alpha = sigma2 = sigma2_error = rep(NA, ncol(Y))
     logLik = rep(NA, ncol(Y))
 

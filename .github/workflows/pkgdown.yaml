@@ -32,9 +32,13 @@ jobs:
         with:
           extra-packages: any::pkgdown, local::.
           needs: website
+      - name: Check runnable documentation examples
+        run: Rscript tools/check-doc-examples.R --installed
       - name: Build site
         shell: Rscript {0}
         run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
+      - name: Check internal links and assets
+        run: python3 tools/check_site_links.py docs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: docs

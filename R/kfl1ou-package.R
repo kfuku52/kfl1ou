@@ -14,8 +14,12 @@
 #' \code{\link[=l1ou_bootstrap_support]{l1ou_bootstrap_support()}}, and
 #' \code{\link[=sensitivity_l1ou]{sensitivity_l1ou()}} before interpreting a
 #' selected model. See
-#' \code{vignette("multivariate-inference", package = "kfl1ou")} for a correlated
-#' multivariate workflow.
+#' \code{vignette("getting-started", package = "kfl1ou")} for preparation,
+#' observation error and search diagnostics, and
+#' \code{vignette("multivariate-inference", package = "kfl1ou")} for correlated
+#' traits. The guides are also available at
+#' \url{https://kfuku52.github.io/kfl1ou/articles/index.html} when local
+#' vignettes were omitted during installation.
 #'
 #' @section Model scope and interpretation:
 #' Shift locations identify phylogenetically consistent changes in expected

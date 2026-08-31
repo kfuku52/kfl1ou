@@ -94,11 +94,8 @@ an object of class l1ou similar to \code{\link{estimate_shift_configuration}}.
 Fits an OU model based on a given configuration
 }
 \details{
-AICc gives the usual small-sample size modification of AIC. 
-BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
-mBIC is the modified BIC proposed by Ho and Ané (2014).
-pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+See \code{\link{configuration_ic}} for information criteria, multivariate
+parameter counts, and the treatment of missing observations.
 
 When \code{cr.regimes} is supplied, the model is refitted under the equality
 constraints. Returned fitted values, residuals, optima, likelihoods, and

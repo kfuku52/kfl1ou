@@ -87,11 +87,26 @@ Information criterion value of the given shift configuration.
 Computes the information criterion score for a given configuration
 }
 \details{
-AICc gives the usual small-sample size modification of AIC. 
-BIC gives the usual Bayesian information criterion, here penalizing each shift as 2 parameters. 
+AICc gives the small-sample modification of AIC. BIC penalizes the fitted
+continuous parameters and adds one shift-location parameter per shift. With
+complete data and unconstrained means for p traits, an additional shift adds
+p mean parameters and one location parameter: p + 1 in total, or two only
+in the univariate case.
+
+For diagonal trait covariance with missing entries, each trait's continuous
+parameter penalty uses the logarithm of its observed tip count; the shift
+location penalty uses the logarithm of the total tip count. Full covariance
+uses the joint likelihood and total tip count. Convergent constraints reduce
+the number of independent mean parameters. Fitted models report
+\code{parameter.count} and \code{information.parameter.count}; a single count
+does not replace the trait-specific sample sizes in an incomplete diagonal fit.
+
 mBIC is the modified BIC proposed by Ho and Ané (2014).
 pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
-pBICess is a version of pBIC where the determinant term is replaced by a sum of the log of effective sample sizes (ESS), similar to the ESS proposed by Ané (2008).
+pBICess replaces the determinant term with a sum of log effective sample
+sizes (ESS), similar to the ESS proposed by Ané (2008).
+Full covariance supports BIC and a localization-aware multivariate pBIC
+extension. Criteria evaluated at regularized estimates are sensitivity scores.
 }
 \examples{
 

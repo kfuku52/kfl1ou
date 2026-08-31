@@ -4,7 +4,7 @@ FILTER ?=
 VERSION ?= patch
 BASE ?= origin/main
 
-.PHONY: bootstrap test document generated check check-full benchmark metadata bump
+.PHONY: bootstrap test document generated doc-examples docs check check-full benchmark metadata bump
 
 bootstrap:
 	$(RSCRIPT) tools/bootstrap.R
@@ -16,7 +16,14 @@ document:
 	$(RSCRIPT) -e 'Rcpp::compileAttributes("."); roxygen2::roxygenise(".")'
 
 generated: document
-	git diff --exit-code -- NAMESPACE R/RcppExports.R src/RcppExports.cpp man
+	$(RSCRIPT) tools/check-generated.R
+
+doc-examples:
+	$(RSCRIPT) tools/check-doc-examples.R
+
+docs:
+	$(RSCRIPT) tools/check-doc-examples.R --build-site
+	python3 tools/check_site_links.py docs
 
 check:
 	$(RSCRIPT) tools/dev-check.R quick
@@ -35,3 +42,4 @@ metadata:
 	$(RSCRIPT) .github/scripts/check-metadata.R
 	$(RSCRIPT) .github/scripts/test-maintenance-scripts.R
 	python3 .github/scripts/test-release-checks.py
+	python3 tools/test_doc_tools.py

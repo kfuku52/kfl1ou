@@ -13,7 +13,8 @@ pak::pkg_install(
         "deps::.",
         "any::covr",
         "any::rcmdcheck",
-        "any::roxygen2"
+        "any::roxygen2",
+        "any::pkgdown"
     ),
     dependencies = TRUE
 )

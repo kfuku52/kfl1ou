@@ -74,7 +74,9 @@ jobs:
           Rcpp::compileAttributes(".")
           roxygen2::roxygenise(".")
       - name: Require committed generated files
-        run: git diff --exit-code
+        run: |
+          Rscript tools/check-generated.R
+          git diff --exit-code HEAD --
 
   metadata:
     name: metadata
@@ -99,6 +101,7 @@ jobs:
         run: |
           Rscript .github/scripts/test-maintenance-scripts.R
           python3 .github/scripts/test-release-checks.py
+          python3 tools/test_doc_tools.py
       - name: Select required compatibility coverage
         id: scope
         run: Rscript .github/scripts/ci-scope.R

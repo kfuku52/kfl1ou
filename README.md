@@ -1,233 +1,86 @@
-
 # kfl1ou
 
 [![R-CMD-check](https://github.com/kfuku52/kfl1ou/actions/workflows/R-CMD-check.yaml/badge.svg?branch=main)](https://github.com/kfuku52/kfl1ou/actions/workflows/R-CMD-check.yaml)
 [![CodeQL](https://github.com/kfuku52/kfl1ou/actions/workflows/codeql.yaml/badge.svg?branch=main)](https://github.com/kfuku52/kfl1ou/actions/workflows/codeql.yaml)
-[![License: GPL v3+](https://img.shields.io/badge/license-GPL%20v3%2B-blue.svg)](LICENSE)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL%20v3%2B-blue.svg)](https://github.com/kfuku52/kfl1ou/blob/main/LICENSE)
 
-## Tools for detecting past changes in expected mean trait values
+`kfl1ou` is an independently maintained fork of `l1ou` for detecting changes in
+adaptive trait optima on phylogenetic trees with Ornstein–Uhlenbeck models.
+It supports convergent regimes, multivariate evolutionary covariance,
+observation error, and uncertainty in shifts and phylogenies.
 
-The kfl1ou package is an independently maintained fork of l1ou. It provides functions to study trait evolution from comparative data and detect past changes in the expected mean trait values, as well as convergent evolution. It uses the Ornstein-Uhlenbeck process along a phylogenetic tree, which can model a changing adaptive landscape over time and over lineages. 
+## Install
 
-## Origin and license
+Requires **R >= 4.1.0** and tools for compiling C/C++ source packages:
+[Rtools](https://cran.r-project.org/bin/windows/Rtools/) on Windows, Xcode
+Command Line Tools on macOS, or R development tools and a compiler on Linux.
 
-`kfl1ou` is an independently maintained derivative of `l1ou`.
-This package is distributed under the GNU General Public License, version 3 or
-later (`GPL (>= 3)` in `DESCRIPTION`). The full license text is available in
-[LICENSE](LICENSE), and provenance notes for this fork are summarized in
-[NOTICE](NOTICE).
-
-## Install from GitHub
-
-From within R:
 ```r
 install.packages("pak")
 pak::pkg_install("kfuku52/kfl1ou")
 ```
-Windows users will first need to install [Rtools](https://cran.r-project.org/bin/windows/Rtools/).
 
-For a development checkout, clone the repository and run `make bootstrap` once;
-the contributor workflow then provides `make test`, `make check`, and
-`make check-full`.
+Without pak, install the runtime dependencies in R:
 
-## Install without pak
-
-To resolve hard dependencies, first install the following packages from CRAN.
-From within R:
 ```r
 install.packages(c("ape", "Rcpp"))
 ```
 
-Now in the shell, after cloning the repository:
-```shell
+Then run in a shell:
+
+```sh
 git clone https://github.com/kfuku52/kfl1ou.git
-R CMD build kfl1ou
+R CMD build --no-build-vignettes kfl1ou
 R CMD INSTALL kfl1ou_*.tar.gz
 ```
 
-## Data preparation and tree repair
+This route omits local vignettes; the [guides are available online](https://kfuku52.github.io/kfl1ou/articles/index.html).
+To include local vignettes, install `knitr` and `rmarkdown` in R and
+[Pandoc](https://pandoc.org/installing.html), then omit `--no-build-vignettes`.
 
-`adjust_data()` reorders and validates data but does not alter branch lengths by
-default. If a nearly ultrametric tree needs repair, request it explicitly and
-set the maximum acceptable relative branch-length change:
+## Quick start
 
+<!-- quickstart:start -->
 ```r
-prepared <- adjust_data(
-  tree,
-  Y,
-  repair.tree = TRUE,
-  ultrametric.tolerance = 0.01
+library(kfl1ou)
+data(lizard.tree, lizard.traits)
+
+keep <- lizard.tree$tip.label[seq_len(12)]
+tree <- ape::drop.tip(lizard.tree, setdiff(lizard.tree$tip.label, keep))
+dat <- adjust_data(tree, lizard.traits[keep, 1, drop = FALSE], quietly = TRUE)
+fit <- estimate_shift_configuration(
+  dat$tree, dat$Y, criterion = "BIC", max.nShifts = 2
 )
+plot(fit)
+fit$search.diagnostics
 ```
+<!-- quickstart:end -->
 
-Repair fails instead of silently exceeding the supplied tolerance. Review any
-reported branch-length change before interpreting fitted shift locations.
+`adjust_data()` **normalizes branch lengths to tree height 1 by default**;
+use `normalize = FALSE` to retain the original time unit. Tree repair is
+separately opt-in. Fully missing tips and invariant traits are removed by
+default. See the [data preparation guide](https://kfuku52.github.io/kfl1ou/articles/getting-started.html)
+for these controls and conversion back to original time units.
 
-## Observation error handling
+Shift locations describe phylogenetically consistent trait clusters; extant
+traits generally do not uniquely identify historical shift times or positions.
+Check model adequacy, parameter bounds, search coverage, and sensitivity before
+interpreting a selected model.
 
-`kfl1ou` supports two observation-error inputs:
+## Documentation and development
 
-- `input_error`: known tip-specific observation error variances.
-- `measurement_error = TRUE`: estimate an additional shared observation-error variance `sigma2_error` for each trait.
+- [Getting started: data, observation error, search and uncertainty](https://kfuku52.github.io/kfl1ou/articles/getting-started.html)
+- [Correlated multivariate inference](https://kfuku52.github.io/kfl1ou/articles/multivariate-inference.html)
+- [Function reference](https://kfuku52.github.io/kfl1ou/reference/index.html) and [changelog](https://kfuku52.github.io/kfl1ou/news/index.html)
+- [Contributing](https://github.com/kfuku52/kfl1ou/blob/main/CONTRIBUTING.md) and [development commands](https://github.com/kfuku52/kfl1ou/blob/main/tools/README.md)
 
-These can be used separately or together. When both are supplied, the fitted covariance is:
+For a development checkout, run `make bootstrap` once, then use focused tests
+and `make check`; run `make check-full` before submission. These guides and the
+reference site are the maintained documentation; a separate Wiki is not used.
 
-`Sigma_phylo + Diag(input_error) + sigma2_error I`
+## Citation and license
 
-Typical usage from within R:
-
-```r
-## known tip-specific observation error only
-fit_known <- estimate_shift_configuration(
-  tree,
-  Y,
-  input_error = known_tip_variances
-)
-
-## estimate an additional shared measurement-error variance
-fit_estimated <- estimate_shift_configuration(
-  tree,
-  Y,
-  measurement_error = TRUE
-)
-
-## use known tip-specific error and estimate extra unexplained error
-fit_joint <- estimate_shift_configuration(
-  tree,
-  Y,
-  input_error = known_tip_variances,
-  measurement_error = TRUE
-)
-```
-
-For multivariate data, `input_error` can be a matrix with one column per trait.
-
-## Correlated multivariate OU model
-
-Set `trait.covariance = "full"` to estimate evolutionary covariance among
-traits instead of fitting a block-diagonal trait likelihood:
-
-```r
-fit_correlated <- estimate_shift_configuration(
-  tree,
-  Y,
-  max.nShifts = 2,
-  criterion = "BIC",
-  trait.covariance = "full"
-)
-
-fit_correlated$trait.covariance
-fit_correlated$trait.correlation
-fit_correlated$tip.trait.correlation
-fit_correlated$joint.logLik
-evolutionary_vcov(fit_correlated)
-```
-
-By default this mode fits the separable covariance `Omega %x% C(alpha)`, where
-`Omega` is a positive-definite evolutionary innovation covariance matrix and
-`C(alpha)` is the OU covariance among tips. To estimate a distinct adaptation
-rate for every trait while retaining correlated innovations, use:
-
-```r
-fit_general <- fit_OU(
-  tree,
-  Y,
-  shift.configuration = integer(),
-  criterion = "BIC",
-  trait.covariance = "full",
-  alpha.structure = "diagonal",
-  likelihood.engine = "auto"
-)
-```
-
-The diagonal-alpha model uses a full innovation covariance and the exact
-cross-trait covariance induced by the trait-specific OU rates. Both dense and
-Gaussian tree-pruning likelihood engines support trait-specific missing
-entries, known observation variances, estimated measurement-error variances,
-and fixed or stationary roots. `likelihood.engine = "auto"` retains the
-matrix-normal profile for complete, unregularized shared-alpha data and selects
-pruning for larger non-separable problems. Explicit `"dense"` and `"pruning"`
-requests are honored. Pruning initialization and tree-based simulation do not
-construct the full trait-by-tip covariance matrix.
-
-`trait.covariance` and `trait.correlation` describe instantaneous evolutionary
-innovations. When alpha differs among traits, `tip.trait.covariance` and
-`tip.trait.correlation` report the induced marginal residual association at an
-ultrametric tip; the distinction is important because the two correlations are
-then not generally equal.
-
-For many traits or few residual contrasts, use
-`covariance.regularization = "shrinkage"`; an explicit
-`regularization.lambda` can be supplied or estimated from phylogenetically
-whitened residuals. Full covariance supports ordinary `BIC` and a
-localization-aware multivariate `pBIC` extension. The latter adds an explicit
-penalty for searching across branch locations and is labelled as a sensitivity
-criterion. The historical `trait.covariance = "diagonal"` mode remains the
-default and retains trait-specific alpha estimates. Shrinkage has the same
-correlation-penalty interpretation for dense and pruning engines, including
-incomplete data. Any information criterion evaluated at a regularized estimate
-is reported as a sensitivity score rather than a calibrated
-marginal-likelihood approximation.
-
-Numerical and inferential checks are available directly from fitted objects:
-
-```r
-diagnose_l1ou(fit_general, nsim = 200, seed = 1)
-confint(
-  fit_general, method = "parametric", selection = "full",
-  nsim = 200, seed = 2
-)
-compare_trait_covariance(
-  tree, Y, nboot = 200, seed = 3, selection = "full"
-)
-
-support <- l1ou_bootstrap_support(
-  fit_correlated, nItrs = 200, type = "parametric", seed = 4
-)
-summarize_shift_uncertainty(support, tree)
-averaged <- model_average_l1ou(fit_correlated, delta.max = 10)
-
-check_rate_heterogeneity(fit_general, nsim = 200, seed = 5)
-sensitivity_l1ou(fit_general, selection = "full")
-```
-
-`search.strategy = "auto"` now enumerates and certifies the complete shift
-configuration space when it is small. Larger searches can use
-`search.strategy = "ensemble"`, which augments the full-data sparse path with
-deterministically seeded subsampled paths. Every search reports the evaluated
-fraction and whether the reported optimum is globally certified.
-
-Bootstrap summaries and model averaging include canonical tip partitions and
-tip co-assignment probabilities, so root-complement and other edge-placement
-equivalences are not mistaken for biological disagreement. For replicated
-species measurements use `fit_l1ou_replicates()`. For phylogenetic uncertainty,
-`fit_l1ou_tree_ensemble()` aggregates partitions across alternative trees.
-
-## Interpretation and statistical limitations
-
-- Shift configurations describe phylogenetically consistent clusters. Tip-only
-  data generally cannot identify the exact number, branch position, or timing of
-  historical shifts without additional information such as fossils.
-- In the default diagonal covariance mode, multivariate fits treat trait
-  residuals as independent. Full covariance with `alpha.structure =
-  "diagonal"` handles correlated innovations and trait-specific OU rates. A
-  fully non-diagonal drift matrix (directional coupling among traits) is still
-  outside the implemented model.
-- OU optima and adaptation rates can be weakly identified even with many tips.
-  Treat estimates at parameter bounds as sensitivity warnings and compare
-  biologically plausible bounds and root models. `profile_alpha_l1ou()` and the
-  `alpha_to_half_life()` helpers make these checks easier to report.
-- pBIC for unconstrained shifts follows the derivation in Khabbazian et al.
-  (2016). Its use for convergent equality constraints remains heuristic; report
-  sensitivity to AICc/BIC and bootstrap support rather than treating one
-  criterion as calibrated certainty.
-- `adjust_data(normalize = TRUE)` stores the original tree-height factor.
-  `original_time_parameters()` converts alpha and evolutionary variance rates
-  back to the original branch-length time unit.
-- `vcov()` follows the R convention of coefficient sampling covariance and may
-  return an explicitly unavailable matrix. Use `evolutionary_vcov()` for the
-  fitted evolutionary innovation covariance.
-
-Convergent-regime fits are refitted under their equality constraints. Returned
-coefficients, fitted values, residuals, optima, likelihoods, and variance
-parameters therefore all correspond to the constrained model.
+Run `citation("kfl1ou")` for the package citation and the original l1ou article;
+please cite both. The fork is distributed under **GPL-3.0-or-later**.
+See [LICENSE](https://github.com/kfuku52/kfl1ou/blob/main/LICENSE) for the license
+and [NOTICE](https://github.com/kfuku52/kfl1ou/blob/main/NOTICE) for provenance.

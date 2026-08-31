@@ -30,7 +30,9 @@ compare_trait_covariance(
 
 \item{Y}{numeric trait matrix aligned to \code{tree$tip.label}.}
 
-\item{shift.configuration}{fixed shift-edge indices used in both models.}
+\item{shift.configuration}{shift-edge indices used for both observed-data
+fits. The default is no shifts. This function does not select shifts on
+the observed data or inherit a configuration from a previously fitted model.}
 
 \item{nboot}{number of null simulations. Use zero to return fitted models and
 the observed likelihood ratio without a bootstrap p-value.}
@@ -58,8 +60,9 @@ diagonal fit and therefore requires parametric-bootstrap calibration.}
 
 \item{regularization.lambda}{optional regularization intensity.}
 
-\item{nCores}{number of bootstrap refits evaluated concurrently where fork
-parallelism is supported.}
+\item{nCores}{maximum number of bootstrap refits evaluated concurrently.
+Uses fork workers on Unix-like systems or socket-cluster workers on Windows;
+nested model fits run sequentially with one BLAS/OpenMP thread when supported.}
 
 \item{selection}{whether the covariance bootstrap conditions on the supplied
 shift configuration or repeats shift discovery in every null simulation.}
@@ -85,4 +88,14 @@ nested in the trait-specific-alpha null; in that case the reported deviance
 difference is calibrated only by the parametric bootstrap. Regularized full
 covariance fits are reported as sensitivity comparisons rather than
 conventional likelihood-ratio tests.
+}
+\details{
+With \code{selection = "conditional"}, all bootstrap fits use the
+supplied shift configuration. With \code{selection = "full"}, each null
+simulation repeats BIC shift selection under diagonal trait covariance, then
+fits both covariance models to that selected configuration. Observed-data
+fits still use \code{shift.configuration}. To compare a data-selected model,
+select its observed shifts with the same diagonal-covariance BIC search,
+maximum shift count, root and observation-error settings, and search strategy.
+Pass that configuration and the search settings explicitly here.
 }

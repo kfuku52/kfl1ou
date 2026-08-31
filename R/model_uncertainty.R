@@ -122,7 +122,9 @@ equivalent_shift_configurations <- function(
 #'
 #'@param tree ultrametric phylogeny in postorder.
 #'@param Y numeric trait matrix aligned to \code{tree$tip.label}.
-#'@param shift.configuration fixed shift-edge indices used in both models.
+#'@param shift.configuration shift-edge indices used for both observed-data
+#' fits. The default is no shifts. This function does not select shifts on
+#' the observed data or inherit a configuration from a previously fitted model.
 #'@param nboot number of null simulations. Use zero to return fitted models and
 #' the observed likelihood ratio without a bootstrap p-value.
 #'@param seed optional random seed.
@@ -138,8 +140,9 @@ equivalent_shift_configurations <- function(
 #'@param quietly suppress progress messages.
 #'@param covariance.regularization covariance regularization for the alternative.
 #'@param regularization.lambda optional regularization intensity.
-#'@param nCores number of bootstrap refits evaluated concurrently where fork
-#' parallelism is supported.
+#'@param nCores maximum number of bootstrap refits evaluated concurrently.
+#' Uses fork workers on Unix-like systems or socket-cluster workers on Windows;
+#' nested model fits run sequentially with one BLAS/OpenMP thread when supported.
 #'@param selection whether the covariance bootstrap conditions on the supplied
 #' shift configuration or repeats shift discovery in every null simulation.
 #'@param search.max.nShifts maximum shifts in a repeated search. By default it
@@ -147,6 +150,14 @@ equivalent_shift_configurations <- function(
 #'@param search.strategy search strategy passed to
 #' \code{\link{estimate_shift_configuration}} when
 #' \code{selection = "full"}.
+#'@details With \code{selection = "conditional"}, all bootstrap fits use the
+#' supplied shift configuration. With \code{selection = "full"}, each null
+#' simulation repeats BIC shift selection under diagonal trait covariance, then
+#' fits both covariance models to that selected configuration. Observed-data
+#' fits still use \code{shift.configuration}. To compare a data-selected model,
+#' select its observed shifts with the same diagonal-covariance BIC search,
+#' maximum shift count, root and observation-error settings, and search strategy.
+#' Pass that configuration and the search settings explicitly here.
 #'@return An object of class \code{"l1ou_covariance_comparison"} containing the
 #' two fits, observed statistic, bootstrap statistics and p-value. Regularized
 #' alternatives are explicitly marked as sensitivity analyses.
