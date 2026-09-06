@@ -34,7 +34,7 @@ jobs:
         with:
           extra-packages: any::rcmdcheck
           needs: check
-      - uses: r-lib/actions/check-r-package@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+      - uses: r-lib/actions/check-r-package@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
         with:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
@@ -62,6 +62,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install dependencies
         run: R -q -e 'pak::pkg_install(c("deps::.", "any::rcmdcheck"), dependencies = TRUE)'
-      - uses: r-lib/actions/check-r-package@d3c5be51b12e724e68f33216ca3c148b66d5f0b6 # v2
+      - uses: r-lib/actions/check-r-package@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
         with:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
