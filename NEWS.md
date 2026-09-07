@@ -1,4 +1,4 @@
-# kfl1ou 3.0.7
+# kfl1ou 3.0.8
 
 - Preserve observation-error row identities across tree-ensemble permutations,
   including errors supplied through saved options, and treat automatic
@@ -17,6 +17,9 @@
 - Compute marginal-model measurement-error fractions using evolutionary
   variance at the tips rather than the diffusion variance rate.
 - Exclude local agent-development instructions from source packages.
+
+# kfl1ou 3.0.7
+
 - Correct documentation for default tree normalization and tip removal,
   sparse-path rescaling, multivariate BIC parameter counts, returned fields,
   Windows parallelism, and parametric versus residual bootstrap.
