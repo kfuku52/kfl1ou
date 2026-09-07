@@ -363,7 +363,8 @@ print.l1ou_covariance_comparison <- function(x, ...){
 #' Summarize uncertainty in bootstrap shift locations
 #'
 #'@param bootstrap.result result returned by
-#' \code{\link{l1ou_bootstrap_support}}.
+#' \code{\link{l1ou_bootstrap_support}}. Each successful configuration must
+#' contain unique positive integer edge indices, or be empty for no shifts.
 #'@param tree optional phylogeny used to label edge rows and columns.
 #'@return Exact-configuration and tip-partition frequencies, edge inclusion,
 #' edge co-selection, and tip co-assignment probabilities.
@@ -375,6 +376,16 @@ summarize_shift_uncertainty <- function(bootstrap.result, tree=NULL){
     if(is.null(shifts) || length(shifts) == 0L){
         stop("bootstrap.result contains no successful shift configurations.")
     }
+    if(!is.list(shifts)) stop("bootstrap.result$all.shifts must be a list.")
+    shifts <- lapply(shifts, function(selected){
+        if(is.null(selected)) return(integer())
+        if(!is.numeric(selected) || any(!is.finite(selected)) ||
+           any(selected != floor(selected)) || any(selected < 1) ||
+           any(selected > .Machine$integer.max) || anyDuplicated(selected)){
+            stop("bootstrap.result contains an invalid shift-edge index.")
+        }
+        as.integer(selected)
+    })
     n.edge <- if(!is.null(tree)) nrow(tree$edge) else{
         max(c(length(bootstrap.result$detection.rate), unlist(shifts), 0L))
     }
@@ -493,7 +504,9 @@ print.l1ou_shift_uncertainty <- function(x, ...){
 
 #' Information-criterion model averaging over evaluated shift configurations
 #'
-#'@param model fitted \code{"l1ou"} object containing a search profile.
+#'@param model fitted \code{"l1ou"} object containing a search profile with
+#' one numeric score per configuration. Non-finite scores are excluded before
+#' deduplication and candidate selection.
 #'@param delta.max largest score difference retained from the best model.
 #'@param max.models optional cap on the number of retained models.
 #'@param nCores maximum number of model refits evaluated concurrently.
@@ -523,19 +536,26 @@ model_average_l1ou <- function(model, delta.max=10, max.models=Inf, nCores=1L){
        is.null(profile$configurations)){
         stop("the model does not contain a candidate-configuration profile.")
     }
+    if(!is.numeric(profile$scores) || !is.list(profile$configurations) ||
+       length(profile$scores) != length(profile$configurations)){
+        stop("the model profile must contain one score per configuration.")
+    }
     if(!any(is.finite(profile$scores))){
         stop("the model profile contains no finite score.")
     }
-    order <- order(profile$scores)
+    finite <- which(is.finite(profile$scores))
+    order <- finite[order(profile$scores[finite])]
     scores <- as.numeric(profile$scores[order])
-    configurations <- profile$configurations[order]
+    configurations <- lapply(profile$configurations[order], function(x){
+        validate_shift_configuration(model$tree, x)
+    })
     keys <- vapply(configurations, function(x){
         paste(sort(as.integer(x)), collapse=",")
     }, character(1))
     unique.keep <- !duplicated(keys)
     scores <- scores[unique.keep]
     configurations <- configurations[unique.keep]
-    keep <- is.finite(scores) & scores - min(scores, na.rm=TRUE) <= delta.max
+    keep <- scores - min(scores) <= delta.max
     scores <- scores[keep]
     configurations <- configurations[keep]
     if(is.finite(max.models) && length(scores) > max.models){
@@ -658,6 +678,9 @@ print.l1ou_model_average <- function(x, ...){
 #'@param nCores maximum number of tree fits evaluated concurrently.
 #'@param ... arguments passed to
 #' \code{\link{estimate_shift_configuration}}.
+#' Unnamed \code{input_error} rows are aligned with the input \code{Y} rows
+#' before reordering for each tree; named rows are matched by tip label. This
+#' also applies to \code{input_error} inside \code{l1ou.options}.
 #'@return A tree-ensemble object containing fits, partition weights, mean tip
 #' co-assignment probabilities, pairwise adjusted Rand indices, and the number
 #' of zero-weight trees excluded before fitting.
@@ -691,6 +714,17 @@ fit_l1ou_tree_ensemble <- function(trees, Y, tree.weights=NULL,
     active <- which(tree.weights > 0)
     excluded.zero.weight <- length(trees) - length(active)
     arguments <- list(...)
+    # Attach response-row identities before any per-tree permutation.
+    error.reference <- list(tip.label=rownames(Y))
+    if(is.list(arguments$l1ou.options)){
+        arguments$l1ou.options$input_error <- normalize_input_error(
+            error.reference, Y, arguments$l1ou.options$input_error
+        )
+    } else if(!is.null(arguments$input_error)){
+        arguments$input_error <- normalize_input_error(
+            error.reference, Y, arguments$input_error
+        )
+    }
     records <- l1ou_task_apply(seq_along(active), function(j){
         i <- active[[j]]
         tree <- reorder(trees[[i]], "postorder")

@@ -7,6 +7,8 @@
 #'
 #'@param tree tree of class \code{phylo}.
 #'@param Y trait matrix or data frame aligned to \code{tree$tip.label}.
+#' Explicit row names are matched by tip label; unnamed rows (including
+#' automatic data-frame row names) are interpreted in tree-tip order.
 #'@param dir output directory.
 #'@param prefix output file prefix. The default \code{"l1ou"} writes files such
 #'  as \code{l1ou_tree.tsv}.
@@ -80,6 +82,8 @@ write_l1ou_placeholder_outputs <- function(tree, Y, dir = ".", prefix = "l1ou",
 
 as_placeholder_trait_table <- function(tree, Y){
 
+    positional <- if(is.data.frame(Y)) .row_names_info(Y, type=1L) < 0L else
+        is.null(rownames(Y))
     if( inherits(Y, "data.frame") ){
         Y <- as.data.frame(Y, check.names = FALSE, stringsAsFactors = FALSE)
     } else{
@@ -90,7 +94,7 @@ as_placeholder_trait_table <- function(tree, Y){
         stop("Y must have one row per tip in tree.")
     }
 
-    if( is.null(rownames(Y)) ){
+    if( positional ){
         rownames(Y) <- tree$tip.label
     }
 

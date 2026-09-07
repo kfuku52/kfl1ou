@@ -16,7 +16,10 @@ fit_l1ou_tree_ensemble(trees, Y, tree.weights = NULL, nCores = 1L, ...)
 \item{nCores}{maximum number of tree fits evaluated concurrently.}
 
 \item{...}{arguments passed to
-\code{\link{estimate_shift_configuration}}.}
+\code{\link{estimate_shift_configuration}}.
+Unnamed \code{input_error} rows are aligned with the input \code{Y} rows
+before reordering for each tree; named rows are matched by tip label. This
+also applies to \code{input_error} inside \code{l1ou.options}.}
 }
 \value{
 A tree-ensemble object containing fits, partition weights, mean tip

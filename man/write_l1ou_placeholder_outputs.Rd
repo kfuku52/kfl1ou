@@ -17,7 +17,9 @@ write_l1ou_placeholder_outputs(
 \arguments{
 \item{tree}{tree of class \code{phylo}.}
 
-\item{Y}{trait matrix or data frame aligned to \code{tree$tip.label}.}
+\item{Y}{trait matrix or data frame aligned to \code{tree$tip.label}.
+Explicit row names are matched by tip label; unnamed rows (including
+automatic data-frame row names) are interpreted in tree-tip order.}
 
 \item{dir}{output directory.}
 

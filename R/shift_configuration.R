@@ -1715,7 +1715,9 @@ normalize_input_error <- function(tree, Y, input_error){
 
     Y <- as.matrix(Y)
     if( inherits(input_error, "data.frame") ){
+        automatic.rows <- .row_names_info(input_error, type=1L) < 0L
         input_error <- as.matrix(input_error)
+        if(automatic.rows) rownames(input_error) <- NULL
     }
 
     if( is.null(dim(input_error)) ){

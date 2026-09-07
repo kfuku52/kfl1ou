@@ -7,7 +7,9 @@
 model_average_l1ou(model, delta.max = 10, max.models = Inf, nCores = 1L)
 }
 \arguments{
-\item{model}{fitted \code{"l1ou"} object containing a search profile.}
+\item{model}{fitted \code{"l1ou"} object containing a search profile with
+one numeric score per configuration. Non-finite scores are excluded before
+deduplication and candidate selection.}
 
 \item{delta.max}{largest score difference retained from the best model.}
 

@@ -8,7 +8,8 @@ summarize_shift_uncertainty(bootstrap.result, tree = NULL)
 }
 \arguments{
 \item{bootstrap.result}{result returned by
-\code{\link{l1ou_bootstrap_support}}.}
+\code{\link{l1ou_bootstrap_support}}. Each successful configuration must
+contain unique positive integer edge indices, or be empty for no shifts.}
 
 \item{tree}{optional phylogeny used to label edge rows and columns.}
 }

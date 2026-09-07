@@ -1683,9 +1683,6 @@ get_shift_configuration <- function(model, nShifts){
     if(!inherits(model, "l1ou")) stop("model must inherit from class \"l1ou\".")
     nShifts <- l1ou_integer_argument(nShifts, "nShifts", 0L)
     p.d = profile(model) 
-    if( nShifts > length(p.d$shift.configurations)+1) # starts at 0 shifts
-        stop("There is no configuration with the given number of shifts")
-
     for( i in seq_along(p.d$shift.configurations)){
         if( length(p.d$shift.configurations[[i]]) == nShifts)
             return(p.d$shift.configurations[[i]])

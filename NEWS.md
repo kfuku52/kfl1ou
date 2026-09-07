@@ -1,5 +1,15 @@
 # kfl1ou 3.0.7
 
+- Preserve observation-error row identities across tree-ensemble permutations,
+  including errors supplied through saved options, and treat automatic
+  data-frame row names as positional rows.
+- Exclude non-finite profile scores before model-averaging candidate selection
+  and validate score/configuration alignment and retained edge indices.
+- Allow shift-configuration lookup when evaluated shift counts have gaps.
+- Reject invalid bootstrap shift indices before integer conversion so that
+  uncertainty summaries cannot silently report a different configuration.
+- Accept unnamed matrix and data-frame rows in placeholder output tables while
+  retaining explicit tip-label matching.
 - Accept named single-column observation-error matrices and data frames when
   sharing their variances across multiple traits.
 - Calibrate clade residual diagnostics using simulated GLS residuals with the
