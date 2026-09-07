@@ -544,7 +544,10 @@ diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
                          only.values=TRUE)$values
     residual.matrix <- as.matrix(model$residuals)
     tip.trait.covariance <- if(is.null(model$tip.trait.covariance)){
-        trait.covariance
+        multivariate_tip_trait_covariance(
+            model$tree, model$alpha, trait.covariance,
+            model$l1ou.options$root.model
+        )
     } else model$tip.trait.covariance
     tip.score <- projected$tip.score
     raw.residual.trait.correlation <- stats::cor(
@@ -569,10 +572,13 @@ diagnose_l1ou <- function(model, max.dense.dimension=2000L, nsim=0L,
         precision <- projected$precision
         simulated.statistics <- with_l1ou_seed(seed, t(replicate(nsim, {
             whitened <- stats::rnorm(nrow(simulation.factor))
-            residual.obs <- drop(simulation.factor %*% whitened)
             simulated.standardized <- if(ncol(projected$projection)){
                 drop(crossprod(projected$projection, whitened))
             } else numeric()
+            # Observed residuals have their GLS mean fit removed. Apply the
+            # same projection before computing simulated conditional tip scores.
+            residual.obs <- drop(simulation.factor %*%
+                (projected$projection %*% simulated.standardized))
             gradient <- drop(precision %*% residual.obs)
             simulated.tip.score <- l1ou_tip_residual_scores(
                 gradient, projected$tip.blocks

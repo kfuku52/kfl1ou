@@ -1733,6 +1733,8 @@ normalize_input_error <- function(tree, Y, input_error){
         }
         if( ncol(err.mat) == 1 && ncol(Y) > 1 ){
             err.mat <- err.mat[, rep(1, ncol(Y)), drop=FALSE]
+            # A shared column describes every trait, regardless of its label.
+            colnames(err.mat) <- colnames(Y)
         }
         if( ncol(err.mat) != ncol(Y) ){
             stop("input_error must have one column per trait, or a single column shared across traits.")

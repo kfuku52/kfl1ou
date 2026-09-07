@@ -1,5 +1,12 @@
 # kfl1ou 3.0.7
 
+- Accept named single-column observation-error matrices and data frames when
+  sharing their variances across multiple traits.
+- Calibrate clade residual diagnostics using simulated GLS residuals with the
+  fitted mean space removed, matching the observed residual calculation.
+- Compute marginal-model measurement-error fractions using evolutionary
+  variance at the tips rather than the diffusion variance rate.
+- Exclude local agent-development instructions from source packages.
 - Correct documentation for default tree normalization and tip removal,
   sparse-path rescaling, multivariate BIC parameter counts, returned fields,
   Windows parallelism, and parametric versus residual bootstrap.

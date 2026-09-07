@@ -2,6 +2,7 @@
 ^\.github$
 ^\.gitignore$
 ^AGENTS\.md$
+^\.agents$
 ^Makefile$
 ^\.DS_Store$
 ^\.\.Rcheck$
