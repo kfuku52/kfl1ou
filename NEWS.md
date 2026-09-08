@@ -1,3 +1,9 @@
+# kfl1ou 3.0.9
+
+- Update the selected CodeQL, Pandoc, TinyTeX, R package-check and Pages
+  deployment actions, with synchronized release metadata for dependency-only
+  maintenance.
+
 # kfl1ou 3.0.8
 
 - Preserve observation-error row identities across tree-ensemble permutations,
