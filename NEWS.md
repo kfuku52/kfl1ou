@@ -1,3 +1,7 @@
+# kfl1ou 3.0.10
+
+- Maintenance and compatibility updates.
+
 # kfl1ou 3.0.9
 
 - Update the selected CodeQL, Pandoc, TinyTeX, R package-check and Pages
