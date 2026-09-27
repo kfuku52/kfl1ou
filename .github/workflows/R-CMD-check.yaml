@@ -45,7 +45,7 @@ jobs:
           extra-packages: any::rcmdcheck
           needs: check
 
-      - uses: r-lib/actions/check-r-package@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
+      - uses: r-lib/actions/check-r-package@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
@@ -170,7 +170,7 @@ jobs:
         run: |
           pak::pkg_install("testthat@3.2.0")
           stopifnot(packageVersion("testthat") == package_version("3.2.0"))
-      - uses: r-lib/actions/check-r-package@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
+      - uses: r-lib/actions/check-r-package@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
@@ -195,7 +195,7 @@ jobs:
         with:
           dependencies: '"hard"'
           extra-packages: any::rcmdcheck, any::testthat, any::knitr, any::rmarkdown
-      - uses: r-lib/actions/check-r-package@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
+      - uses: r-lib/actions/check-r-package@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           build_args: 'c("--no-manual", "--compact-vignettes=gs+qpdf")'
 
