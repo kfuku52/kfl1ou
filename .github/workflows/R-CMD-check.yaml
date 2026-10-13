@@ -125,7 +125,7 @@ jobs:
           r-version: release
       - uses: r-lib/actions/setup-r-dependencies@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2
         with:
-          extra-packages: any::covr
+          extra-packages: any::covr, any::xml2
           needs: coverage
       - name: Measure and enforce coverage
         run: Rscript .github/scripts/check-coverage.R

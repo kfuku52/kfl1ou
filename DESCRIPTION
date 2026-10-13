@@ -1,5 +1,5 @@
 Package: kfl1ou
-Version: 3.0.11
+Version: 3.0.12
 Date: 2026-10-13
 Title: Tools for Detecting Past Changes in the Expected Mean Trait Values and
     Studying Trait Evolution from Comparative Data
@@ -45,4 +45,4 @@ Config/Needs/document:
 Config/Needs/website:
     pkgdown
 VignetteBuilder: knitr, rmarkdown
-Config/roxygen2/version: 8.1.0
+Config/roxygen2/version: 8.1.1
