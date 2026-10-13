@@ -313,6 +313,7 @@ dynamic_joint_input_measurement_error_gls_fit <- function(tree, Y, build_preds,
             n2llh = n2llh,
             betahat = inv.solve$betahat,
             vcov = inv.solve$invXX * vcov.scale,
+            conditional.vcov = inv.solve$invXX,
             fitted.values = fitted.values,
             residuals = residuals,
             preds = preds,
@@ -495,6 +496,7 @@ dynamic_joint_input_measurement_error_gls_fit <- function(tree, Y, build_preds,
         p = p,
         aic = 2 * p + fit$n2llh,
         vcov = vcov,
+        conditional.vcov = fit$conditional.vcov,
         fitted.values = fit$fitted.values,
         residuals = fit$residuals,
         mean.tip.height = mean.tip.height,
@@ -890,6 +892,7 @@ cmp_AICc_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
         total.n <- total.n + fit$n
     }
     p <- nShifts + total.p
+    if(identical(opt$criterion, "AIC")) return(score + 2 * p)
     if(p > total.n - 2L){
         return(Inf)
     }
@@ -964,24 +967,13 @@ cmp_pBIC_CR  <-  function(tree, Y, conv.regimes, alpha, opt){
             shift.configuration = r$s.c,
             input_error = r$input_error
         )
-        fit2 <- phylolm_interface_CR(
-            r$tr,
-            r$y,
-            trait.regimes,
-            alpha = alpha[[i]],
-            fixed.alpha = TRUE,
-            opt = opt,
-            shift.configuration = r$s.c,
-            input_error = r$input_error
-        )
-        if( all( is.na(fit) ) ){
-           return(Inf)
-        } 
-        varY  <- var(as.numeric(r$y))
-        ld    <- as.numeric(determinant(fit2$vcov * (fit$n - fit$d)/(varY*fit$n),
-                                        logarithm = TRUE)$modulus)
-        alpha.df <- as.integer(!isTRUE(opt$fixed.alpha))
-        df.2  <- (1 + alpha.df + extra_error_df(opt))*log(nrow(r$y)) - ld
+        if(all(is.na(fit))){
+            return(Inf)
+        }
+        # The constrained fit returns its design and covariance at its own
+        # fitted alpha. Reusing the unconstrained seed here scores a different
+        # covariance/mean design than the likelihood above.
+        df.2 <- pbic_trait_penalty(fit, r$y)
         score <- score  -2*fit$logLik + df.2
     }
     return( score )
@@ -1014,7 +1006,7 @@ cmp_model_score_CR <- function(tree, Y, regimes=NULL, alpha=NA, opt){
         ))
     }
 
-    if( opt$criterion == "AICc"){
+    if( opt$criterion %in% c("AIC", "AICc")){
         score <- cmp_AICc_CR(tree, Y, conv.regimes = regimes, alpha=alpha, opt=opt)
     } else if( opt$criterion == "pBIC"){
         score <- cmp_pBIC_CR(tree, Y, conv.regimes = regimes, alpha=alpha, opt=opt)
@@ -1324,7 +1316,7 @@ estimate_convergent_regimes_surface  <-  function(model, opt){
 #'
 #'@export
 estimate_convergent_regimes  <-  function(model, 
-                                        criterion=c("AICc", "pBIC", "BIC"),
+                                        criterion=c("AICc", "pBIC", "BIC", "AIC"),
                                         method=c("backward", "rr"),
 					fixed.alpha=FALSE,
 					nCores=1

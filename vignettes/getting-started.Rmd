@@ -205,6 +205,25 @@ extant tips alone generally cannot identify exact historical shift positions,
 counts or times. OU optima, rates and observation error can be weakly identified.
 Report sensitivity to bounds, root models, information criteria and resampling.
 pBIC for unconstrained shifts follows the original l1ou derivation; its extension
-to convergent equality constraints remains heuristic. Convergent models are
+to convergent equality constraints remains heuristic. The diagonal-trait pBIC
+coefficient determinant is evaluated in OU optimum coordinates at each model's
+fitted alpha. Free fits use mean displacements internally, so their covariance
+determinant includes the change of coordinates
+`mean displacement = (1 - exp(-alpha * parent age)) * optimum change`.
+All-singleton convergence groups and the corresponding unconstrained fit thus
+have the same pBIC at the same parameters. Fixed alpha contributes no estimated
+parameter penalty; shifted exact-zero-alpha models receive infinite pBIC
+because their OU optima are unidentifiable.
+With known observation variances, the determinant uses the conditional mean
+information at the fitted covariance. The usual sample-size adjustment of the
+residual-scaled coefficient covariance is insufficient for these models.
+
+Versions through 3.0.12 mixed mean-displacement and optimum coordinates and used
+the unconstrained alpha in the convergent determinant. The correction changes
+pBIC scores and can change selected models and weights; previous pBIC analyses
+must be rerun. It does not establish error calibration of the convergence
+extension. BIC and AICc are unaffected.
+
+Convergent models are
 refitted under those constraints, so returned coefficients, fitted values,
 likelihoods and variance parameters describe the constrained model.

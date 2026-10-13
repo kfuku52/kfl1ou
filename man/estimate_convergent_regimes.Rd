@@ -6,7 +6,7 @@
 \usage{
 estimate_convergent_regimes(
   model,
-  criterion = c("AICc", "pBIC", "BIC"),
+  criterion = c("AICc", "pBIC", "BIC", "AIC"),
   method = c("backward", "rr"),
   fixed.alpha = FALSE,
   nCores = 1

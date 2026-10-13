@@ -1,3 +1,23 @@
+# kfl1ou 3.0.13
+
+- Add ordinary AIC (without the AICc small-sample correction) to shift selection,
+  fixed-layout scoring, convergence and full trait-covariance scoring.
+
+- Correct diagonal-trait pBIC to evaluate coefficient uncertainty in OU optimum
+  coordinates. The free-fit solver uses mean displacements; the determinant
+  now includes their `1 - exp(-alpha * parent_age)` change of coordinates.
+- Evaluate convergent pBIC at the constrained fitted alpha rather than at the
+  unconstrained seed, and exclude fixed alpha from the pBIC parameter count.
+  These corrections can change selected pBIC models; rerun previous pBIC
+  analyses and score-based weights. BIC, AICc, pBICess and the separate full
+  trait-covariance criterion are unchanged.
+- Score shifted exact-Brownian fits as infinite pBIC because their OU optima
+  are unidentifiable. Retain their finite fitted means for diagnostics.
+- Use the conditional mean-information covariance in diagonal-trait pBIC
+  fits with known observation variances. Their residual-adjusted coefficient
+  covariance does not generally recover this information by the usual sample
+  size correction. BIC, AIC and AICc likelihoods and parameter counts are unchanged.
+
 # kfl1ou 3.0.12
 
 - Maintenance and compatibility updates.

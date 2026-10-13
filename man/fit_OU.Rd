@@ -8,7 +8,7 @@ fit_OU(
   tree,
   Y,
   shift.configuration,
-  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"),
+  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AIC", "AICc"),
   root.model = c("OUfixedRoot", "OUrandomRoot"),
   cr.regimes = NULL,
   alpha.starting.value = NA,
@@ -62,7 +62,7 @@ variances. When combined with \code{measurement_error = TRUE},
 additional shared measurement-error variance per trait.}
 
 \item{trait.covariance}{residual covariance model for multivariate traits;
-see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+see \code{\link{estimate_shift_configuration}}. Full covariance supports AIC, BIC
 and a localization-aware multivariate pBIC extension.}
 
 \item{alpha.structure}{full-covariance adaptation-rate structure.}

@@ -13,9 +13,9 @@ validate_trait_covariance_mode <- function(mode, Y, criterion){
         warning("trait.covariance = \"full\" has no effect for a univariate response; using \"diagonal\".")
         mode <- "diagonal"
     }
-    if(mode == "full" && !criterion %in% c("BIC", "pBIC")){
+    if(mode == "full" && !criterion %in% c("BIC", "pBIC", "AIC")){
         stop(paste0(
-            "trait.covariance = \"full\" supports criterion = \"BIC\" or ",
+            "trait.covariance = \"full\" supports criterion = \"AIC\", \"BIC\" or ",
             "the localization-aware \"pBIC\" extension. Small-sample criteria ",
             "have not been derived for this correlated multivariate OU model."
         ))
@@ -1097,7 +1097,8 @@ fit_multivariate_ou_likelihood <- function(tree, Y, shift.configuration, opt,
 
 multivariate_full_information_score <- function(
         fit, n.shifts, criterion, n.locations=NULL){
-    criterion <- match.arg(criterion, c("BIC", "pBIC"))
+    criterion <- match.arg(criterion, c("BIC", "pBIC", "AIC"))
+    if(criterion == "AIC") return(-2 * fit$logLik + 2 * (fit$p + n.shifts))
     if(criterion == "BIC"){
         parameters <- fit$p + n.shifts
         return(-2 * fit$logLik + log(fit$sample.size) * parameters)

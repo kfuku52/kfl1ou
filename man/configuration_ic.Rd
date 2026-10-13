@@ -8,7 +8,7 @@ configuration_ic(
   tree,
   Y,
   shift.configuration,
-  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"),
+  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AIC", "AICc"),
   root.model = c("OUfixedRoot", "OUrandomRoot"),
   alpha.starting.value = NA,
   alpha.upper = alpha_upper_bound(tree),
@@ -57,7 +57,7 @@ variances. When combined with \code{measurement_error = TRUE},
 additional shared measurement-error variance per trait.}
 
 \item{trait.covariance}{residual covariance model for multivariate traits;
-see \code{\link{estimate_shift_configuration}}. Full covariance supports BIC
+see \code{\link{estimate_shift_configuration}}. Full covariance supports AIC, BIC
 and a localization-aware multivariate pBIC extension.}
 
 \item{alpha.structure}{full-covariance adaptation-rate structure.}
@@ -87,7 +87,8 @@ Information criterion value of the given shift configuration.
 Computes the information criterion score for a given configuration
 }
 \details{
-AICc gives the small-sample modification of AIC. BIC penalizes the fitted
+AIC penalizes the log likelihood by twice the total parameter count,
+including shift locations. AICc gives its small-sample modification. BIC penalizes the fitted
 continuous parameters and adds one shift-location parameter per shift. With
 complete data and unconstrained means for p traits, an additional shift adds
 p mean parameters and one location parameter: p + 1 in total, or two only
@@ -103,9 +104,18 @@ does not replace the trait-specific sample sizes in an incomplete diagonal fit.
 
 mBIC is the modified BIC proposed by Ho and Ané (2014).
 pBIC is the phylogenetic BIC for shifts proposed by Khabbazian et al.
+For diagonal trait covariance its determinant uses OU optimum-shift
+coordinates, including the transformation from fitted mean displacements by
+\eqn{1-\exp(-\alpha a_b)}, where \eqn{a_b} is the parent-node age of shift
+branch \eqn{b}. A shifted model at exactly zero alpha has unidentifiable
+optima and receives an infinite pBIC score. Fixed alpha is excluded from the
+covariance-parameter count. Convergent fits evaluate the determinant at their
+own fitted alpha; the extension to shared optima remains heuristic.
+With known observation variances the determinant uses the conditional mean
+information directly, without residual degrees-of-freedom rescaling.
 pBICess replaces the determinant term with a sum of log effective sample
 sizes (ESS), similar to the ESS proposed by Ané (2008).
-Full covariance supports BIC and a localization-aware multivariate pBIC
+Full covariance supports AIC, BIC and a localization-aware multivariate pBIC
 extension. Criteria evaluated at regularized estimates are sensitivity scores.
 }
 \examples{

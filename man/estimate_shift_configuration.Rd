@@ -8,7 +8,7 @@ estimate_shift_configuration(
   tree,
   Y,
   max.nShifts = NULL,
-  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AICc"),
+  criterion = c("pBIC", "pBICess", "mBIC", "BIC", "AIC", "AICc"),
   root.model = c("OUfixedRoot", "OUrandomRoot"),
   candid.edges = NA,
   quietly = TRUE,
@@ -125,7 +125,7 @@ additional shared measurement-error variance per trait.}
 \code{"diagonal"} retains the original trait-by-trait likelihood and allows
 a separate alpha for every trait. \code{"full"} fits a joint multivariate OU
 likelihood and an unrestricted positive-definite evolutionary covariance
-matrix among traits. Full covariance supports ordinary \code{"BIC"} and a
+matrix among traits. Full covariance supports ordinary \code{"AIC"}, \code{"BIC"} and a
 localization-aware multivariate \code{"pBIC"} extension.}
 
 \item{alpha.structure}{for full covariance, \code{"shared"} estimates one

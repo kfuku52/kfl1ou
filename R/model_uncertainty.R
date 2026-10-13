@@ -847,8 +847,8 @@ sensitivity_l1ou <- function(
         stop("alpha.upper must contain finite positive values.")
     }
     if(is.null(criteria)) criteria <- unique(c(model$l1ou.options$criterion, "BIC"))
-    allowed <- if(!is.null(model$trait.covariance)) c("BIC", "pBIC") else
-        c("pBIC", "pBICess", "mBIC", "BIC", "AICc")
+    allowed <- if(!is.null(model$trait.covariance)) c("BIC", "pBIC", "AIC") else
+        c("pBIC", "pBICess", "mBIC", "BIC", "AIC", "AICc")
     if(any(!criteria %in% allowed)){
         stop("one or more criteria are unsupported by this covariance model.")
     }
