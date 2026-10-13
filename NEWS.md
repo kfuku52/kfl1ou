@@ -1,3 +1,7 @@
+# kfl1ou 3.0.14
+
+- Notify the central Dependabot controller after prepared updates finish CI.
+
 # kfl1ou 3.0.13
 
 - Add ordinary AIC (without the AICc small-sample correction) to shift selection,
