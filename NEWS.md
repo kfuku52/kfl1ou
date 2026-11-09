@@ -1,3 +1,15 @@
+# kfl1ou 3.0.17
+
+- Dependabot dependency update (automated metadata).
+
+# kfl1ou 3.0.16
+
+- Dependabot dependency update (automated metadata).
+
+# kfl1ou 3.0.15
+
+- Dependabot dependency update (automated metadata).
+
 # kfl1ou 3.0.14
 
 - Notify the central Dependabot controller after prepared updates finish CI.
