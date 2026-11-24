@@ -1,3 +1,7 @@
+# kfl1ou 3.0.20
+
+- Maintenance and compatibility updates.
+
 # kfl1ou 3.0.19
 
 - Dependabot dependency update (automated metadata).
